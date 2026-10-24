@@ -231,9 +231,26 @@ def fail_interrupted(conn: sqlite3.Connection) -> list[str]:
     """
     ids = [r["id"] for r in conn.execute("SELECT id FROM requests WHERE status = 'running'").fetchall()]
     for rid in ids:
-        set_request(conn, rid, status="failed")
-        log_event(conn, rid, "error", "The worker restarted mid-run. Submit the behavior again to retry.")
+        fail_request(conn, rid, "The worker restarted mid-run. Submit the behavior again to retry.")
     return ids
+
+
+# Candidate statuses that mean "still in progress". A failed request must not leave any
+# behind, or the board keeps showing them as training or being judged.
+UNFINISHED = ("written", "training", "trained")
+
+
+def fail_request(conn: sqlite3.Connection, rid: str, reason: str) -> None:
+    """Mark a request failed, with its unfinished rounds closed and unfinished candidates failed."""
+    set_request(conn, rid, status="failed")
+    conn.execute(
+        f"""UPDATE candidates SET status = 'failed', error = COALESCE(error, ?)
+            WHERE status IN ({",".join("?" * len(UNFINISHED))})
+              AND round_id IN (SELECT id FROM rounds WHERE request_id = ?)""",
+        ("Stopped: the run failed before this candidate finished.", *UNFINISHED, rid),
+    )
+    conn.execute("UPDATE rounds SET status = 'done' WHERE request_id = ? AND status = 'running'", (rid,))
+    log_event(conn, rid, "error", reason)
 
 
 def flag_candidate(conn: sqlite3.Connection, cid: int, note: str) -> bool:

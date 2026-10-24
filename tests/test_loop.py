@@ -79,7 +79,9 @@ def test_gate_failure_is_recorded(tmp_path):
     gate_events = [e["message"] for e in detail["events"] if e["kind"] == "gate"]
     # every attempt is logged, not just the last: 3 rounds x 3 candidates x 3 attempts
     assert len(gate_events) == 3 * 3 * 3
-    assert any("Candidate 0, attempt 1 failed: SyntaxError" in e for e in gate_events)  # gates run concurrently
+    # numbered from 1, like the board; any(): gates run concurrently
+    assert any("Candidate 1, attempt 1 failed: SyntaxError" in e for e in gate_events)
+    assert not any(e.startswith("Candidate 0,") for e in gate_events)
 
 
 def test_behavior_checks():
@@ -200,3 +202,131 @@ def test_carry_top_one_revises_only_the_best(tmp_path):
     db.create_request(conn, "walk backwards")
     run_request(conn, s, db.claim_next_request(conn), FakeWriter(), RecordingEditor(), FakeCritic(), FakeSimulator())
     assert calls == [3]
+
+
+def _start(tmp_path: Path, text: str = "walk backwards"):
+    s = _settings(tmp_path)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, text)
+    return s, conn, db.claim_next_request(conn)
+
+
+def test_a_critic_failure_loses_one_candidate_not_the_run(tmp_path):
+    class FlakyCritic(FakeCritic):
+        def review(self, request, result, check=None):
+            if result.metrics["forward_velocity"] == first_velocity[0]:
+                raise ConnectionError("API unreachable")
+            return super().review(request, result, check)
+
+    first_velocity = [None]
+
+    class RememberingSimulator(FakeSimulator):
+        def run_many(self, jobs, scene=None, cull=None):
+            results = super().run_many(jobs, scene, cull)
+            if first_velocity[0] is None:
+                first_velocity[0] = results[0].metrics["forward_velocity"]
+            return results
+
+    s, conn, req = _start(tmp_path)
+    best = run_request(conn, s, req, FakeWriter(), FakeEditor(), FlakyCritic(), RememberingSimulator())
+
+    detail = db.get_request(conn, req["id"])
+    assert best is not None and len(detail["rounds"]) == s.max_rounds
+    first = detail["rounds"][0]["candidates"][0]
+    assert first["status"] == "failed"
+    assert "critic could not score" in first["error"] and "API unreachable" in first["error"]
+    assert first["metrics"]  # the training result is kept
+    assert any(c["status"] == "scored" for c in detail["rounds"][0]["candidates"][1:])
+
+
+def test_an_editor_failure_keeps_the_rounds_that_worked(tmp_path):
+    class BrokenEditor(FakeEditor):
+        def revise(self, *args, **kwargs):
+            raise TimeoutError("editor timed out")
+
+    s, conn, req = _start(tmp_path)
+    best = run_request(conn, s, req, FakeWriter(), BrokenEditor(), FakeCritic(), FakeSimulator())
+
+    detail = db.get_request(conn, req["id"])
+    assert best is not None and detail["best_score"] == best.score
+    assert [r["status"] for r in detail["rounds"]] == ["done", "done"]
+    assert detail["rounds"][1]["candidates"] == []
+    assert "Stopped before round 2: TimeoutError: editor timed out" in detail["events"][-1]["message"]
+
+
+def test_a_first_round_writer_failure_still_fails_the_request(tmp_path):
+    class BrokenWriter(FakeWriter):
+        def write(self, request, env_doc, k):
+            raise ConnectionError("API unreachable")
+
+    s, conn, req = _start(tmp_path)
+    try:
+        run_request(conn, s, req, BrokenWriter(), FakeEditor(), FakeCritic(), FakeSimulator())
+    except ConnectionError:
+        pass
+    else:
+        raise AssertionError("expected the writer's error to reach the worker")
+
+
+def test_a_failed_fix_marks_only_that_candidate(tmp_path):
+    class BadThenBrokenFix(FakeWriter):
+        def write(self, request, env_doc, k):
+            good = super().write(request, env_doc, k)
+            return ["def nope(:"] + good[1:]
+
+        def fix(self, source, error, env_doc):
+            raise ConnectionError("API unreachable")
+
+    s, conn, req = _start(tmp_path)
+    best = run_request(conn, s, req, BadThenBrokenFix(), FakeEditor(), FakeCritic(), FakeSimulator())
+
+    first_round = db.get_request(conn, req["id"])["rounds"][0]["candidates"]
+    assert first_round[0]["status"] == "gate_failed"
+    assert "The writer could not fix it: ConnectionError" in first_round[0]["error"]
+    assert all(c["status"] == "scored" for c in first_round[1:])
+    assert best is not None
+
+
+def test_a_scene_writer_failure_falls_back_to_the_plain_floor(tmp_path):
+    from rewardsmith.agents.fake import FakeScener
+
+    class BrokenScener(FakeScener):
+        def make(self, request):
+            raise ConnectionError("API unreachable")
+
+    s, conn, req = _start(tmp_path, "walk to the red ball")
+    best = run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(), scener=BrokenScener())
+
+    detail = db.get_request(conn, req["id"])
+    assert best is not None
+    assert any("Could not write the scene (ConnectionError" in e["message"] for e in detail["events"])
+
+
+def test_failing_a_request_closes_its_unfinished_work(tmp_path):
+    s, conn, req = _start(tmp_path)
+    rid = req["id"]
+    rnd = db.add_round(conn, rid, 1)
+    statuses = ["written", "training", "trained", "scored", "gate_failed", "stopped"]
+    for idx, status in enumerate(statuses):
+        cid = db.add_candidate(conn, rnd, idx, "def reward(state, action, prev_action): ...")
+        db.set_candidate(conn, cid, status=status)
+
+    db.fail_request(conn, rid, "The critic is down")
+
+    detail = db.get_request(conn, rid)
+    assert detail["status"] == "failed"
+    assert detail["rounds"][0]["status"] == "done"
+    after = [c["status"] for c in detail["rounds"][0]["candidates"]]
+    assert after == ["failed", "failed", "failed", "scored", "gate_failed", "stopped"]
+    assert "before this candidate finished" in detail["rounds"][0]["candidates"][0]["error"]
+    assert detail["events"][-1]["message"] == "The critic is down"
+
+
+def test_fail_interrupted_also_closes_unfinished_candidates(tmp_path):
+    s, conn, req = _start(tmp_path)
+    rnd = db.add_round(conn, req["id"], 1)
+    cid = db.add_candidate(conn, rnd, 0, "def reward(state, action, prev_action): ...")
+    db.set_candidate(conn, cid, status="training")
+
+    assert db.fail_interrupted(conn) == [req["id"]]
+    assert db.get_request(conn, req["id"])["rounds"][0]["candidates"][0]["status"] == "failed"
