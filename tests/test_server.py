@@ -2,6 +2,7 @@ import importlib
 import os
 import sqlite3
 import threading
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -33,6 +34,8 @@ def test_create_and_read_request(tmp_path, monkeypatch):
     detail = client.get(f"/api/requests/{rid}").json()
     assert detail["status"] == "queued"
     assert detail["rounds"] == []
+    assert detail["stages"] == [] and detail["stage"] is None
+    assert abs(detail["server_time"] - time.time()) < 60
 
     assert client.get("/api/requests/missing").status_code == 404
     assert client.post("/api/requests", json={"text": "x"}).status_code == 422

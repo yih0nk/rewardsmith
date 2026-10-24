@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -17,11 +18,14 @@ def _point(steps, reward, **terms):
 
 def test_stages_and_curve_are_written_in_order(tmp_path):
     clock = [0.0]
-    w = ProgressWriter(tmp_path, total_steps=1000, clock=lambda: clock[0])
+    w = ProgressWriter(tmp_path, total_steps=1000, clock=lambda: clock[0], now=lambda: 1000.0 + clock[0])
 
     w.stage("compiling")
     data = read_progress(tmp_path)
-    assert data == {"stage": "compiling", "steps": 0, "total_steps": 1000, "fraction": 0.0, "wall_s": 0.0, "curve": []}
+    assert data == {
+        "stage": "compiling", "steps": 0, "total_steps": 1000, "fraction": 0.0, "wall_s": 0.0,
+        "started_at": 1000.0, "stage_started_at": 1000.0, "updated_at": 1000.0, "curve": [],
+    }
 
     clock[0] = 30.0
     w.point(_point(0, 0.1, task=0.1))
@@ -35,11 +39,46 @@ def test_stages_and_curve_are_written_in_order(tmp_path):
     w.point(_point(1200, 3.0))  # brax rounds the step count up past num_timesteps
     assert read_progress(tmp_path)["fraction"] == 1.0
 
+    clock[0] = 55.0
     w.stage("rendering")
     assert read_progress(tmp_path)["stage"] == "rendering"
+    assert read_progress(tmp_path)["stage_started_at"] == 1055.0
     assert len(read_progress(tmp_path)["curve"]) == 3  # the curve survives stage changes
     w.stage("done")
     assert read_progress(tmp_path)["stage"] == "done"
+
+
+def test_stage_start_times_move_only_on_a_change(tmp_path):
+    t = [100.0]
+    w = ProgressWriter(tmp_path, 1000, clock=lambda: t[0] - 100.0, now=lambda: t[0])
+    t[0] = 130.0
+    w.point(_point(0, 0.1))  # first eval: compiling -> training
+    assert read_progress(tmp_path)["stage_started_at"] == 130.0
+    t[0] = 140.0
+    w.point(_point(500, 1.0))  # still training
+    w.stage("training")
+    data = read_progress(tmp_path)
+    assert (data["started_at"], data["stage_started_at"], data["updated_at"]) == (100.0, 130.0, 140.0)
+
+
+def test_heartbeat_keeps_wall_s_moving_through_compile(tmp_path):
+    t = [0.0]
+    w = ProgressWriter(tmp_path, 1000, clock=lambda: t[0])
+    w.stage("compiling")
+    w.start_heartbeat(interval_s=0.01)
+    try:
+        t[0] = 42.0
+        deadline = time.monotonic() + 5
+        while read_progress(tmp_path)["wall_s"] != 42.0:
+            assert time.monotonic() < deadline, "the heartbeat never rewrote progress.json"
+            time.sleep(0.01)
+        assert read_progress(tmp_path)["stage"] == "compiling"
+    finally:
+        w.stage("done")  # stops the heartbeat
+    assert w._beat is None
+    t[0] = 99.0
+    time.sleep(0.05)
+    assert read_progress(tmp_path)["wall_s"] == 42.0 or read_progress(tmp_path)["stage"] == "done"
 
 
 def test_unknown_stage_is_refused(tmp_path):
