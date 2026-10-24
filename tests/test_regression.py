@@ -97,7 +97,7 @@ def test_a_crashed_or_missing_case_fails(tmp_path):
     run = _run(sim, tmp_path)
     del run["cases"]["spin_in_place"]
     rows = regression.compare(run, baseline)
-    assert [r["status"] for r in rows] == ["FAIL", "PASS", "FAIL"]
+    assert [r["status"] for r in rows] == ["FAIL", "PASS", "WARN"]  # spin is advisory
     assert rows[0]["reasons"] == ["error: RewardError: boom"]
     assert rows[2]["reasons"] == ["not run"]
     assert "FAIL  walk_backwards" in regression.format_rows(rows)
@@ -115,14 +115,24 @@ def test_record_then_compare_from_the_command_line(tmp_path, capsys):
     assert "REGRESSION PASS" in capsys.readouterr().out
 
     sim = _good_sim()
-    sim.metrics_by_source[_source(regression.CASES[2])] = _metrics(fwd=0.0, yaw=0.2)  # stopped spinning
+    sim.metrics_by_source[_source(regression.CASES[1])] = _metrics(fwd=0.1)  # barely walking forward
     assert regression.main(["--compare", *args], sim=sim) == 1
     assert "REGRESSION FAIL" in capsys.readouterr().out
 
 
+def test_a_spin_regression_warns_without_failing(tmp_path, capsys):
+    args = ["--baseline", str(tmp_path / "baseline.json"), "--out", str(tmp_path / "out")]
+    regression.main(["--record", *args], sim=_good_sim())
+    sim = _good_sim()
+    sim.metrics_by_source[_source(regression.CASES[2])] = _metrics(fwd=0.0, yaw=1.4, fell=1.0)  # fell over
+    assert regression.main(["--compare", *args], sim=sim) == 0
+    out = capsys.readouterr().out
+    assert "WARN  spin_in_place" in out and "REGRESSION PASS (1 advisory warning)" in out
+
+
 def test_record_refuses_a_baseline_whose_behavior_fails(tmp_path):
     sim = _good_sim()
-    sim.metrics_by_source[_source(regression.CASES[2])] = _metrics(fwd=0.0, yaw=0.2)
+    sim.metrics_by_source[_source(regression.CASES[0])] = _metrics(fwd=0.2)  # walking forward, not backwards
     args = ["--record", "--baseline", str(tmp_path / "baseline.json"), "--out", str(tmp_path / "out")]
     assert regression.main(args, sim=sim) == 1
     assert not (tmp_path / "baseline.json").exists()
@@ -166,5 +176,5 @@ def test_clauses_that_fail_in_different_runs_fail_the_behavior(tmp_path):
     sim.metrics_by_source[spin] = [_metrics(fwd=0.0, yaw=0.5), _metrics(fwd=0.0, yaw=1.4, fell=1.0),
                                    _metrics(fwd=0.0, yaw=1.4)]
     rows = regression.compare(_run(sim, tmp_path), baseline)
-    assert rows[2]["status"] == "FAIL"
+    assert rows[2]["status"] == "WARN"
     assert rows[2]["reasons"] == ["behavior check passed in only 1/3 runs"]
