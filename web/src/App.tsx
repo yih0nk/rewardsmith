@@ -20,6 +20,8 @@ export default function App() {
   const [selected, setSelected] = useState(location.hash.slice(1));
   const [detail, setDetail] = useState<Detail | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
+  // False until the first health check answers or fails: "connecting", not "unreachable".
+  const [healthChecked, setHealthChecked] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [listLoading, setListLoading] = useState(true);
@@ -65,10 +67,16 @@ export default function App() {
     const refresh = () =>
       getHealth()
         .then((data) => {
-          if (active) setHealth(data);
+          if (active) {
+            setHealth(data);
+            setHealthChecked(true);
+          }
         })
         .catch(() => {
-          if (active) setHealth(null);
+          if (active) {
+            setHealth(null);
+            setHealthChecked(true);
+          }
         });
     refresh();
     const timer = setInterval(refresh, 10000);
@@ -140,7 +148,9 @@ export default function App() {
     }
   }
   const mode = !health
-    ? "Server unreachable · retrying"
+    ? healthChecked
+      ? "Server unreachable · retrying"
+      : "Connecting…"
     : health.fake_sim
       ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
       : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
@@ -179,7 +189,9 @@ export default function App() {
             Hall of fame
           </a>
         </nav>
-        <span className={`mode ${health ? "" : "down"}`}>{mode}</span>
+        <span className={`mode ${health || !healthChecked ? "" : "down"}`}>
+          {mode}
+        </span>
       </header>
       <main className="session">
         {hall ? (
