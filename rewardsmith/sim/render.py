@@ -29,7 +29,7 @@ SIDE_VIDEO_FILE = "rollout_side.mp4"
 # x264 settings: visually lossless for this simple scene, fast enough to keep up with rendering.
 # faststart puts the index first so the board can start playing before the file has loaded.
 ENCODE = dict(codec="h264", crf=20, encoded_format="yuv420p")
-ENCODE_ARGS = ["-preset", "fast", "-profile:v", "high", "-g", "50", "-movflags", "+faststart"]
+ENCODE_ARGS = ["-preset", "veryfast", "-profile:v", "high", "-g", "50", "-movflags", "+faststart"]
 
 
 @dataclass(frozen=True)
