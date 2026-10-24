@@ -103,4 +103,4 @@ def apply_limits(score: float, reward_hacking: bool, critique: str, metrics: dic
     if reward_hacking:
         notes.append("Reward hacking suspected.")
         score = min(score, FELL_OR_HACKED_MAX)
-    return Review(score=score, critique=" ".join(notes + [critique]))
+    return Review(score=score, critique=" ".join(notes + [critique]), reward_hacking=reward_hacking)

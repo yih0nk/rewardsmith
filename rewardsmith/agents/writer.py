@@ -1,6 +1,6 @@
 import anthropic
 
-from .base import REWARD_CONTRACT
+from .base import REWARD_CONTRACT, Draft
 from .claude import ask_json
 
 SYSTEM = f"""You design reward functions for reinforcement learning in MuJoCo Playground (JAX).
@@ -45,7 +45,7 @@ class ClaudeWriter:
     def __init__(self, client: anthropic.Anthropic, model: str):
         self.client, self.model = client, model
 
-    def write(self, request: str, env_doc: str, k: int) -> list[str]:
+    def write(self, request: str, env_doc: str, k: int) -> list[Draft]:
         prompt = (
             f"Environment notes:\n{env_doc}\n\n"
             f"Behavior the user wants: {request}\n\n"
@@ -53,7 +53,7 @@ class ClaudeWriter:
             "not small weight changes of one idea."
         )
         out = ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA)
-        return [c["source"] for c in out["candidates"]][:k]
+        return [Draft(c["source"], idea=c["idea"]) for c in out["candidates"]][:k]
 
     def fix(self, source: str, error: str, env_doc: str) -> str:
         prompt = (

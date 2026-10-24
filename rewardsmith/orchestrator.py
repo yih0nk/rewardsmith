@@ -7,18 +7,21 @@ Round 1: the writer drafts K rewards from the request.
 Round 2+: the editor revises the best reward so far, using the critic's notes.
 """
 
+import inspect
 import logging
+import os
 import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from . import config, db
 from .agents import checker as check_spec
-from .agents.base import Checker, Critic, Editor, Ranker, Scener, Writer
+from .agents.base import Attempt, Checker, Critic, Draft, Editor, Ranker, Scener, Writer
+from .agents.editor import unified_diff
 from .search import Halving
 from .sim import scene as scene_spec
 from .sim.base import Simulator, Stopped
@@ -62,6 +65,7 @@ def run_request(
     k = halving[0] if halving else settings.candidates_per_round
     best: Best | None = None
     ranked: list[Best] = []  # every scored candidate so far, best first
+    history: list[Attempt] = []  # the same, in the order they were scored, for the editor
     scene = _make_scene(conn, req, scener)
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
@@ -79,9 +83,9 @@ def run_request(
 
             try:
                 if best is None:
-                    drafts = [(src, None) for src in writer.write(text, env_doc, k)]
+                    drafts = [_as_draft(d) for d in writer.write(text, env_doc, k)]
                 else:
-                    drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
+                    drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k, history)
             except Exception as exc:
                 if best is None:  # nothing to show yet: let the worker fail the request
                     raise
@@ -96,13 +100,16 @@ def run_request(
             # Each draft is gated in its own thread, so one draft's writer.fix call to
             # Claude overlaps the others' gates. (The simulator may still run the GPU
             # part of its gates one at a time; PlaygroundSimulator does.)
-            cids = [db.add_candidate(conn, round_id, idx, src, diff) for idx, (src, diff) in enumerate(drafts)]
+            cids = [db.add_candidate(conn, round_id, idx, d.source, d.diff, d.idea) for idx, d in enumerate(drafts)]
             lock = threading.Lock()  # the threads share conn
             with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
                 gated = list(pool.map(
-                    lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim, scene),
+                    lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i].source, writer, env_doc, sim, scene),
                     range(len(drafts)),
                 ))
+            for d, cid, src in zip(drafts, cids, gated):
+                if src is not None and src != d.source and d.diff is not None and d.parent is not None:
+                    db.set_candidate(conn, cid, diff=unified_diff(d.parent, src))  # the gate's fix changed it
             ready: list[tuple[int, str, Path]] = [
                 (cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}")
                 for idx, (cid, src) in enumerate(zip(cids, gated))
@@ -150,9 +157,17 @@ def run_request(
                     error = f"The critic could not score this run: {_describe(review)}"
                     db.set_candidate(conn, cid, status="failed", error=error)
                     continue
-                db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
+                db.set_candidate(
+                    conn,
+                    cid,
+                    status="scored",
+                    score=review.score,
+                    critique=review.critique,
+                    reward_hacking=int(getattr(review, "reward_hacking", False)),
+                )
                 scored = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
                 ranked.append(scored)
+                history.append(Attempt(n, cids.index(cid), review.score, review.critique))
                 if round_best is None or scored.rank() > round_best.rank():
                     round_best = scored
             # Passing runs first, then by score. Stable: on a tie the earlier candidate stays ahead.
@@ -254,7 +269,18 @@ def _success_spec(
     return spec
 
 
-def _revise(editor: Editor, text: str, env_doc: str, parents: list[Best], k: int) -> list[tuple[str, str]]:
+def _as_draft(item: Draft | str | tuple[str, str | None]) -> Draft:
+    """Writers may return plain sources and editors (source, diff) pairs; both become Drafts."""
+    if isinstance(item, Draft):
+        return item
+    if isinstance(item, str):
+        return Draft(item)
+    return Draft(item[0], item[1])
+
+
+def _revise(
+    editor: Editor, text: str, env_doc: str, parents: list[Best], k: int, history: Sequence[Attempt] = ()
+) -> list[Draft]:
     """Revise each parent into its share of the k drafts, all editor calls at once.
 
     Revising the top two, not just the best, keeps a runner-up with a different
@@ -262,9 +288,23 @@ def _revise(editor: Editor, text: str, env_doc: str, parents: list[Best], k: int
     """
     shares = [k // len(parents) + (i < k % len(parents)) for i in range(len(parents))]
     jobs = [(p, n) for p, n in zip(parents, shares) if n]
+    # Older editors take no history; pass it only to those that accept it.
+    extra = {"history": list(history)} if history and _accepts(editor.revise, "history") else {}
+
+    def revise(job: tuple[Best, int]) -> list[Draft]:
+        parent, n = job
+        drafts = editor.revise(text, env_doc, parent.source, parent.critique, parent.metrics, n, **extra)
+        return [replace(_as_draft(d), parent=parent.source) for d in drafts]
+
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-        out = pool.map(lambda j: editor.revise(text, env_doc, j[0].source, j[0].critique, j[0].metrics, j[1]), jobs)
-        return [draft for drafts in out for draft in drafts]
+        return [draft for drafts in pool.map(revise, jobs) for draft in drafts]
+
+
+def _accepts(fn: Any, name: str) -> bool:
+    try:
+        return name in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _pass_gate(
@@ -338,12 +378,16 @@ def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]
         import anthropic
 
         from .agents.critic import ClaudeCritic
-        from .agents.editor import ClaudeEditor
+        from .agents.editor import ClaudeEditor, DroidEditor
         from .agents.writer import ClaudeWriter
 
         client = anthropic.Anthropic()
         writer = ClaudeWriter(client, settings.model)
-        editor = ClaudeEditor(client, settings.model)  # swap for DroidEditor once it works
+        if settings.editor == "droid":
+            droid_model = os.environ.get("REWARDSMITH_DROID_MODEL") or None
+            editor = DroidEditor(settings.artifacts_dir / "droid", model=droid_model)
+        else:
+            editor = ClaudeEditor(client, settings.model)
         critic = ClaudeCritic(client, settings.model)
 
     if settings.fake_sim:
@@ -395,7 +439,9 @@ def main() -> None:
     ranker = build_ranker(settings)
     checker = build_checker(settings)
     scener = build_scener(settings)
-    log.info("worker up (fake_sim=%s, fake_llm=%s)", settings.fake_sim, settings.fake_llm)
+    log.info(
+        "worker up (fake_sim=%s, fake_llm=%s, editor=%s)", settings.fake_sim, settings.fake_llm, type(editor).__name__
+    )
 
     while True:
         req = db.claim_next_request(conn)

@@ -28,7 +28,7 @@ worker process share a SQLite file. The pod's proxy URL is the link you send jud
 | Path | What | Owner |
 |---|---|---|
 | `rewardsmith/sim/playground.py` | Playground env, reward injection, training, render, metrics | A |
-| `rewardsmith/agents/` | Claude writer and critic, editor (Droid TODO), fakes | B |
+| `rewardsmith/agents/` | Claude writer and critic, Droid and Claude editors, fakes | B |
 | `rewardsmith/orchestrator.py` | The worker loop | B |
 | `rewardsmith/server.py`, `db.py` | API and storage | C |
 | `web/` | The board (React + Vite) | C |
@@ -51,6 +51,25 @@ cd web && npm install && npm run dev   # board on :5173
 Set `REWARDSMITH_FAKE_LLM=0` and `ANTHROPIC_API_KEY` to use real Claude calls
 with the fake simulator.
 
+## How Droid is used
+
+From round 2 on, Factory Droid can revise the best rewards so far (`REWARDSMITH_EDITOR=droid`).
+
+- **Trigger:** a finished round. For each reward being revised, the worker hands Droid that
+  reward, the critic's notes, the rollout metrics and every earlier attempt.
+- **Limits:** each revision runs in a fresh folder holding only those files, with the reward
+  copied K times (`candidate_0.py` ...). Droid runs at low autonomy with shell commands
+  disabled; it may edit files there, and anything beyond that is refused because no
+  permission handler is attached.
+- **Output:** we read back each candidate file and show its diff on the board, with Droid's
+  one-line reason for the change. Untouched files are dropped.
+
+Try it alone: `pip install -e ".[droid]"`, put `FACTORY_API_KEY` in `.env`, then
+`.venv/bin/python scripts/try_droid.py`. The folders Droid saw stay under
+`.rewardsmith/artifacts/droid/`. `REWARDSMITH_EDITOR=claude` (the default) uses Claude instead.
+
+To try the reward writer alone with a real API key: `.venv/bin/python scripts/try_writer.py "walk backwards"`.
+
 ## Run it on Runpod
 
 1. Start a GPU pod with a CUDA 12 image and expose HTTP port 8000.
@@ -66,6 +85,26 @@ with the fake simulator.
 ```sh
 .venv/bin/python -m pytest -q
 ```
+
+## Benchmark
+
+`scripts/benchmark.py` runs the team plan's behaviors through the full loop (Claude and
+training, like any request) and reports the four Devpost numbers: success rate after
+round 1 vs. by the last round, median rounds to success, generated vs. hand-written
+forward walking, and GPU minutes per learned behavior. It also reports how often the
+critic's score agreed with the check.
+
+```sh
+python scripts/benchmark.py queue                    # on the pod, with the worker running
+python scripts/benchmark.py report --wait --gpu-dollars-per-hour 0.69
+```
+
+Each behavior gets a fixed success check from `rewardsmith/bench/suite.py`, stored with
+the request so the checker can't change it. Success means the check passed, not the
+critic's score. `limp` and `pronk` need foot-contact metrics the rollout doesn't report
+yet, so they are skipped and listed as unmeasured. Three other checks stand in for the
+plan's (spin drift, run_fast fall rate, hind_stand pitch); the report says how.
+Results go next to the manifest in `<REWARDSMITH_HOME>/benchmark/`.
 
 ## Quality regression suite
 
