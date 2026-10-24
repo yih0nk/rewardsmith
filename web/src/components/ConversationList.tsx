@@ -1,0 +1,64 @@
+import { Conversation } from "../thread";
+
+const STATUS: Record<Conversation["status"], string> = {
+  queued: "queued",
+  running: "running",
+  done: "done",
+  failed: "failed",
+};
+
+// The sidebar: one row per task, newest first. Status, best score, then the task.
+export default function ConversationList({
+  conversations,
+  selected,
+  loading,
+  onSelect,
+}: {
+  conversations: Conversation[];
+  selected: string | null;
+  loading: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <nav aria-label="Tasks" className="conversations">
+      {conversations.length === 0 && (
+        <p className="subtle">
+          {loading
+            ? "Loading tasks…"
+            : "No tasks yet. Start one with New task."}
+        </p>
+      )}
+      <ul>
+        {conversations.map((c) => {
+          const status =
+            c.status === "done" && c.bestScore == null
+              ? "no result"
+              : STATUS[c.status];
+          return (
+            <li key={c.id}>
+              <button
+                className={`conversation ${c.id === selected ? "selected" : ""}`}
+                aria-current={c.id === selected ? "page" : undefined}
+                onClick={() => onSelect(c.id)}
+              >
+                <span className="conversation-title">{c.title}</span>
+                <span className="conversation-meta">
+                  <span className={`run-status ${c.status}`}>{status}</span>
+                  <span className="num">
+                    {c.bestScore != null ? (
+                      <>
+                        best {c.bestScore.toFixed(1)}
+                        <span aria-hidden="true">/10</span>
+                        <span className="sr-only"> out of 10</span>
+                      </>
+                    ) : null}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}

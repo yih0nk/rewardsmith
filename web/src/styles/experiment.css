@@ -13,9 +13,6 @@
   font-size: var(--dp-typography-label);
   color: var(--dp-color-ink-muted);
 }
-.cmd.exp {
-  padding-top: var(--dp-spacing-section-compact);
-}
 .badge {
   padding: 0 var(--dp-spacing-cell);
   border: var(--dp-border-hairline) solid currentColor;
@@ -116,9 +113,6 @@
 }
 .stage {
   scroll-margin-top: var(--dp-spacing-row);
-}
-section.cmd[aria-label="Robot rollout"] {
-  scroll-margin-top: var(--dp-spacing-inset);
 }
 
 /* The reward curve: one flat green line on hairline rules. */

@@ -148,9 +148,9 @@
 }
 
 /* ---- Status beside the result ----
-   Wide screens: the best result on the left, large, and the live status on the right,
-   so both sit above the fold on a 1280x800 projector. Narrow screens stack them,
-   status first. */
+   When the task pane is wide enough (820 px: a 1280x800 projector with the task
+   list open), the best result is on the left, large, and the live status on the
+   right, so both sit above the fold. Narrower panes stack them, status first. */
 .run-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -176,9 +176,9 @@
   font-weight: 400;
   color: var(--dp-color-ink-muted);
 }
-@media (min-width: 1101px) {
+@container (min-width: 820px) {
   .run-grid {
-    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
     grid-template-areas: "result side";
     align-items: start;
     margin-top: var(--dp-spacing-row-compact);
@@ -186,6 +186,10 @@
   }
   .run-grid > .run-side {
     grid-area: side;
+  }
+  .run-grid.status-only {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "side";
   }
   .run-grid > .result {
     grid-area: result;
@@ -197,9 +201,28 @@
   .run-side .run-status-panel {
     margin-top: 0;
   }
-  /* The side column is narrow: timers under the label, lanes on two lines. */
+  /* The side column is narrow: tag, label and timers stack, lanes take two lines. */
   .run-side .now {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .run-side .now-tag {
+    justify-self: start;
+  }
+  .run-side .now-label {
+    margin-top: 4px;
+    font-size: var(--dp-typography-body);
+    line-height: var(--dp-typography-body-leading);
+  }
+  .run-grid.status-only .now {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .run-grid.status-only .now-label {
+    margin-top: 0;
+    font-size: var(--dp-typography-heading);
+  }
+  .run-grid.status-only .timers {
+    grid-column: auto;
+    margin-top: 0;
   }
   .run-side .timers {
     grid-column: 1 / -1;
@@ -221,7 +244,9 @@
   .run-side .success-spec {
     grid-template-columns: minmax(0, 1fr);
   }
-  /* Score and verdict beside each other under the video. */
+}
+/* Very wide panes: score and verdict beside each other under the video. */
+@container (min-width: 1100px) {
   .run-grid .evaluation {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);

@@ -1,16 +1,18 @@
-/* 1100: narrower gutter and identity columns. 800: stack the opening and the stage.
-   540: shorter indentation and single-column rows. */
+/* 1100: narrower gutter and identity columns. 900: the task list becomes a drawer
+   opened from the header. 800: stack the stage. 540: shorter indentation and
+   single-column rows. */
 @media (max-width: 1100px) {
   :root {
     --gutter-width: 4ch;
   }
-  .cmd,
-  .cmd.hero {
+  .cmd {
     column-gap: var(--dp-spacing-gutter);
   }
   .cmd-note,
   .session > .error,
-  .directory {
+  .thread > .error,
+  .main-pane > .error,
+  .composer-dock {
     margin-left: calc(var(--gutter-width) + var(--dp-spacing-gutter));
   }
   .result-grid {
@@ -49,9 +51,6 @@
   .success-spec {
     grid-template-columns: minmax(0, 1fr);
   }
-  .cmd.hero {
-    grid-template-columns: var(--gutter-width) minmax(0, 1fr);
-  }
   .mode {
     margin-left: 0;
     flex-basis: 100%;
@@ -75,9 +74,6 @@
   .candidate-option.live > .training-progress {
     grid-column: 1 / -1;
   }
-  .directory {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 540px) {
@@ -94,14 +90,16 @@
   .lane-bar {
     font-size: 12px;
   }
+  .training-progress.large .meter {
+    font-size: 12px;
+  }
   .cmd {
     padding-top: var(--dp-spacing-section-compact);
   }
   .terminal {
     padding: 0 var(--dp-spacing-cell);
   }
-  .cmd,
-  .cmd.hero {
+  .cmd {
     column-gap: var(--dp-spacing-cell);
   }
   .cmd::before {
@@ -112,7 +110,9 @@
   }
   .cmd-note,
   .session > .error,
-  .directory {
+  .thread > .error,
+  .main-pane > .error,
+  .composer-dock {
     margin-left: calc(var(--gutter-width) + var(--dp-spacing-cell));
   }
   .cmd-title {
@@ -123,17 +123,6 @@
   }
   .prompt {
     display: none;
-  }
-  .run-link {
-    grid-template-columns: 8ch minmax(0, 1fr);
-    column-gap: var(--dp-spacing-gutter);
-  }
-  .run-text {
-    grid-column: 1 / -1;
-    white-space: normal;
-  }
-  .runs {
-    max-height: calc(5 * 72px);
   }
   .stage-foot span:last-child {
     display: none;
@@ -214,7 +203,26 @@
   .lane-bar {
     grid-row: auto;
   }
-  .directory {
+}
+
+/* Below 900 px the task list is a drawer: the header's Tasks button opens it
+   over the page, and picking a task closes it. */
+@media (max-width: 900px) {
+  .nav-toggle {
+    display: inline-block;
+  }
+  .workspace {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .sidebar {
+    display: none;
+    position: static;
+    max-height: none;
+    padding-right: 0;
+    border-right: 0;
+    border-bottom: var(--dp-border-hairline) solid var(--dp-color-ink);
+  }
+  .sidebar.open {
+    display: flex;
   }
 }

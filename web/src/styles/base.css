@@ -224,6 +224,7 @@ code {
   font-size: inherit;
   text-decoration: underline dotted;
   text-underline-offset: 4px;
+  text-align: inherit;
   cursor: help;
 }
 .explain-tip {
