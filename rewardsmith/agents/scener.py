@@ -35,7 +35,7 @@ Return a scene spec:
   - bearing [low, high]: degrees from the robot's starting heading, -180 to 180, positive = to its left.
     Use [-180, 180] when the direction doesn't matter; narrow it for "in front" ([-30, 30]), "behind", "left" etc.
   - yaw [low, high]: degrees the object is turned (boxes); [0, 0] for balls and zones.
-  - movable: true only if the robot must push, kick or move it (only the feet touch objects). Zones can't be movable.
+  - movable: true only if the robot must push, kick or move it (its feet and body push it). Zones can't be movable.
   - mass: kg, for movable objects 0.05-20 (a football is about 0.4); use 1.0 for fixed ones.
 - target: the name of the main object the behavior is about (its features are also given as target_*),
   or "" when there are no objects.
