@@ -23,3 +23,18 @@ class Simulator(Protocol):
     def run(self, source: str, out_dir: Path) -> RunResult:
         """Train a policy on this reward, roll it out, render, and measure."""
         ...
+
+    def run_many(self, jobs: list[tuple[str, Path]]) -> list["RunResult | str"]:
+        """Run several (source, out_dir) jobs. Same order as jobs; a failed job gives its error text."""
+        ...
+
+
+def run_sequentially(sim: Simulator, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
+    """run_many for simulators that train one job at a time."""
+    results: list[RunResult | str] = []
+    for source, out_dir in jobs:
+        try:
+            results.append(sim.run(source, out_dir))
+        except Exception as exc:
+            results.append(f"{type(exc).__name__}: {exc}")
+    return results

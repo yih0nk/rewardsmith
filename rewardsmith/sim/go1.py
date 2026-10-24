@@ -5,6 +5,7 @@ termination. We replace its reward terms with the generated ones, and zero its
 velocity command (our behaviors don't track a joystick).
 """
 
+import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -16,6 +17,7 @@ from mujoco_playground import registry
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src.locomotion.go1 import joystick
 
+from . import warp_quiet  # noqa: F401  (silences warp's per-step solver warning)
 from .go1_spec import FEATURES
 from .reward_slot import load_reward
 
@@ -100,8 +102,14 @@ def make_config(term_names: tuple[str, ...], impl: str = "jax", overrides: Mappi
     return config
 
 
-def make_env(source: str, impl: str = "jax", overrides: Mapping[str, Any] | None = None) -> Go1Env:
+def default_impl() -> str:
+    """REWARDSMITH_IMPL if set; else warp on a CUDA GPU (2.4x faster on the 4090), jax elsewhere."""
+    return os.environ.get("REWARDSMITH_IMPL") or ("warp" if jax.default_backend() == "gpu" else "jax")
+
+
+def make_env(source: str, impl: str | None = None, overrides: Mapping[str, Any] | None = None) -> Go1Env:
     """Build a Go1 env from reward source code. Raises RewardError for bad rewards."""
+    impl = impl or default_impl()
     try:
         reward_fn = load_reward(source)
     except Exception as exc:

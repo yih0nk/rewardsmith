@@ -44,12 +44,12 @@ class GateReport:
     run_s: float  # executing the compiled rollout
 
 
-def check_reward(source: str, *, impl: str = "jax", num_envs: int = 4, steps: int = 50, seed: int = 0) -> str | None:
+def check_reward(source: str, *, impl: str | None = None, num_envs: int = 4, steps: int = 50, seed: int = 0) -> str | None:
     """Return None if the reward survives a short jitted rollout, else a message for the writer."""
     return run_gate(source, impl=impl, num_envs=num_envs, steps=steps, seed=seed).error
 
 
-def run_gate(source: str, *, impl: str = "jax", num_envs: int = 4, steps: int = 50, seed: int = 0) -> GateReport:
+def run_gate(source: str, *, impl: str | None = None, num_envs: int = 4, steps: int = 50, seed: int = 0) -> GateReport:
     try:
         env = go1.make_env(source, impl=impl)
     except go1.RewardError as exc:
