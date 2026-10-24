@@ -8,6 +8,7 @@ Settings (env vars):
 """
 
 import os
+import threading
 from pathlib import Path
 
 # The worker gates rewards on the GPU itself, so it must not grab 75% of GPU memory
@@ -21,28 +22,38 @@ if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
 from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
-from .base import RunResult  # noqa: E402
+from .base import Cull, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 
 
 class PlaygroundSimulator:
-    def __init__(self, env_name: str = go1.BASE_ENV, preset: str | None = None, impl: str | None = None):
+    def __init__(
+        self, env_name: str = go1.BASE_ENV, preset: str | None = None, impl: str | None = None,
+        behavior_metrics: bool = False,
+    ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
+        self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
+        self._pool: parallel.WarmPool | None = None
+        # The worker gates drafts in threads, but two warp rollouts at once in one
+        # process crash: warp captures a CUDA graph on its first call, and any other
+        # GPU work during the capture fails it (CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED).
+        self._gate_lock = threading.Lock()
 
     def describe(self) -> str:
         return go1_spec.describe()
 
     def gate(self, source: str) -> str | None:
-        return gate.check_reward(source, impl=self.impl)
+        with self._gate_lock:
+            return gate.check_reward(source, impl=self.impl)
 
     def run(self, source: str, out_dir: Path) -> RunResult:
         progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
         progress.stage("compiling")
-        env = go1.make_env(source, impl=self.impl)
+        env = go1.make_env(source, impl=self.impl, behavior_metrics=self.behavior_metrics)
         result = train.train(env, self.preset, on_progress=progress.point)
         progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
@@ -59,5 +70,20 @@ class PlaygroundSimulator:
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
 
-    def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
-        return parallel.run_in_processes(jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel)
+    def warm_up(self, n: int) -> None:
+        """Start n training processes now, so their imports overlap the writer's Claude call."""
+        if self._pool is None:
+            self._pool = parallel.WarmPool(n)
+
+    def run_many(self, jobs: list[tuple[str, Path]], cull: Cull | None = None) -> list[RunResult | Stopped | str]:
+        pool, self._pool = self._pool, None
+        # Halving compares candidates at the same eval, so they all train at once.
+        max_parallel = max(self.max_parallel, len(jobs)) if cull else self.max_parallel
+        try:
+            return parallel.run_in_processes(
+                jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, pool=pool, cull=cull,
+                behavior_metrics=cull is not None,  # the cull ranks candidates by them
+            )
+        finally:
+            if pool:
+                pool.close()

@@ -50,3 +50,9 @@ class Checker(Protocol):
     def write_spec(self, request: str) -> list[dict[str, Any]]:
         """A validated success spec (see checker.py), written before any training."""
         ...
+
+
+class Ranker(Protocol):
+    def rank(self, request: str, snapshots: list[dict[str, Any]]) -> list[int]:
+        """Positions into snapshots, most promising first (successive halving)."""
+        ...

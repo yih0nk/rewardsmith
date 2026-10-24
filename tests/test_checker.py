@@ -156,7 +156,7 @@ def _run(tmp_path, checker_, critic_=None, **kw):
     conn = db.connect(s.db_path)
     rid = db.create_request(conn, "walk backwards")
     req = db.claim_next_request(conn)
-    best = run_request(conn, s, req, FakeWriter(), FakeEditor(), critic_ or FakeCritic(), FakeSimulator(), checker_)
+    best = run_request(conn, s, req, FakeWriter(), FakeEditor(), critic_ or FakeCritic(), FakeSimulator(), checker=checker_)
     return conn, rid, best
 
 
@@ -212,7 +212,7 @@ def test_an_existing_spec_is_never_rewritten(tmp_path):
     req = db.claim_next_request(conn)
     other = SpecChecker([checker.NO_FALL])
 
-    run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(), other)
+    run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(), checker=other)
 
     assert other.calls == 0
     assert db.get_request(conn, rid)["success_spec"] == BACKWARDS
@@ -252,7 +252,7 @@ def test_api_exposes_the_spec_and_the_results(tmp_path, monkeypatch):
     conn = db.connect(s.db_path)
     rid = db.create_request(conn, "walk backwards")
     run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(),
-                SpecChecker(BACKWARDS))
+                checker=SpecChecker(BACKWARDS))
 
     detail = client.get(f"/api/requests/{rid}").json()
     assert detail["success_spec"] == BACKWARDS

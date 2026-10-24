@@ -47,6 +47,9 @@ class CurvePoint:
     wall_s: float
     episode_reward: float
     terms: dict[str, float]
+    # Go1Env.behavior() averaged over each eval episode, plus its mean length in steps
+    # (below 1000 means some robots fell). Comparable across rewards.
+    behavior: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -127,16 +130,12 @@ def train(
     curve: list[CurvePoint] = []
 
     def progress(steps: int, metrics: Mapping[str, Any]) -> None:
-        prefix = "eval/episode_reward/"
         point = CurvePoint(
             steps=int(steps),
             wall_s=time.perf_counter() - start,
             episode_reward=float(metrics["eval/episode_reward"]),
-            terms={
-                k[len(prefix):]: float(v)
-                for k, v in metrics.items()
-                if k.startswith(prefix) and not k.endswith("_std")
-            },
+            terms=_eval_group(metrics, "eval/episode_reward/"),
+            behavior=_behavior(metrics),
         )
         curve.append(point)
         if on_progress:
@@ -164,3 +163,17 @@ def train(
         train_s=total,
         num_timesteps=int(kwargs["num_timesteps"]),
     )
+
+
+def _eval_group(metrics: Mapping[str, Any], prefix: str) -> dict[str, float]:
+    return {k[len(prefix):]: float(v) for k, v in metrics.items() if k.startswith(prefix) and not k.endswith("_std")}
+
+
+def _behavior(metrics: Mapping[str, Any]) -> dict[str, float]:
+    """Per-step means of the behavior metrics; brax reports their per-episode sums."""
+    length = float(metrics.get("eval/avg_episode_length", 0.0))
+    sums = _eval_group(metrics, "eval/episode_behavior/")
+    out = {k: v / length for k, v in sums.items()} if length > 0 else {}
+    if sums:
+        out["episode_length"] = length
+    return out

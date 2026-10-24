@@ -191,9 +191,11 @@ export default function RequestDetail({
                     ? "Reward did not pass validation"
                     : candidate?.status === "failed"
                       ? "Candidate failed"
-                      : health?.fake_sim
-                        ? "Fake simulator · no video generated"
-                        : "No rollout video yet"}
+                      : candidate?.status === "stopped"
+                        ? "Stopped early: another candidate looked more promising"
+                        : health?.fake_sim
+                          ? "Fake simulator · no video generated"
+                          : "No rollout video yet"}
                 </strong>
                 <span>
                   {running

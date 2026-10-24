@@ -6,7 +6,8 @@ atomic (temp file, then os.replace), so a reader never sees half a file.
 
     {"stage": "compiling" | "training" | "rendering" | "done",
      "steps": int, "total_steps": int, "fraction": float 0..1, "wall_s": float,
-     "curve": [{"steps": int, "wall_s": float, "episode_reward": float, "terms": {name: float}}]}
+     "curve": [{"steps": int, "wall_s": float, "episode_reward": float, "terms": {name: float},
+                "behavior": {name: float}}]}   (behavior, when present: train.CurvePoint.behavior)
 
 Kept free of jax and brax imports so the server and tests can use it.
 """
@@ -51,12 +52,15 @@ class ProgressWriter:
 
     def point(self, p: Any) -> None:
         """Record one eval. p is a train.CurvePoint (or anything with the same fields)."""
-        self.curve.append({
+        point = {
             "steps": int(p.steps),
             "wall_s": round(_num(p.wall_s) or 0.0, 2),
             "episode_reward": _num(p.episode_reward),
             "terms": {str(k): _num(v) for k, v in p.terms.items()},
-        })
+        }
+        if getattr(p, "behavior", None):
+            point["behavior"] = {str(k): _num(v) for k, v in p.behavior.items()}
+        self.curve.append(point)
         self.stage_name = "training"
         self._write()
 
@@ -106,6 +110,14 @@ def read_progress(out_dir: Path) -> dict[str, Any] | None:
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def point_metrics(point: dict[str, Any]) -> dict[str, Any]:
+    """A curve point from progress.json as flat metrics, named like a finished run's."""
+    out: dict[str, Any] = {"steps": point.get("steps"), "episode_reward": point.get("episode_reward")}
+    out.update({f"term_{k}": v for k, v in (point.get("terms") or {}).items()})
+    out.update(point.get("behavior") or {})
+    return out
 
 
 def _num(v: Any) -> float | None:

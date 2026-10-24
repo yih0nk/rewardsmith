@@ -30,9 +30,13 @@ class RewardError(ValueError):
 
 
 class Go1Env(joystick.Joystick):
-    def __init__(self, reward_fn: RewardFn, term_names: tuple[str, ...], config: config_dict.ConfigDict):
+    def __init__(
+        self, reward_fn: RewardFn, term_names: tuple[str, ...], config: config_dict.ConfigDict,
+        behavior_metrics: bool = False,
+    ):
         self._reward_fn = reward_fn
         self._term_names = term_names
+        self._behavior_metrics = behavior_metrics
         super().__init__(task="flat_terrain", config=config)
 
     @property
@@ -53,6 +57,32 @@ class Go1Env(joystick.Joystick):
             "feet_air_time": info["feet_air_time"],
             "feet_height": feet_z,
             "torques": data.actuator_force,
+        }
+
+    def reset(self, rng: jax.Array) -> mjx_env.State:
+        state = super().reset(rng)
+        if self._behavior_metrics:
+            state.metrics.update(self.behavior(state.data))
+        return state
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        state = super().step(state, action)
+        if self._behavior_metrics:
+            state.metrics.update(self.behavior(state.data))
+        return state
+
+    def behavior(self, data: mjx.Data) -> dict[str, jax.Array]:
+        """What the robot is doing, reward aside. With behavior_metrics on, every eval
+        reports these, summed over the episode, so candidates with different rewards
+        can be compared mid-training (successive halving). Off by default: they change
+        the compiled program, so default training stays exactly as it was."""
+        lin = self.get_local_linvel(data)
+        return {
+            "behavior/forward_velocity": lin[0],
+            "behavior/lateral_velocity": lin[1],
+            "behavior/yaw_rate": self.get_gyro(data)[2],
+            "behavior/base_height": data.qpos[2],
+            "behavior/upright": self.get_upvector(data)[2],
         }
 
     def _get_reward(self, data, action, info, metrics, done, first_contact, contact):
@@ -107,7 +137,9 @@ def default_impl() -> str:
     return os.environ.get("REWARDSMITH_IMPL") or ("warp" if jax.default_backend() == "gpu" else "jax")
 
 
-def make_env(source: str, impl: str | None = None, overrides: Mapping[str, Any] | None = None) -> Go1Env:
+def make_env(
+    source: str, impl: str | None = None, overrides: Mapping[str, Any] | None = None, behavior_metrics: bool = False
+) -> Go1Env:
     """Build a Go1 env from reward source code. Raises RewardError for bad rewards."""
     impl = impl or default_impl()
     try:
@@ -116,4 +148,4 @@ def make_env(source: str, impl: str | None = None, overrides: Mapping[str, Any] 
         raise RewardError(f"{type(exc).__name__}: {exc}") from exc
     term_names = discover_terms(reward_fn)
     mjx_env.ensure_menagerie_exists()
-    return Go1Env(reward_fn, term_names, make_config(term_names, impl, overrides))
+    return Go1Env(reward_fn, term_names, make_config(term_names, impl, overrides), behavior_metrics)

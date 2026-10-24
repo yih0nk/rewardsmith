@@ -21,13 +21,15 @@ export interface Progress {
   curve: CurvePoint[];
 }
 
-// written → training → trained → scored, or gate_failed / failed.
+// written → training → trained → scored, or gate_failed / failed, or stopped
+// (successive halving cut it short mid-training: metrics but no video or score).
 export type CandidateStatus =
   | "written"
   | "gate_failed"
   | "training"
   | "trained"
   | "scored"
+  | "stopped"
   | "failed";
 
 export interface Candidate {
