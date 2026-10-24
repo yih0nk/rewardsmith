@@ -16,8 +16,8 @@ import RequestList from "./components/RequestList";
 
 const suggestions = [
   "Walk backwards",
-  "Stand on two legs",
-  "Do a little dance",
+  "Spin in place",
+  "Walk to the red ball",
 ];
 export default function App() {
   const [runs, setRuns] = useState<RequestSummary[]>([]);
@@ -31,6 +31,8 @@ export default function App() {
   const [listError, setListError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [submitError, setSubmitError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLElement>(null);
   const hall = selected === "hall";
   // Open the newest run on first load only; afterwards the logo goes home and stays there.
   const firstLoad = useRef(true);
@@ -121,7 +123,12 @@ export default function App() {
   }, []);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (text.trim().length < 3 || busy) return;
+    if (busy) return;
+    if (text.trim().length < 3) {
+      setSubmitError("Type a behavior first (at least 3 characters), or click an example.");
+      inputRef.current?.focus();
+      return;
+    }
     setBusy(true);
     setSubmitError("");
     try {
@@ -135,11 +142,22 @@ export default function App() {
     }
   }
   const mode = !health
-    ? "API unavailable"
+    ? "Server unreachable · retrying"
     : health.fake_sim
       ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
       : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
   const goHome = () => setSelected(runs[0]?.id ?? "");
+  const showList = () => {
+    if (hall) goHome();
+    // After the hall of fame unmounts, the list is back on the page.
+    setTimeout(() => listRef.current?.scrollIntoView({ block: "start" }), 0);
+  };
+  // A finished run's prompt, back in the composer to edit and run again.
+  const retry = (prompt: string) => {
+    setText(prompt);
+    window.scrollTo({ top: 0 });
+    inputRef.current?.focus();
+  };
   return (
     <div className="terminal">
       <header className="session-bar">
@@ -151,7 +169,7 @@ export default function App() {
           <button
             className={`nav-link ${hall ? "" : "active"}`}
             aria-current={hall ? undefined : "page"}
-            onClick={goHome}
+            onClick={showList}
           >
             Experiments <span className="num">({runs.length})</span>
           </button>
@@ -172,13 +190,16 @@ export default function App() {
           <>
             <section className="cmd hero" aria-labelledby="hero-title">
               <div className="hero-main">
-                <p className="eyebrow">The reinforcement learning playground</p>
                 <h1 id="hero-title">
-                  A little prompt. A new <span className="em">behavior.</span>
+                  Teach a robot dog a new behavior,{" "}
+                  <span className="em">in plain English.</span>
                 </h1>
-                <p className="hero-sub">
-                  Describe a behavior. Watch your robot figure it out.
-                </p>
+                <ol className="how" aria-label="How it works">
+                  <li>You describe a behavior</li>
+                  <li>Claude writes reward functions (code that scores motion)</li>
+                  <li>Robots train in a physics simulator</li>
+                  <li>Claude judges the videos and improves the best reward</li>
+                </ol>
                 <form className="composer" onSubmit={submit}>
                   <label htmlFor="behavior">What should the robot learn?</label>
                   <div className="composer-row">
@@ -187,32 +208,39 @@ export default function App() {
                     </span>
                     <input
                       id="behavior"
+                      ref={inputRef}
                       value={text}
-                      onChange={(event) => setText(event.target.value)}
+                      onChange={(event) => {
+                        setText(event.target.value);
+                        setSubmitError("");
+                      }}
                       maxLength={300}
                       placeholder="Make the robot dog walk backwards…"
-                      required
-                      minLength={3}
+                      aria-describedby="behavior-help"
                     />
-                    <button
-                      className="primary"
-                      disabled={busy || text.trim().length < 3}
-                    >
-                      {busy ? "Starting…" : "Start experiment"}
+                    <button className="primary" disabled={busy}>
+                      {busy ? "Starting…" : "Start training"}
                     </button>
                   </div>
+                  <p
+                    className={`composer-help ${submitError ? "error-text" : ""}`}
+                    id="behavior-help"
+                    role={submitError ? "alert" : undefined}
+                  >
+                    {submitError ||
+                      "A run takes about 5–15 minutes on the GPU. Every step shows up below as it happens."}
+                  </p>
                   <div className="suggestions">
-                    <span className="label">Try</span>
+                    <span className="label">Examples, click to use</span>
                     {suggestions.map((suggestion) => (
                       <button
                         type="button"
                         className="link"
                         key={suggestion}
-                        onClick={() =>
-                          setText(
-                            `Make the robot dog ${suggestion.toLowerCase()}`,
-                          )
-                        }
+                        onClick={() => {
+                          setText(`Make the robot dog ${suggestion.toLowerCase()}`);
+                          inputRef.current?.focus();
+                        }}
                       >
                         {suggestion}
                       </button>
@@ -220,38 +248,7 @@ export default function App() {
                   </div>
                 </form>
               </div>
-              <dl className="facts">
-                <div>
-                  <dt>Mode</dt>
-                  <dd>{mode}</dd>
-                </div>
-                <div>
-                  <dt>Experiments</dt>
-                  <dd className="num">{runs.length}</dd>
-                </div>
-                <div className="facts-qr">
-                  <dt>On your phone</dt>
-                  <dd>
-                    <QrPanel />
-                  </dd>
-                </div>
-              </dl>
             </section>
-            <section className="cmd" aria-labelledby="runs-title">
-              <h2 className="cmd-title" id="runs-title">
-                Experiments
-              </h2>
-              <RequestList
-                requests={runs}
-                selected={selected}
-                onSelect={setSelected}
-              />
-            </section>
-            {submitError && (
-              <div className="error" role="alert">
-                {submitError}
-              </div>
-            )}
             {listError && (
               <div className="error" role="alert">
                 {listError} Retrying automatically.
@@ -266,7 +263,12 @@ export default function App() {
               </div>
             )}
             {detail ? (
-              <RequestDetail key={detail.id} detail={detail} health={health} />
+              <RequestDetail
+                key={detail.id}
+                detail={detail}
+                health={health}
+                onRetry={retry}
+              />
             ) : detailLoading || listLoading ? (
               <p className="cmd-note" role="status">
                 Loading experiment…
@@ -278,7 +280,7 @@ export default function App() {
                     <>
                       <h2 className="cmd-title">Pick up where you left off.</h2>
                       <p>
-                        Choose an experiment from the list above, or describe a
+                        Choose an experiment from the list below, or describe a
                         new behavior.
                       </p>
                     </>
@@ -288,14 +290,29 @@ export default function App() {
                         Your first experiment starts here.
                       </h2>
                       <p>
-                        Describe a behavior above to queue a request. Run the
-                        worker to train and evaluate candidates.
+                        Type a behavior in the box above, or click an example,
+                        then press Start training.
                       </p>
                     </>
                   )}
                 </section>
               )
             )}
+            <section className="cmd" aria-labelledby="runs-title" ref={listRef}>
+              <h2 className="cmd-title" id="runs-title">
+                All experiments
+                <span className="subtle">newest first · select one to open it</span>
+              </h2>
+              <RequestList
+                requests={runs}
+                loading={listLoading}
+                selected={selected}
+                onSelect={(id) => {
+                  setSelected(id);
+                  window.scrollTo({ top: 0 });
+                }}
+              />
+            </section>
           </>
         )}
         <footer className="directory">
@@ -315,6 +332,10 @@ export default function App() {
           <div>
             <h2>Made at</h2>
             <p>Cal Hacks 13.0</p>
+          </div>
+          <div>
+            <h2>On your phone</h2>
+            <QrPanel />
           </div>
         </footer>
       </main>
