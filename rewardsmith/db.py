@@ -5,6 +5,7 @@ claims requests inside an IMMEDIATE transaction.
 """
 
 import json
+import math
 import sqlite3
 import time
 import uuid
@@ -92,12 +93,28 @@ def _migrate(conn: sqlite3.Connection) -> None:
                     raise
 
 
+def finite_or_none(value: Any) -> Any:
+    """Replace NaN and infinities with None, inside dicts and lists too.
+
+    json.dumps writes them as NaN/Infinity, which is not JSON: strict parsers
+    (JSON.parse, jq, SQLite's json functions, starlette's JSONResponse) reject the row.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: finite_or_none(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_or_none(v) for v in value]
+    return value
+
+
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     out = _decode(dict(row))
     if out.get("metrics"):
-        out["metrics"] = json.loads(out["metrics"])
+        # Rows saved before set_candidate cleaned metrics can hold NaN: read it as null.
+        out["metrics"] = json.loads(out["metrics"], parse_constant=lambda _: None)
     return out
 
 
@@ -196,7 +213,7 @@ def set_candidate(conn: sqlite3.Connection, cid: int, **fields: Any) -> None:
     if fields.get("check_result") is not None:
         fields["check_result"] = json.dumps(fields["check_result"])
     if "metrics" in fields and fields["metrics"] is not None:
-        fields["metrics"] = json.dumps(fields["metrics"])
+        fields["metrics"] = json.dumps(finite_or_none(fields["metrics"]), allow_nan=False)
     _update(conn, "candidates", "id", cid, fields)
 
 
