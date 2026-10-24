@@ -168,3 +168,21 @@ def test_bumper_blocks_the_body_on_objects_only():
     zone_only = scene.parse(spec({"name": "goal", "kind": "zone", "color": "green", "size": [0.5], "distance": 2}))
     with pytest.raises(KeyError):
         _model(zone_only).geom("obj_bumper")
+
+    # A low step is for the feet to climb: the body passes over it.
+    step = scene.parse(spec({"name": "step", "kind": "box", "color": "gray", "size": [1.0, 1.0, 0.1], "distance": 2}))
+    m = _model(step)
+    assert m.geom("obj_step").contype == 1
+    with pytest.raises(KeyError):
+        m.geom("obj_bumper")
+
+
+def test_ball_meets_the_bumper_face_not_its_belly():
+    mujoco = pytest.importorskip("mujoco")
+    m = _model(scene.parse(spec({**BALL, "distance": 0.8, "bearing": 0})))
+    d = mujoco.MjData(m)
+    mujoco.mj_resetDataKeyframe(m, d, 0)
+    d.qpos[0] = 0.8 - 0.15 - 0.29  # bumper front just inside the ball
+    mujoco.mj_forward(m, d)
+    (normal,) = [c.frame[:3] for c in d.contact[:d.ncon] if "obj_bumper" in (m.geom(c.geom1).name, m.geom(c.geom2).name)]
+    assert abs(normal[0]) > 0.9  # pushes the body straight back, not up

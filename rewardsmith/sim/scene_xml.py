@@ -9,10 +9,13 @@ Collision groups follow the Go1 scene: the floor has contype=1/conaffinity=0
 and the feet contype=0/conaffinity=1. Solid objects get contype=3 (bits 1 and 2):
 fixed ones conaffinity=0 (they touch feet, the bumper and movable objects, not
 the floor), movable ones conaffinity=1 (they also rest on the floor). Zones are
-painted on the floor and touch nothing. With solid objects the robot also gets
-a hidden "bumper" box on its trunk with conaffinity=2, so its body is blocked
-by objects (instead of walking through and climbing over them) but never
-touches the floor, which would change the stock locomotion.
+painted on the floor and touch nothing. With tall objects the robot also gets a hidden
+"bumper" box on its trunk with conaffinity=2, so its body is blocked by them
+(instead of walking through and climbing over them) but never touches the
+floor, which would change the stock locomotion. The bumper hangs from the
+trunk to 10 cm above the floor, so a ball meets a flat face rather than
+ending up under the belly as a fulcrum. Objects lower than BUMPER_MIN_TOP
+skip bit 2: they are steps, which the feet climb and the body passes over.
 
 The rendered video uses this model, so objects are visible geoms (group 0).
 The scene also adds an "overview" camera that looks at the robot from high up,
@@ -33,7 +36,9 @@ ROUGH_BUMP = 0.05  # max height of Playground's rough heightfield, m
 OVERVIEW_CAMERA = "overview"
 ROBOT_FILE = "go1_mjx_feetonly.xml"
 BUMPER = "obj_bumper"
-BUMPER_HALF_SIZE = (0.26, 0.10, 0.06)  # m; trunk plus hips and head, from the trunk centre
+BUMPER_HALF_SIZE = (0.27, 0.10, 0.12)  # m; trunk plus hips and head, standing: 0.10 to 0.34 m above the floor
+BUMPER_POS = (0.03, 0.0, -0.06)  # from the trunk centre
+BUMPER_MIN_TOP = 0.15  # m; objects whose top is lower don't touch the bumper
 
 # Contact budget for the warp backend, which preallocates contacts and constraint rows.
 # Playground's flat Go1 uses 4 contacts per env (the feet) and 40 constraint rows.
@@ -54,7 +59,7 @@ def contact_budget(spec: SceneSpec) -> tuple[int, int]:
     for o in spec.objects:
         if o.kind == "zone":
             continue
-        extra += 4 + 2  # up to four feet and the bumper touching it
+        extra += 4 + (2 if _hits_bumper(o) else 0)  # up to four feet, and the bumper
         if o.movable:
             extra += 4 if o.kind == "box" else 1  # resting on the floor
     return (contacts + extra) * ENVS_PER_BUDGET, rows + ROWS_PER_CONTACT * extra
@@ -69,7 +74,7 @@ def compile_xml(spec: SceneSpec, base_xml: str, sensor_xml: str, robot_xml: str 
     inlined to give the trunk its bumper.
     """
     root = ET.fromstring(base_xml)
-    if robot_xml is not None and any(o.kind != "zone" for o in spec.objects):
+    if robot_xml is not None and any(_hits_bumper(o) for o in spec.objects):
         _inline_robot_with_bumper(root, robot_xml)
     asset = _child(root, "asset")
     world = _child(root, "worldbody")
@@ -136,6 +141,11 @@ def _fmt(*xs: float) -> str:
     return " ".join(f"{x:.4g}" for x in xs)
 
 
+def _hits_bumper(o: SceneObject) -> bool:
+    top = 2 * o.size[0] if o.kind == "ball" else (o.size[2] if o.kind == "box" else 0.0)
+    return top >= BUMPER_MIN_TOP
+
+
 def _body(o: SceneObject, pos: tuple[float, float, float]) -> ET.Element:
     name = body_name(o)
     body = ET.Element("body", name=name, pos=_fmt(*pos))
@@ -147,15 +157,16 @@ def _body(o: SceneObject, pos: tuple[float, float, float]) -> ET.Element:
     else:
         geom.update(type="cylinder", size=_fmt(o.size[0], 0.003))
 
+    contype = "3" if _hits_bumper(o) else "1"
     if o.kind == "zone":
         body.set("mocap", "true")
         geom.update(contype="0", conaffinity="0")
     elif o.movable:
         ET.SubElement(body, "freejoint", name=name)
-        geom.update(contype="3", conaffinity="1", condim="3", mass=_fmt(o.mass), friction="0.8 0.02 0.01")
+        geom.update(contype=contype, conaffinity="1", condim="3", mass=_fmt(o.mass), friction="0.8 0.02 0.01")
     else:
         body.set("mocap", "true")
-        geom.update(contype="3", conaffinity="0", condim="3", friction="0.8 0.02 0.01")
+        geom.update(contype=contype, conaffinity="0", condim="3", friction="0.8 0.02 0.01")
     ET.SubElement(body, "geom", geom)
     return body
 
@@ -165,7 +176,7 @@ def _inline_robot_with_bumper(root: ET.Element, robot_xml: str) -> None:
     The trunk sets its inertia explicitly, so the extra geom doesn't change the robot's mass."""
     robot = ET.fromstring(robot_xml)
     trunk = next(b for b in robot.iter("body") if b.get("name") == "trunk")
-    ET.SubElement(trunk, "geom", name=BUMPER, type="box", size=_fmt(*BUMPER_HALF_SIZE), pos="0.03 0 0",
+    ET.SubElement(trunk, "geom", name=BUMPER, type="box", size=_fmt(*BUMPER_HALF_SIZE), pos=_fmt(*BUMPER_POS),
                   group="3", contype="0", conaffinity="2", condim="3", friction="0.6 0.02 0.01")
     for i, el in enumerate(list(root)):
         if el.tag == "include" and el.get("file") == ROBOT_FILE:
