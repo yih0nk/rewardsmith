@@ -104,5 +104,5 @@ def test_auxiliary_evaluation_uses_fresh_seeded_actions(env):
     keys.clear()
     second = run(env.mjx_model, jax.random.PRNGKey(9), jnp.zeros(2))
     jax.block_until_ready(second)
-    for name in first:
-        np.testing.assert_allclose(first[name], second[name])
+    for name in first[1]:
+        np.testing.assert_allclose(first[1][name], second[1][name])
