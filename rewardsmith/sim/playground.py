@@ -1,20 +1,22 @@
 """MuJoCo Playground backend: the real simulator behind the worker.
 
 Settings (env vars):
+  REWARDSMITH_PRESET  smoke | round | final   (default round; use smoke on a laptop)
   REWARDSMITH_IMPL    jax | warp              (default jax; try warp on a CUDA GPU)
 """
 
 import os
 from pathlib import Path
 
-from . import gate, go1, go1_spec
+from . import gate, go1, go1_spec, render, train
 from .base import RunResult
 
 
 class PlaygroundSimulator:
-    def __init__(self, env_name: str = go1.BASE_ENV, impl: str | None = None):
+    def __init__(self, env_name: str = go1.BASE_ENV, preset: str | None = None, impl: str | None = None):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
+        self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or os.environ.get("REWARDSMITH_IMPL", "jax")
 
     def describe(self) -> str:
@@ -24,4 +26,17 @@ class PlaygroundSimulator:
         return gate.check_reward(source, impl=self.impl)
 
     def run(self, source: str, out_dir: Path) -> RunResult:
-        raise NotImplementedError("training is wired in the next commit")
+        env = go1.make_env(source, impl=self.impl)
+        result = train.train(env, self.preset)
+        video, frames, rollout = render.rollout_and_render(env, result, out_dir)
+        (out_dir / "reward.py").write_text(source)
+
+        last = result.curve[-1]
+        metrics = {
+            "episode_reward": round(last.episode_reward, 3),
+            **{f"term_{k}": round(v, 3) for k, v in last.terms.items()},
+            **{k: round(v, 3) for k, v in rollout.items()},
+            "train_s": round(result.train_s, 1),
+            "compile_s": round(result.compile_s, 1),
+        }
+        return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
