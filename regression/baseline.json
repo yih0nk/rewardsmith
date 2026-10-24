@@ -1,0 +1,118 @@
+{
+  "preset": "round",
+  "impl": "warp",
+  "git_sha": "3c4cd45+sampled-rollout",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "recorded_at": "2026-10-24T11:31:21+0000",
+  "total_wall_s": 455.0,
+  "reward_drop_limit": 0.05,
+  "cases": {
+    "walk_backwards": {
+      "episode_reward": 29.354,
+      "behavior_pass": true,
+      "checks": [
+        {
+          "metric": "forward_velocity",
+          "op": "<",
+          "value": -0.3,
+          "actual": -0.497,
+          "pass": true
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "pass": true
+        }
+      ],
+      "compile_s": 33.6,
+      "train_s": 111.9,
+      "wall_s": 149.8,
+      "metrics": {
+        "forward_velocity": -0.497,
+        "lateral_velocity": -0.001,
+        "yaw_rate": 0.003,
+        "base_height": 0.285,
+        "upright": 0.997,
+        "fell": 0.0
+      }
+    },
+    "walk_forward": {
+      "episode_reward": 28.911,
+      "behavior_pass": true,
+      "checks": [
+        {
+          "metric": "forward_velocity",
+          "op": ">",
+          "value": 0.3,
+          "actual": 0.589,
+          "pass": true
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "pass": true
+        }
+      ],
+      "compile_s": 35.3,
+      "train_s": 113.9,
+      "wall_s": 152.3,
+      "metrics": {
+        "forward_velocity": 0.589,
+        "lateral_velocity": -0.017,
+        "yaw_rate": -0.011,
+        "base_height": 0.255,
+        "upright": 0.994,
+        "fell": 0.0
+      }
+    },
+    "spin_in_place": {
+      "episode_reward": 27.831,
+      "behavior_pass": true,
+      "checks": [
+        {
+          "metric": "yaw_rate",
+          "op": ">",
+          "value": 1.0,
+          "actual": 1.474,
+          "pass": true
+        },
+        {
+          "metric": "forward_velocity",
+          "op": "<",
+          "value": 0.3,
+          "actual": -0.012,
+          "pass": true
+        },
+        {
+          "metric": "forward_velocity",
+          "op": ">",
+          "value": -0.3,
+          "actual": -0.012,
+          "pass": true
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "pass": true
+        }
+      ],
+      "compile_s": 35.5,
+      "train_s": 113.9,
+      "wall_s": 152.8,
+      "metrics": {
+        "forward_velocity": -0.012,
+        "lateral_velocity": -0.012,
+        "yaw_rate": 1.474,
+        "base_height": 0.283,
+        "upright": 0.996,
+        "fell": 0.0
+      }
+    }
+  }
+}
