@@ -46,7 +46,7 @@ CAMERAS = {
     # In front of the robot and to its right, looking back at it, a little from above.
     "chase": FollowCam(azimuth=140.0, elevation=-18.0, distance=1.35),
     # Square to the robot's starting left side, near ground level: gait, height and flips.
-    "side": FollowCam(azimuth=-90.0, elevation=-8.0, distance=1.6),
+    "side": FollowCam(azimuth=-90.0, elevation=-14.0, distance=1.5),
 }
 
 
