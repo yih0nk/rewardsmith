@@ -1,3 +1,4 @@
+import pytest
 import json
 
 from rewardsmith.sim import run_one
@@ -104,3 +105,35 @@ def test_behavior_metrics_reach_cold_and_warm_children(tmp_path):
     parallel._hand_over(warm, SOURCE, tmp_path / "warm", "smoke", None, behavior_metrics=True)
     warm[0].wait()
     assert json.loads(warm[1].read_text())["behavior_metrics"] is True
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_resolved_simulator_options_reach_child_execution(tmp_path, monkeypatch, warm):
+    from rewardsmith.sim import parallel
+    options = {"randomize": False, "push": True, "robustness": False}
+    reward = tmp_path / "reward.py"
+    reward.write_text(SOURCE)
+    out_dir = tmp_path / "out"
+    seen = []
+
+    class Simulator:
+        def run(self, source, directory, scene=None):
+            return RunResult(metrics={"ok": 1.0})
+
+    def simulator(fake, preset, impl, behavior_metrics=False, sim_options=None):
+        seen.append(sim_options)
+        return Simulator()
+
+    monkeypatch.setattr(run_one, "_simulator", simulator)
+    if warm:
+        job = tmp_path / "job.json"
+        parallel._hand_over((object(), job), SOURCE, out_dir, "smoke", None, sim_options=options)
+        monkeypatch.setattr(run_one, "_warm_up", lambda fake: None)
+        monkeypatch.setattr(run_one, "_redirect_output", lambda path: None)
+        assert run_one.main(["--serve", str(job), "--fake"]) == 0
+    else:
+        commands = []
+        monkeypatch.setattr(parallel.subprocess, "Popen", lambda cmd, **kwargs: commands.append(cmd))
+        parallel._start(SOURCE, out_dir, "smoke", None, True, {}, sim_options=options)
+        assert run_one.main(commands[0][3:]) == 0
+    assert seen == [options]

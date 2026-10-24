@@ -45,3 +45,15 @@ def test_gates_from_threads_take_turns(monkeypatch):
     with ThreadPoolExecutor(4) as pool:
         assert list(pool.map(sim.gate, ["a", "b", "c", "d"])) == [None] * 4
     assert peak[0] == 1  # warp's CUDA graph capture breaks if two gates run at once
+
+
+def test_explicit_options_override_environment_in_parallel_jobs(monkeypatch, tmp_path):
+    from rewardsmith.sim import parallel
+    monkeypatch.setenv("REWARDSMITH_RANDOMIZE", "1")
+    monkeypatch.setenv("REWARDSMITH_PUSH", "0")
+    monkeypatch.setenv("REWARDSMITH_ROBUSTNESS", "1")
+    seen = {}
+    monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs) or [])
+    sim = PlaygroundSimulator(preset="smoke", randomize=False, push=True, robustness=False)
+    sim.run_many([(WALK_BACKWARDS, tmp_path)])
+    assert seen["sim_options"] == {"randomize": False, "push": True, "robustness": False}

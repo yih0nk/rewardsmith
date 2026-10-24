@@ -118,7 +118,8 @@ class PlaygroundSimulator:
         try:
             return parallel.run_in_processes(
                 jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, scene=scene, pool=pool,
-                cull=cull, behavior_metrics=cull is not None,  # the cull ranks candidates by them
+                cull=cull, behavior_metrics=cull is not None or self.behavior_metrics,
+                sim_options={"randomize": self.randomize, "push": self.push, "robustness": self.robustness},
             )
         finally:
             if pool:

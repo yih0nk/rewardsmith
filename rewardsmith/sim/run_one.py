@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--serve", type=Path, default=None, help="warm up, then run the job written to this file")
     ap.add_argument("--parent-pid", type=int, default=None, help="with --serve: give up if this process exits")
     ap.add_argument("--behavior-metrics", action="store_true", help="report behavior at every eval (go1.Go1Env.behavior)")
+    ap.add_argument("--sim-options", type=json.loads, default={}, help="resolved training and robustness flags")
     args = ap.parse_args(argv)
 
     if args.serve:
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         args.reward, args.out_dir = Path(job["reward"]), Path(job["out_dir"])
         args.preset, args.impl = job.get("preset", args.preset), job.get("impl")
         args.behavior_metrics = bool(job.get("behavior_metrics"))
+        args.sim_options = job.get("sim_options") or {}
         args.scene = Path(job["scene"]) if job.get("scene") else None
         args.out_dir.mkdir(parents=True, exist_ok=True)
         _redirect_output(args.out_dir / "train.log")
@@ -76,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         from .scene import parse
 
         scene = parse(args.scene.read_text()) if args.scene else None
-        sim = _simulator(args.fake, args.preset, args.impl, args.behavior_metrics)
+        sim = _simulator(args.fake, args.preset, args.impl, args.behavior_metrics, args.sim_options)
         result = sim.run(args.reward.read_text(), args.out_dir, scene)
     except Exception as exc:
         (args.out_dir / RESULT_FILE).write_text(
@@ -88,14 +90,17 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _simulator(fake: bool, preset: str, impl: str | None, behavior_metrics: bool = False):
+def _simulator(
+    fake: bool, preset: str, impl: str | None, behavior_metrics: bool = False,
+    sim_options: dict[str, bool] | None = None,
+):
     if fake:
         from .fake import FakeSimulator
 
         return FakeSimulator()
     from .playground import PlaygroundSimulator
 
-    return PlaygroundSimulator(preset=preset, impl=impl, behavior_metrics=behavior_metrics)
+    return PlaygroundSimulator(preset=preset, impl=impl, behavior_metrics=behavior_metrics, **(sim_options or {}))
 
 
 def _warm_up(fake: bool) -> None:

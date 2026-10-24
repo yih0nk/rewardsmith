@@ -74,6 +74,7 @@ def run_in_processes(
     pool: WarmPool | None = None,
     cull: Cull | None = None,
     behavior_metrics: bool = False,
+    sim_options: dict[str, bool] | None = None,
 ) -> list[RunResult | Stopped | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs.
 
@@ -94,9 +95,9 @@ def run_in_processes(
             i, (source, out_dir) = pending.pop(0)
             warm = pool.take() if pool else None
             if warm:
-                proc = _hand_over(warm, source, out_dir, preset, impl, behavior_metrics, scene)
+                proc = _hand_over(warm, source, out_dir, preset, impl, behavior_metrics, scene, sim_options)
             else:
-                proc = _start(source, out_dir, preset, impl, fake, env, behavior_metrics, scene)
+                proc = _start(source, out_dir, preset, impl, fake, env, behavior_metrics, scene, sim_options)
             running[i] = (proc, out_dir, time.monotonic())
         time.sleep(0.5)
         for i, (proc, out_dir, started) in list(running.items()):
@@ -144,12 +145,14 @@ def _prepare(source: str, out_dir: Path, scene: SceneSpec | None = None) -> tupl
 def _hand_over(
     warm: tuple[subprocess.Popen, Path], source: str, out_dir: Path, preset: str, impl: str | None,
     behavior_metrics: bool = False, scene: SceneSpec | None = None,
+    sim_options: dict[str, bool] | None = None,
 ) -> subprocess.Popen:
     proc, job = warm
     reward_file, scene_file = _prepare(source, out_dir, scene)
     payload = {
         "reward": str(reward_file), "out_dir": str(out_dir), "preset": preset, "impl": impl,
         "behavior_metrics": behavior_metrics, "scene": str(scene_file) if scene_file else None,
+        "sim_options": sim_options or {},
     }
     tmp = job.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload))
@@ -160,9 +163,12 @@ def _hand_over(
 def _start(
     source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict,
     behavior_metrics: bool = False, scene: SceneSpec | None = None,
+    sim_options: dict[str, bool] | None = None,
 ) -> subprocess.Popen:
     reward_file, scene_file = _prepare(source, out_dir, scene)
     cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir), "--preset", preset]
+    if sim_options is not None:
+        cmd += ["--sim-options", json.dumps(sim_options)]
     if impl:
         cmd += ["--impl", impl]
     if scene_file:
