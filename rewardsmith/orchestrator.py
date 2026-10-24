@@ -149,6 +149,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     settings = config.load()
     conn = db.connect(settings.db_path)
+    for rid in db.fail_interrupted(conn):
+        log.warning("request %s was cut off by a worker restart; marked failed", rid)
     writer, editor, critic, sim = build(settings)
     log.info("worker up (fake_sim=%s, fake_llm=%s)", settings.fake_sim, settings.fake_llm)
 

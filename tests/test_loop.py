@@ -66,3 +66,15 @@ def test_behavior_checks():
     assert walk_back.passes({"forward_velocity": -0.5})
     assert not walk_back.passes({"forward_velocity": 0.2})
     assert not walk_back.passes({})
+
+
+def test_fake_metrics_include_reward_terms(tmp_path):
+    s = _settings(tmp_path)
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator())
+
+    scored = [c for r in db.get_request(conn, rid)["rounds"] for c in r["candidates"] if c["status"] == "scored"]
+    assert scored
+    # FakeWriter's rewards return "task" and "energy" terms.
+    assert all({"term_task", "term_energy"} <= set(c["metrics"]) for c in scored)

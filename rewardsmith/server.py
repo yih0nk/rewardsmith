@@ -9,7 +9,7 @@ import sqlite3
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import config, db
 
@@ -51,6 +51,31 @@ def get_request(rid: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     return req
 
 
+class Flag(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    note: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/candidates/{cid}/flag")
+def flag_candidate(cid: int, body: Flag, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    if not db.flag_candidate(conn, cid, body.note):
+        raise HTTPException(status_code=404, detail="No candidate with that id")
+    return {"ok": True}
+
+
+@app.delete("/api/candidates/{cid}/flag")
+def unflag_candidate(cid: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    if not db.unflag_candidate(conn, cid):
+        raise HTTPException(status_code=404, detail="No candidate with that id")
+    return {"ok": True}
+
+
+@app.get("/api/hall-of-fame")
+def hall_of_fame(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    return db.list_flagged(conn)
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "fake_sim": settings.fake_sim, "fake_llm": settings.fake_llm}
@@ -67,3 +92,7 @@ def main() -> None:
     import uvicorn
 
     uvicorn.run("rewardsmith.server:app", host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()

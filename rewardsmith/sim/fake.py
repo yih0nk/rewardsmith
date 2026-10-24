@@ -29,9 +29,38 @@ class FakeSimulator:
         quality = round(3 + (h % 70) / 10, 1)  # 3.0 to 9.9
         curve = [round(quality * (i + 1) / 20, 2) for i in range(20)]
         return RunResult(
-            metrics={"fake_quality": quality, "forward_velocity": round((h % 200 - 100) / 100, 2)},
+            metrics={
+                "fake_quality": quality,
+                "forward_velocity": round((h % 200 - 100) / 100, 2),
+                **_fake_terms(source),
+            },
             reward_curve=curve,
         )
 
     def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
         return run_sequentially(self, jobs)
+
+
+def _fake_terms(source: str) -> dict[str, float]:
+    """One term_<name> metric per reward term, like PlaygroundSimulator, so the board's
+    reward breakdown has data offline. Values are deterministic, from -1.0 to 2.0."""
+    out = {}
+    for name in _term_names(source):
+        h = int(hashlib.sha256(f"{name}:{source}".encode()).hexdigest()[:8], 16)
+        out[f"term_{name}"] = round((h % 300 - 100) / 100, 3)
+    return out
+
+
+def _term_names(source: str) -> list[str]:
+    """String keys of the first dict literal the reward returns, or task and energy."""
+    fallback = ["task", "energy"]
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return fallback
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            names = [k.value for k in node.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+            if names:
+                return names
+    return fallback
