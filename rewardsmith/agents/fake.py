@@ -42,3 +42,9 @@ class FakeCritic:
     def review(self, request: str, result: RunResult) -> Review:
         score = float(result.metrics.get("fake_quality", 5.0))
         return Review(score=score, critique=f"Fake critique for '{request}': try a stronger task term.")
+
+
+class FakeRanker:
+    def rank(self, request: str, snapshots: list[dict[str, Any]]) -> list[int]:
+        """Highest episode reward first: fine offline, though rewards don't compare in real runs."""
+        return sorted(range(len(snapshots)), key=lambda i: -(snapshots[i].get("episode_reward") or 0.0))

@@ -42,3 +42,9 @@ class Editor(Protocol):
 
 class Critic(Protocol):
     def review(self, request: str, result: RunResult) -> Review: ...
+
+
+class Ranker(Protocol):
+    def rank(self, request: str, snapshots: list[dict[str, Any]]) -> list[int]:
+        """Positions into snapshots, most promising first (successive halving)."""
+        ...
