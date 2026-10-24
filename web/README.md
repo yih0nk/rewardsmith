@@ -42,26 +42,40 @@ Requests are persisted by the backend; the worker consumes queued requests.
 - `GET /api/hall-of-fame`: flagged candidates, newest flag first, each with
   `request_id`, `request_text` and `round_n`.
 
-Select a round and then a candidate to inspect its results. Candidate indices
-from the worker are zero-based; the UI displays them starting at 1. All numeric
-metrics are displayed using their returned names; `term_*` metrics appear in a
-separate reward breakdown. Rounds can be empty while the writer is running.
-Failed gates and training errors remain inspectable. No fixed number of rounds
-or candidates is assumed by the UI.
+The board reads top to bottom for a first-time viewer:
+
+1. The prompt box, with click-to-fill examples and a one-line "how it works".
+2. The selected run: what it is doing now in plain words ("Training 4 robots in
+   parallel"), a timer for the current step and for the whole run, and a strip of
+   the seven pipeline steps (set up, write rewards, test code, compile, train,
+   record video, judge). Timers tick on the client clock from each stage's start
+   time on the server (round, candidate and event timestamps plus each training
+   process's own clock), corrected by the server's `Date` header. When the API has
+   no start time for a stage, the timer counts from when the page first saw it.
+   The success check is written out as a sentence.
+3. The best result so far: its video, critic score, the success check clause by
+   clause and Claude's critique. A run where every candidate failed shows what
+   happened and what to try instead.
+4. "Explore the run": collapsed rows for all candidates and the round timeline,
+   one candidate in depth (learning curve, reward breakdown, measurements with
+   units), the reward code, the diff, every round's winner side by side and the
+   activity log.
+5. All experiments.
+
+Candidates are named "Round 2 · Candidate 3" everywhere; worker indices are
+zero-based and the UI counts from 1. Terms like critic score, code check (the
+gate) and revising the best rewards (carry) have hover and focus explanations.
+No fixed number of rounds or candidates is assumed by the UI.
 
 `#<request id>` links directly to an experiment. `#hall` is the hall of fame: candidates
-someone flagged as reward hacking from the evaluation panel. A completed run with two or
-more rollout videos also shows each round's winner side by side. The opening lists the
-mode, the run count and a QR code to the board for judges.
+someone flagged as reward hacking from the evaluation panel. The footer has a QR code
+to the board for judges.
 
 The board is styled as a terminal: a black page in green IBM Plex Mono (bound to the
 `TerminalPlex` alias), laid out as numbered sections with the content in an output column.
-Each round row shows its winner's score, the change from the previous scored round and a
-0–10 strip with every candidate as `o` and the winner as `O`. The run summary compares
-the best score with round 1. Live training progress is drawn as a text bar from the real
-fraction, still exposed as an ARIA progress bar. While a round trains, the stage shows the
-candidate furthest along, with its reward curve under the video. The only motion is the
-cursor after the wordmark, which stops under reduced motion.
+Live training progress is drawn as a text bar from the real fraction, still exposed as an
+ARIA progress bar. The only motion is the cursor after the wordmark, which stops under
+reduced motion.
 
 Styles live in `src/styles/`, one file per area, with the design tokens in `base.css`.
 
@@ -77,4 +91,5 @@ bundle when it exists at startup; restart the server after the first build.
 
 The frontend tests cover the API contract, empty rounds, candidate failures,
 multiple candidates, best-round selection, metrics, reward terms, video paths,
-colored diffs, flagging, the round gallery and hall-of-fame entries.
+colored diffs, flagging, the round gallery, hall-of-fame entries, every stage
+label, the timers and the success check sentence.
