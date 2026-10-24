@@ -2,6 +2,7 @@ import importlib
 import os
 import sqlite3
 import threading
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -139,3 +140,26 @@ def test_settings_ignore_dotenv_until_an_entry_point_loads_it(tmp_path, monkeypa
     config.load_dotenv()
     assert config.load().max_rounds == 42
     monkeypatch.delenv("REWARDSMITH_ROUNDS")
+
+
+def test_request_detail_attaches_live_progress(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    conn = db.connect(tmp_path / "rewardsmith.db")
+    rid = db.create_request(conn, "walk backwards")
+    round_id = db.add_round(conn, rid, 1)
+    training = db.add_candidate(conn, round_id, 0, "def reward(state, action, prev_action): ...")
+    waiting = db.add_candidate(conn, round_id, 1, "def reward(state, action, prev_action): ...")
+    db.set_candidate(conn, training, status="training")
+
+    # The orchestrator's folder convention: artifacts/<rid>/r<round n>c<idx>/
+    from rewardsmith.sim.progress import ProgressWriter
+
+    w = ProgressWriter(tmp_path / "artifacts" / rid / "r1c0", total_steps=1000)
+    w.point(SimpleNamespace(steps=250, wall_s=31.0, episode_reward=1.5, terms={"task": 1.2}))
+
+    cands = client.get(f"/api/requests/{rid}").json()["rounds"][0]["candidates"]
+    by_id = {c["id"]: c for c in cands}
+    p = by_id[training]["progress"]
+    assert (p["stage"], p["steps"], p["total_steps"], p["fraction"]) == ("training", 250, 1000, 0.25)
+    assert p["curve"] == [{"steps": 250, "wall_s": 31.0, "episode_reward": 1.5, "terms": {"task": 1.2}}]
+    assert by_id[waiting]["progress"] is None
