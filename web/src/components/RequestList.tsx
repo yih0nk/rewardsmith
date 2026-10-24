@@ -6,12 +6,19 @@ interface Props {
   onSelect: (id: string) => void;
 }
 // One row per run: status, best score, request. The selected row is filled green.
-export default function RequestList({ requests, loading = false, selected, onSelect }: Props) {
+export default function RequestList({
+  requests,
+  loading = false,
+  selected,
+  onSelect,
+}: Props) {
   return (
     <nav aria-label="Recent experiments" className="runs">
       {requests.length === 0 && (
         <p className="subtle">
-          {loading ? "Loading experiments…" : "No experiments yet. Start one with the box at the top."}
+          {loading
+            ? "Loading experiments…"
+            : "No experiments yet. Start one with the box at the top."}
         </p>
       )}
       {requests.map((run) => (
