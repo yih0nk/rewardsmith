@@ -249,3 +249,19 @@ def test_malformed_scene_color_returns_validation_error(tmp_path, monkeypatch):
         "objects": [{"name": "ball", "kind": "ball", "size": [0.15], "distance": 2, "color": []}]}})
     assert response.status_code == 422
     assert "color must be" in response.json()["detail"]
+
+
+def test_pause_resume_cancel_endpoints(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    rid = client.post("/api/requests", json={"text": "walk backwards"}).json()["id"]
+
+    assert client.post(f"/api/requests/{rid}/pause").json() == {"state": "paused"}
+    assert client.get(f"/api/requests/{rid}").json()["status"] == "paused"
+    again = client.post(f"/api/requests/{rid}/pause")
+    assert again.status_code == 409 and "paused" in again.json()["detail"]
+    assert client.post(f"/api/requests/{rid}/resume").json() == {"state": "queued"}
+    assert client.post(f"/api/requests/{rid}/cancel").json() == {"state": "cancelled"}
+    assert client.post(f"/api/requests/{rid}/resume").status_code == 409
+
+    assert client.post("/api/requests/missing/cancel").status_code == 404
+    assert client.post(f"/api/requests/{rid}/explode").status_code == 404

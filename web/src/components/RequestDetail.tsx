@@ -15,6 +15,7 @@ import FlagControl from "./FlagControl";
 import RewardTerms from "./RewardTerms";
 import RoundGallery from "./RoundGallery";
 import RoundTimeline, { formatDelta, roundScore } from "./RoundTimeline";
+import RunControls from "./RunControls";
 import RunStatus from "./RunStatus";
 import TrainingProgress, { RewardCurve, liveState } from "./TrainingProgress";
 
@@ -118,13 +119,20 @@ export default function RequestDetail({
       ? "Waiting"
       : running
         ? "In progress"
-        : detail.status === "failed"
-          ? "Failed"
-          : scoredAll.length
-            ? "Finished"
-            : "Finished · no result";
+        : detail.status === "paused"
+          ? "Paused"
+          : detail.status === "cancelled"
+            ? "Cancelled"
+            : detail.status === "failed"
+              ? "Failed"
+              : scoredAll.length
+                ? "Finished"
+                : "Finished · no result";
   // Nothing to show and nothing coming: say so instead of an empty stage.
-  const nothingWorked = !running && scoredAll.length === 0;
+  // (A paused or cancelled run with no result yet just shows its status.)
+  const nothingWorked =
+    (detail.status === "done" || detail.status === "failed") &&
+    scoredAll.length === 0;
   const metrics = Object.entries(candidate?.metrics ?? {}).filter(
     (entry): entry is [string, number] =>
       typeof entry[1] === "number" && Number.isFinite(entry[1]),
@@ -176,6 +184,7 @@ export default function RequestDetail({
               queue={queue}
               now={now}
             />
+            <RunControls run={detail} />
             <div className="success-spec">
               <span className="label">
                 <Explain term="successCheck">Success check</Explain>

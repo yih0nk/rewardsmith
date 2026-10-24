@@ -14,7 +14,14 @@ export type StepKey =
   | "judging";
 
 export type StageKey =
-  "queued" | StepKey | "between" | "done" | "no_results" | "failed";
+  | "queued"
+  | StepKey
+  | "between"
+  | "done"
+  | "no_results"
+  | "failed"
+  | "paused"
+  | "cancelled";
 
 // The steps one run goes through, in order. Writing to judging repeats every round.
 export const STEPS: { key: StepKey; short: string }[] = [
@@ -142,6 +149,24 @@ function inferStage(
       round: null,
       startedAt: detail.created_at,
     };
+  if (detail.status === "paused" || detail.status === "cancelled") {
+    const done = rounds.filter((r) => r.status === "done").length;
+    const after = done ? ` after ${plural(done, "round")}` : " before it started";
+    return detail.status === "paused"
+      ? {
+          key: "paused",
+          label: `Paused${after}`,
+          hint: "Resume to continue from the next round.",
+          round: last?.n ?? null,
+          startedAt: lastEvent?.created_at ?? null,
+        }
+      : {
+          key: "cancelled",
+          label: `Cancelled${after}`,
+          round: last?.n ?? null,
+          startedAt: lastEvent?.created_at ?? null,
+        };
+  }
   if (detail.status === "failed") {
     const error = [...detail.events].reverse().find((e) => e.kind === "error");
     return {

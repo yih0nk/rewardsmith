@@ -67,7 +67,9 @@ export default function RunStatus({
               ? "DONE"
               : stage.key === "no_results"
                 ? "NO RESULT"
-                : "STOPPED"}
+                : stage.key === "paused"
+                  ? "PAUSED"
+                  : "STOPPED"}
         </span>
         <p className="now-label" role="status">
           {stage.label}

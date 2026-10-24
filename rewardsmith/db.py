@@ -19,14 +19,15 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
     id          TEXT PRIMARY KEY,
     text        TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | failed
+    status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | paused | done | failed | cancelled
     best_score  REAL,
     best_candidate_id INTEGER,
     created_at  REAL NOT NULL,
     scene        TEXT,     -- JSON scene spec; NULL until the scene writer has run
     success_spec TEXT,     -- JSON: the pass/fail check, written once before training (agents/checker.py)
     success_check_error TEXT, -- non-null when no trustworthy success spec could be written
-    succeeded    INTEGER   -- 1 if the best candidate passed both the critic and the check
+    succeeded    INTEGER,  -- 1 if the best candidate passed both the critic and the check
+    control      TEXT      -- "pause" | "cancel": for the worker to act on at its next checkpoint
 );
 CREATE TABLE IF NOT EXISTS rounds (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +91,7 @@ def connect(path: Path) -> sqlite3.Connection:
 # Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
 # existing table alone, so a db file from an older version gets them here.
 ADDED_COLUMNS = {
-    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER"},
+    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER", "control": "TEXT"},
     "candidates": {
         "flagged_at": "REAL",
         "flag_note": "TEXT",
@@ -318,16 +319,81 @@ UNFINISHED = ("written", "training", "trained")
 
 def fail_request(conn: sqlite3.Connection, rid: str, reason: str) -> None:
     """Mark a request failed, with its unfinished rounds closed and unfinished candidates failed."""
-    set_request(conn, rid, status="failed")
+    set_request(conn, rid, status="failed", control=None)
+    _close_unfinished(conn, rid, "failed", "Stopped: the run failed before this candidate finished.")
+    log_event(conn, rid, "error", reason)
+
+
+def _close_unfinished(conn: sqlite3.Connection, rid: str, status: str, error: str) -> None:
     conn.execute(
-        f"""UPDATE candidates SET status = 'failed', error = COALESCE(error, ?)
+        f"""UPDATE candidates SET status = ?, status_at = ?, error = COALESCE(error, ?)
             WHERE status IN ({",".join("?" * len(UNFINISHED))})
               AND round_id IN (SELECT id FROM rounds WHERE request_id = ?)""",
-        ("Stopped: the run failed before this candidate finished.", *UNFINISHED, rid),
+        (status, time.time(), error, *UNFINISHED, rid),
     )
     conn.execute("UPDATE rounds SET status = 'done' WHERE request_id = ? AND status = 'running'", (rid,))
     conn.execute("UPDATE stages SET ended_at = ? WHERE request_id = ? AND ended_at IS NULL", (time.time(), rid))
-    log_event(conn, rid, "error", reason)
+
+
+# Pause, resume and cancel. A queued or paused request changes at once; a running one gets a
+# `control` the worker acts on at its next checkpoint (pause between rounds, cancel sooner).
+# Each change is one conditional UPDATE, so it can't race the worker claiming the request.
+# They return the new state, or None when the request is not in a state that allows it.
+
+def pause_request(conn: sqlite3.Connection, rid: str) -> str | None:
+    if _change(conn, "UPDATE requests SET status = 'paused' WHERE id = ? AND status = 'queued'", rid):
+        log_event(conn, rid, "control", "Paused before it started")
+        return "paused"
+    if _change(conn, "UPDATE requests SET control = 'pause' WHERE id = ? AND status = 'running' AND control IS NULL", rid):
+        log_event(conn, rid, "control", "Pausing after the current round")
+        return "pausing"
+    return None
+
+
+def resume_request(conn: sqlite3.Connection, rid: str) -> str | None:
+    if _change(conn, "UPDATE requests SET status = 'queued', control = NULL WHERE id = ? AND status = 'paused'", rid):
+        log_event(conn, rid, "control", "Resumed: waiting for the worker")
+        return "queued"
+    if _change(conn, "UPDATE requests SET control = NULL WHERE id = ? AND status = 'running' AND control = 'pause'", rid):
+        log_event(conn, rid, "control", "Pause withdrawn")
+        return "running"
+    return None
+
+
+def cancel_request(conn: sqlite3.Connection, rid: str) -> str | None:
+    if _change(conn, "UPDATE requests SET status = 'cancelled', control = NULL WHERE id = ? AND status IN ('queued', 'paused')", rid):
+        _close_unfinished(conn, rid, "stopped", CANCELLED)
+        log_event(conn, rid, "control", "Cancelled")
+        return "cancelled"
+    if _change(conn, "UPDATE requests SET control = 'cancel' WHERE id = ? AND status = 'running' AND control IS NOT 'cancel'", rid):
+        log_event(conn, rid, "control", "Cancelling at the next checkpoint")
+        return "cancelling"
+    return None
+
+
+def finish_paused(conn: sqlite3.Connection, rid: str, rounds_done: int) -> None:
+    """The worker reached a round boundary with a pause pending."""
+    set_request(conn, rid, status="paused", control=None)
+    log_event(conn, rid, "control", f"Paused after round {rounds_done}. Resume to continue.")
+
+
+def finish_cancelled(conn: sqlite3.Connection, rid: str) -> None:
+    """The worker reached a checkpoint with a cancel pending."""
+    set_request(conn, rid, status="cancelled", control=None)
+    _close_unfinished(conn, rid, "stopped", CANCELLED)
+    log_event(conn, rid, "control", "Cancelled")
+
+
+def control_of(conn: sqlite3.Connection, rid: str) -> str | None:
+    row = conn.execute("SELECT control FROM requests WHERE id = ?", (rid,)).fetchone()
+    return row["control"] if row else None
+
+
+CANCELLED = "Cancelled before this candidate finished."
+
+
+def _change(conn: sqlite3.Connection, sql: str, rid: str) -> bool:
+    return conn.execute(sql, (rid,)).rowcount > 0
 
 
 def flag_candidate(conn: sqlite3.Connection, cid: int, note: str) -> bool:

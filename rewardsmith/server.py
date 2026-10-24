@@ -57,6 +57,24 @@ def list_requests(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
     return db.list_requests(conn)
 
 
+CONTROLS = {"pause": db.pause_request, "resume": db.resume_request, "cancel": db.cancel_request}
+
+
+@app.post("/api/requests/{rid}/{action}")
+def control_request(rid: str, action: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """pause | resume | cancel. Returns the new state ("pausing"/"cancelling" while the
+    worker finishes its current step); 409 when the request's state doesn't allow it."""
+    if action not in CONTROLS:
+        raise HTTPException(status_code=404, detail="Unknown action")
+    req = db.get_request(conn, rid)
+    if req is None:
+        raise HTTPException(status_code=404, detail="No request with that id")
+    state = CONTROLS[action](conn, rid)
+    if state is None:
+        raise HTTPException(status_code=409, detail=f"Can't {action} a {req['status']} request")
+    return {"state": state}
+
+
 @app.get("/api/requests/{rid}")
 def get_request(rid: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     req = db.get_request(conn, rid)
