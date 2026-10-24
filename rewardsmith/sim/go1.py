@@ -16,6 +16,7 @@ from mujoco_playground import registry
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src.locomotion.go1 import joystick
 
+from . import warp_quiet  # noqa: F401  (silences warp's per-step solver warning)
 from .go1_spec import FEATURES
 from .reward_slot import load_reward
 
