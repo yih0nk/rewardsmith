@@ -5,6 +5,7 @@ import DiffView from "./DiffView";
 import FlagControl from "./FlagControl";
 import RewardTerms from "./RewardTerms";
 import RoundGallery from "./RoundGallery";
+import TrainingProgress, { liveState } from "./TrainingProgress";
 
 export default function RequestDetail({
   detail,
@@ -30,6 +31,7 @@ export default function RequestDetail({
     current?.candidates.find((c) => c.id === current.best_candidate_id) ??
     current?.candidates.at(-1);
   const running = detail.status === "running" || detail.status === "queued";
+  const live = candidate ? liveState(candidate) : null;
   const stage =
     detail.status === "queued"
       ? "Queued · waiting for worker"
@@ -82,7 +84,7 @@ export default function RequestDetail({
               </span>
             </span>
             <span className="mini-badge">
-              {candidate?.video_path ? "ROLLOUT" : "NO FOOTAGE"}
+              {candidate?.video_path ? "ROLLOUT" : live ? "LIVE" : "NO FOOTAGE"}
             </span>
           </div>
           {candidate?.video_path ? (
@@ -94,6 +96,10 @@ export default function RequestDetail({
               loop
               playsInline
             />
+          ) : candidate && live ? (
+            <div className="video-empty">
+              <TrainingProgress c={candidate} large />
+            </div>
           ) : (
             <div className="video-empty">
               <strong>
@@ -116,7 +122,9 @@ export default function RequestDetail({
             <span>
               {candidate?.video_path
                 ? "Recorded rollout · use video controls"
-                : "No recorded footage"}
+                : live
+                  ? "Training live · updates automatically"
+                  : "No recorded footage"}
             </span>
             <span className="playback-end">MuJoCo Playground</span>
           </div>
