@@ -66,8 +66,11 @@ def run_request(
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
     critic_request = text if not scene.objects else f"{text}\n\nScene: {scene.summary()}"
-    spec = _success_spec(conn, req, checker)
+    spec = _success_spec(conn, req, checker, scene)
     check_error = db.get_request(conn, rid).get("success_check_error")
+    set_spec = getattr(sim, "set_evaluation_spec", None)
+    if set_spec:
+        set_spec(spec if not check_error else None)
 
     for n in range(1, settings.max_rounds + 1):
         round_id = db.add_round(conn, rid, n)
@@ -235,15 +238,24 @@ def _succeeded(best: Best, settings: config.Settings) -> bool:
 
 
 def _success_spec(
-    conn: sqlite3.Connection, req: dict[str, Any], checker: Checker | None
+    conn: sqlite3.Connection, req: dict[str, Any], checker: Checker | None, scene: SceneSpec | None = None
 ) -> list[dict[str, Any]] | None:
     """The request's success check, written now, before any candidate trains, and stored
     for good. Falls back to "don't fall over" if the checker fails."""
-    if req.get("success_spec") or checker is None:
-        return req.get("success_spec")
     rid = req["id"]
+    if req.get("success_spec"):
+        # Keep stored specs immutable, but do not certify an old locomotion-only
+        # check as proof of a scene objective after an upgrade.
+        try:
+            check_spec.validate_for_scene(req["success_spec"], req["text"], scene)
+        except check_spec.SpecError as exc:
+            db.set_request(conn, rid, success_check_error=_describe(exc))
+        return req["success_spec"]
+    if checker is None:
+        return None
     try:
-        spec = checker.write_spec(req["text"])
+        spec = checker.write_spec(req["text"], scene=scene) if scene and not scene.is_empty else checker.write_spec(req["text"])
+        spec = check_spec.validate_for_scene(spec, req["text"], scene)
     except Exception as exc:
         log.exception("success check for %s failed", rid)
         db.log_event(conn, rid, "check", f"Could not write the success check ({type(exc).__name__}); using: don't fall")

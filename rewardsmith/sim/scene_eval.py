@@ -9,8 +9,10 @@ from collections.abc import Callable
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
+from . import outcomes
 from .go1 import Go1Env
 from .base import ROLLOUT_STEPS
 
@@ -22,6 +24,8 @@ def target_metrics(
     num_envs: int = 32,
     steps: int = ROLLOUT_STEPS,
     seed: int = 1,
+    success_spec: list[dict[str, Any]] | None = None,
+    out_dir=None,
 ) -> dict[str, float]:
     """Metrics about the scene's target object, or {} if the scene has none.
 
@@ -33,28 +37,60 @@ def target_metrics(
     target_fell       fraction of episodes that ended with the robot flipped
     """
     target = env.scene.target_object
-    if target is None:
+    selected = outcomes.requested(success_spec, env.scene)
+    needs_outcomes = bool(selected) or any(c["metric"] == "scene_fell" for c in success_spec or [])
+    if target is None and not needs_outcomes:
         return {}
     policy = make_policy(params, deterministic=False)
+    placed = [(obj.name, env.mj_model.body("obj_" + obj.name).id) for obj in env.scene.objects]
 
-    def dist(data):
-        return env.scene_features(data)["target_dist"]
+    def observe(state):
+        data = state.data
+        objects = {}
+        for name, body in placed:
+            forward = data.xmat[body][:, 0]
+            objects[name] = {"pos": data.xpos[body], "yaw": jnp.arctan2(forward[1], forward[0]),
+                             "rotation": data.xmat[body]}
+        return {
+            "base": data.qpos[:3], "yaw": env._yaw(data), "up": env.get_upvector(data)[2],
+            "speed": jnp.linalg.norm(env.get_local_linvel(data)[:2]),
+            "yaw_rate": env.get_gyro(data)[2],
+            "feet": data.site_xpos[env._feet_site_id],
+            "contacts": state.info["last_contact"], "objects": objects, "done": state.done,
+            "distance": env.scene_features(data)["target_dist"] if target else jnp.float32(0),
+        }
 
     def run(rng):
         reset_rng, act_rng = jax.random.split(rng)
         state = jax.vmap(env.reset)(jax.random.split(reset_rng, num_envs))
-        start = jax.vmap(dist)(state.data)
+        start = jax.vmap(observe)(state)
 
         def body(state, key):
             action, _ = policy(state.obs, key)
             state = jax.vmap(env.step)(state, action)
-            return state, (jax.vmap(dist)(state.data), state.done)
+            return state, jax.vmap(observe)(state)
 
-        _, (dists, done) = jax.lax.scan(body, state, jax.random.split(act_rng, steps))
-        return start, dists, done  # (num_envs,), (steps, num_envs), (steps, num_envs)
+        _, samples = jax.lax.scan(body, state, jax.random.split(act_rng, steps))
+        return start, samples
 
-    start, dists, done = (np.asarray(x) for x in jax.jit(run)(jax.random.PRNGKey(seed)))
-    return _summarize(start, dists, done, target.reach_radius, env.dt)
+    start, samples = jax.device_get(jax.jit(run)(jax.random.PRNGKey(seed)))
+    summary = _summarize(start["distance"], samples["distance"], samples["done"], target.reach_radius, env.dt) if target else {}
+    if target:
+        summary["scene_fell"] = summary["target_fell"]
+    if needs_outcomes:
+        def row(tree, *indices):
+            return jax.tree_util.tree_map(lambda array: np.asarray(array)[indices].tolist(), tree)
+        episodes = [{"start": row(start, i), "frames": [row(samples, t, i) for t in range(steps)]}
+                    for i in range(num_envs)]
+        measured, evidence = outcomes.evaluate(env.scene, episodes, env.dt, selected)
+        summary.update(measured)
+        if out_dir is not None:
+            import json
+            (out_dir / "scene_evaluation.json").write_text(json.dumps({
+                "dt": env.dt, "steps": steps, "seed": seed, "episodes": evidence,
+                "definitions": {name: outcomes.parts(name, env.scene) for name in selected},
+            }, indent=2))
+    return summary
 
 
 def _summarize(start, dists, done, reach_radius: float, dt: float) -> dict[str, float]:

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ..sim.base import RunResult
+from ..sim.scene import SceneSpec
 
 # Every reward a writer or editor produces must define exactly this function.
 REWARD_CONTRACT = '''\
@@ -47,7 +48,7 @@ class Critic(Protocol):
 
 
 class Checker(Protocol):
-    def write_spec(self, request: str) -> list[dict[str, Any]]:
+    def write_spec(self, request: str, scene: SceneSpec | None = None) -> list[dict[str, Any]]:
         """A validated success spec (see checker.py), written before any training."""
         ...
 

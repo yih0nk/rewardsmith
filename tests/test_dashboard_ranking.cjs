@@ -45,3 +45,32 @@ test('legacy responses without an explicit winner use pass-first ranking', () =>
 test('degraded checker is displayed as unverified', () => {
   assert.match(render({...detail, success_check_error: 'timeout'}), /Success could not be verified/);
 });
+
+
+test('scene success criteria show measured rates, exact requirements and failures', () => {
+  const SuccessCheck = require('../web/src/components/SuccessCheck.tsx').default;
+  const html = renderToStaticMarkup(React.createElement(SuccessCheck, {check: {pass: false, clauses: [
+    {metric: 'target_reached', op: '>=', value: 0.8, actual: 0.75, pass: false},
+    {metric: 'target_fell', op: '<=', value: 0.1, actual: 0.0, pass: true},
+    {metric: 'target_final_dist', op: '<', value: 0.5, actual: null, pass: false},
+  ]}}));
+  assert.match(html, /Reached target/);
+  assert.match(html, /75%/);
+  assert.match(html, /&gt;= 80%/);
+  assert.match(html, /&lt;= 10%/);
+  assert.match(html, /Not measured/);
+  assert.match(html, /Fail/);
+});
+
+
+test('advanced outcomes display readable stages and episode success rates', () => {
+  const SuccessCheck = require('../web/src/components/SuccessCheck.tsx').default;
+  const html = renderToStaticMarkup(React.createElement(SuccessCheck, {check: {pass: true, clauses: [
+    {metric: 'sequence:climb:step>stand_on:step@2', op: '>=', value: 0.8, actual: 0.875, pass: true},
+    {metric: 'all:push:box:goal&avoid:obstacle', op: '>=', value: 0.8, actual: 0.9, pass: true},
+  ]}}));
+  assert.match(html, /Climb onto step, then Stand still on step for 2 s/);
+  assert.match(html, /Push box into goal and Avoid obstacle with progress/);
+  assert.match(html, /87.5%/);
+  assert.match(html, /&gt;= 80%/);
+});

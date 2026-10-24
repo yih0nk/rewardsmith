@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { RequestDetail as Detail, Health, artifactUrl } from "../api";
 import CandidateCard from "./CandidateCard";
+import SuccessCheck from "./SuccessCheck";
 import DiffView from "./DiffView";
 import FlagControl from "./FlagControl";
 import RewardTerms from "./RewardTerms";
@@ -239,18 +240,7 @@ export default function RequestDetail({
               <span className="score-of num">/ 10</span>
             </p>
             <p className="score-label label">Critic score</p>
-            {candidate?.check_result && (
-              <p
-                className={`check-result ${candidate.check_result.pass && candidate.check_result.verified !== false ? "pass" : ""}`}
-              >
-                Success check:{" "}
-                {candidate.check_result.verified === false
-                  ? "unavailable"
-                  : candidate.check_result.pass
-                    ? "passed"
-                    : "failed"}
-              </p>
-            )}
+            {candidate?.check_result && <SuccessCheck check={candidate.check_result} />}
             <dl className="metrics">
               {metrics
                 .filter(([key]) => !key.startsWith("term_"))

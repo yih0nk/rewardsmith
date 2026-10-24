@@ -92,12 +92,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _simulator(
     fake: bool, preset: str, impl: str | None, behavior_metrics: bool = False,
-    sim_options: dict[str, bool] | None = None,
+    sim_options: dict[str, object] | None = None,
 ):
     if fake:
         from .fake import FakeSimulator
 
-        return FakeSimulator()
+        sim = FakeSimulator()
+        sim.set_evaluation_spec((sim_options or {}).get("evaluation_spec"))
+        return sim
     from .playground import PlaygroundSimulator
 
     return PlaygroundSimulator(preset=preset, impl=impl, behavior_metrics=behavior_metrics, **(sim_options or {}))

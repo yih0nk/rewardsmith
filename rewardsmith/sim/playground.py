@@ -41,6 +41,7 @@ class PlaygroundSimulator:
         push: bool | None = None,
         robustness: bool | None = None,
         behavior_metrics: bool = False,
+        evaluation_spec: list[dict] | None = None,
     ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
@@ -50,6 +51,7 @@ class PlaygroundSimulator:
         self.randomize = _flag("REWARDSMITH_RANDOMIZE", "1") if randomize is None else randomize
         self.push = _flag("REWARDSMITH_PUSH") if push is None else push
         self.robustness = _flag("REWARDSMITH_ROBUSTNESS", "1") if robustness is None else robustness
+        self.evaluation_spec = evaluation_spec
         self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
         self._pool: parallel.WarmPool | None = None
         # The worker gates drafts in threads, but two warp rollouts at once in one
@@ -80,7 +82,9 @@ class PlaygroundSimulator:
         result = train.train(train_env, self.preset, on_progress=progress.point, randomize=self.randomize)
         progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
-        rollout.update(scene_eval.target_metrics(env, result.make_inference_fn, result.params))
+        rollout.update(scene_eval.target_metrics(
+            env, result.make_inference_fn, result.params, success_spec=self.evaluation_spec, out_dir=out_dir
+        ))
         robust = robustness.evaluate(env, result, rollout, out_dir) if self.robustness else {}
         (out_dir / "reward.py").write_text(source)
 
@@ -97,6 +101,9 @@ class PlaygroundSimulator:
         }
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
+
+    def set_evaluation_spec(self, spec: list[dict] | None) -> None:
+        self.evaluation_spec = spec
 
     def warm_up(self, n: int) -> None:
         """Start n training processes now, so their imports overlap the writer's Claude call."""
@@ -119,7 +126,8 @@ class PlaygroundSimulator:
             return parallel.run_in_processes(
                 jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, scene=scene, pool=pool,
                 cull=cull, behavior_metrics=cull is not None or self.behavior_metrics,
-                sim_options={"randomize": self.randomize, "push": self.push, "robustness": self.robustness},
+                sim_options={"randomize": self.randomize, "push": self.push, "robustness": self.robustness,
+                             "evaluation_spec": self.evaluation_spec},
             )
         finally:
             if pool:

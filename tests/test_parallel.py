@@ -152,3 +152,23 @@ def test_parent_liveness_check_does_not_terminate_a_live_process():
         parent.terminate()
         parent.wait(timeout=10)
     assert not run_one._alive(parent.pid)
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_scene_evaluation_plan_survives_training_process_handoff(tmp_path, warm):
+    from rewardsmith.agents.fake import FakeScener
+    from rewardsmith.sim import parallel
+    from rewardsmith.sim.scene import parse
+
+    scene = parse(FakeScener().make("push the box into the zone"))
+    spec = [{"metric": "push:box:zone", "op": ">=", "value": 0.8}]
+    pool = parallel.WarmPool(1, fake=True) if warm else None
+    try:
+        [result] = run_in_processes([(SOURCE, tmp_path / "job")], fake=True, max_parallel=1,
+                                   scene=scene, pool=pool, timeout_s=20,
+                                   sim_options={"evaluation_spec": spec})
+    finally:
+        if pool:
+            pool.close()
+    assert isinstance(result, RunResult)
+    assert isinstance(result.metrics["push:box:zone"], float)
