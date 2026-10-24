@@ -33,13 +33,17 @@ class WarmPool:
         self.dir = Path(tempfile.mkdtemp(prefix="rewardsmith_warm_"))
         self.env = _child_env(n)
         self.procs: list[tuple[subprocess.Popen, Path]] = []
-        for i in range(n):
-            job = self.dir / f"job{i}.json"
-            cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", "--serve", str(job), "--parent-pid", str(os.getpid())]
-            if fake:
-                cmd.append("--fake")
-            log = open(self.dir / f"warm{i}.log", "w")  # noqa: SIM115 (the child redirects once it has a job)
-            self.procs.append((subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=self.env), job))
+        try:
+            for i in range(n):
+                job = self.dir / f"job{i}.json"
+                cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", "--serve", str(job), "--parent-pid", str(os.getpid())]
+                if fake:
+                    cmd.append("--fake")
+                with open(self.dir / f"warm{i}.log", "w") as log:
+                    self.procs.append((subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=self.env), job))
+        except BaseException:
+            self.close()
+            raise
 
     def take(self) -> tuple[subprocess.Popen, Path] | None:
         """A still-running warm process and its job file, or None when they are used up."""
@@ -52,7 +56,8 @@ class WarmPool:
     def close(self) -> None:
         """Stop the warm processes no job was given to."""
         for proc, _ in self.procs:
-            proc.kill()
+            if proc.poll() is None:
+                proc.kill()
             proc.wait()
         self.procs = []
 

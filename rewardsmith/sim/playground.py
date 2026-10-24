@@ -103,6 +103,12 @@ class PlaygroundSimulator:
         if self._pool is None:
             self._pool = parallel.WarmPool(n)
 
+    def close_warm_pool(self) -> None:
+        """Release unused trainers, including rounds that never reach run_many."""
+        pool, self._pool = self._pool, None
+        if pool:
+            pool.close()
+
     def run_many(
         self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
     ) -> list[RunResult | Stopped | str]:

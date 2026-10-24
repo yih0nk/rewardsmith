@@ -1,3 +1,4 @@
+import pytest
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -330,3 +331,38 @@ def test_fail_interrupted_also_closes_unfinished_candidates(tmp_path):
 
     assert db.fail_interrupted(conn) == [req["id"]]
     assert db.get_request(conn, req["id"])["rounds"][0]["candidates"][0]["status"] == "failed"
+
+
+@pytest.mark.parametrize("failure", ["writer", "editor", "gates"])
+def test_unused_warm_pool_closes_on_early_exit(tmp_path, failure):
+    class TrackingSimulator(FakeSimulator):
+        active = False
+        closed = 0
+        def warm_up(self, n):
+            self.active = True
+        def close_warm_pool(self):
+            self.active = False
+            self.closed += 1
+        def gate(self, source, scene=None):
+            return "invalid" if failure == "gates" else super().gate(source, scene)
+
+    class Writer(FakeWriter):
+        def write(self, *args):
+            if failure == "writer":
+                raise ConnectionError("writer down")
+            return super().write(*args)
+
+    class Editor(FakeEditor):
+        def revise(self, *args):
+            if failure == "editor":
+                raise ConnectionError("editor down")
+            return super().revise(*args)
+
+    s, conn, req = _start(tmp_path)
+    sim = TrackingSimulator()
+    if failure == "writer":
+        with pytest.raises(ConnectionError):
+            run_request(conn, s, req, Writer(), Editor(), FakeCritic(), sim)
+    else:
+        run_request(conn, s, req, Writer(), Editor(), FakeCritic(), sim)
+    assert sim.closed >= 1 and sim.active is False

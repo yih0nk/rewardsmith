@@ -72,99 +72,104 @@ def run_request(
     for n in range(1, settings.max_rounds + 1):
         round_id = db.add_round(conn, rid, n)
         db.log_event(conn, rid, "round", f"Round {n} started")
-        warm_up = getattr(sim, "warm_up", None)  # start the training processes while Claude writes
-        if warm_up:
-            warm_up(k)
-
         try:
-            if best is None:
-                drafts = [(src, None) for src in writer.write(text, env_doc, k)]
+            warm_up = getattr(sim, "warm_up", None)  # start the training processes while Claude writes
+            if warm_up:
+                warm_up(k)
+
+            try:
+                if best is None:
+                    drafts = [(src, None) for src in writer.write(text, env_doc, k)]
+                else:
+                    drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
+            except Exception as exc:
+                if best is None:  # nothing to show yet: let the worker fail the request
+                    raise
+                # A later round failing to draft shouldn't throw away the rounds that worked.
+                log.exception("request %s: drafting round %d failed", rid, n)
+                db.finish_round(conn, round_id, None)
+                db.log_event(conn, rid, "error", f"Stopped before round {n}: {_describe(exc)}")
+                break
+
+            # Gate every draft first, then train the survivors together: on the GPU,
+            # sim.run_many trains them side by side, which hides most of the JIT time.
+            # Each draft is gated in its own thread, so one draft's writer.fix call to
+            # Claude overlaps the others' gates. (The simulator may still run the GPU
+            # part of its gates one at a time; PlaygroundSimulator does.)
+            cids = [db.add_candidate(conn, round_id, idx, src, diff) for idx, (src, diff) in enumerate(drafts)]
+            lock = threading.Lock()  # the threads share conn
+            with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
+                gated = list(pool.map(
+                    lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim, scene),
+                    range(len(drafts)),
+                ))
+            ready: list[tuple[int, str, Path]] = [
+                (cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}")
+                for idx, (cid, src) in enumerate(zip(cids, gated))
+                if src is not None
+            ]
+            if ready:
+                db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
+            for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
+                db.set_candidate(conn, cid, status="training")
+            jobs = [(src, out_dir) for _, src, out_dir in ready]
+            if halving and len(ready) > halving[-1]:
+                assert ranker is not None
+                cull = Halving(
+                    [out_dir for _, out_dir in jobs], halving[1:],
+                    rank=lambda snapshots: ranker.rank(text, snapshots),
+                    on_event=lambda msg: db.log_event(conn, rid, "halving", msg),
+                    labels=[out_dir.name for _, out_dir in jobs],
+                )
+                results = sim.run_many(jobs, scene, cull=cull)
             else:
-                drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
-        except Exception as exc:
-            if best is None:  # nothing to show yet: let the worker fail the request
-                raise
-            # A later round failing to draft shouldn't throw away the rounds that worked.
-            log.exception("request %s: drafting round %d failed", rid, n)
-            db.finish_round(conn, round_id, None)
-            db.log_event(conn, rid, "error", f"Stopped before round {n}: {_describe(exc)}")
-            break
+                results = sim.run_many(jobs, scene) if jobs else []
 
-        # Gate every draft first, then train the survivors together: on the GPU,
-        # sim.run_many trains them side by side, which hides most of the JIT time.
-        # Each draft is gated in its own thread, so one draft's writer.fix call to
-        # Claude overlaps the others' gates. (The simulator may still run the GPU
-        # part of its gates one at a time; PlaygroundSimulator does.)
-        cids = [db.add_candidate(conn, round_id, idx, src, diff) for idx, (src, diff) in enumerate(drafts)]
-        lock = threading.Lock()  # the threads share conn
-        with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
-            gated = list(pool.map(
-                lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim, scene),
-                range(len(drafts)),
-            ))
-        ready: list[tuple[int, str, Path]] = [
-            (cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}")
-            for idx, (cid, src) in enumerate(zip(cids, gated))
-            if src is not None
-        ]
-        if ready:
-            db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
-        for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
-            db.set_candidate(conn, cid, status="training")
-        jobs = [(src, out_dir) for _, src, out_dir in ready]
-        if halving and len(ready) > halving[-1]:
-            assert ranker is not None
-            cull = Halving(
-                [out_dir for _, out_dir in jobs], halving[1:],
-                rank=lambda snapshots: ranker.rank(text, snapshots),
-                on_event=lambda msg: db.log_event(conn, rid, "halving", msg),
-                labels=[out_dir.name for _, out_dir in jobs],
-            )
-            results = sim.run_many(jobs, scene, cull=cull)
-        else:
-            results = sim.run_many(jobs, scene) if jobs else []
+            trained = []
+            for (cid, src, _), result in zip(ready, results):
+                if isinstance(result, str):  # a crashed run shouldn't stop the round
+                    db.set_candidate(conn, cid, status="failed", error=result)
+                    continue
+                if isinstance(result, Stopped):  # halving cut it short; no video, so no critic
+                    db.set_candidate(conn, cid, status="stopped", metrics=result.metrics, error=result.reason)
+                    continue
+                video = _relative(result.video_path, settings.artifacts_dir)
+                check = check_spec.evaluate(spec, result.metrics) if spec else None
+                if check is not None and check_error:
+                    check.update({"pass": False, "verified": False, "error": check_error})
+                db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
+                trained.append((cid, src, result, check))
 
-        trained = []
-        for (cid, src, _), result in zip(ready, results):
-            if isinstance(result, str):  # a crashed run shouldn't stop the round
-                db.set_candidate(conn, cid, status="failed", error=result)
-                continue
-            if isinstance(result, Stopped):  # halving cut it short; no video, so no critic
-                db.set_candidate(conn, cid, status="stopped", metrics=result.metrics, error=result.reason)
-                continue
-            video = _relative(result.video_path, settings.artifacts_dir)
-            check = check_spec.evaluate(spec, result.metrics) if spec else None
-            if check is not None and check_error:
-                check.update({"pass": False, "verified": False, "error": check_error})
-            db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
-            trained.append((cid, src, result, check))
+            # One Claude call per video, all at once; each takes tens of seconds.
+            with ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
+                reviews = list(pool.map(lambda t: _safe_review(critic, critic_request, t[2], t[3]), trained))
 
-        # One Claude call per video, all at once; each takes tens of seconds.
-        with ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
-            reviews = list(pool.map(lambda t: _safe_review(critic, critic_request, t[2], t[3]), trained))
+            round_best: Best | None = None
+            for (cid, src, result, check), review in zip(trained, reviews):
+                if isinstance(review, Exception):  # one failed API call shouldn't cost the rest of the run
+                    error = f"The critic could not score this run: {_describe(review)}"
+                    db.set_candidate(conn, cid, status="failed", error=error)
+                    continue
+                db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
+                scored = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
+                ranked.append(scored)
+                if round_best is None or scored.rank() > round_best.rank():
+                    round_best = scored
+            # Passing runs first, then by score. Stable: on a tie the earlier candidate stays ahead.
+            ranked.sort(key=lambda b: b.rank(), reverse=True)
 
-        round_best: Best | None = None
-        for (cid, src, result, check), review in zip(trained, reviews):
-            if isinstance(review, Exception):  # one failed API call shouldn't cost the rest of the run
-                error = f"The critic could not score this run: {_describe(review)}"
-                db.set_candidate(conn, cid, status="failed", error=error)
-                continue
-            db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
-            scored = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
-            ranked.append(scored)
-            if round_best is None or scored.rank() > round_best.rank():
-                round_best = scored
-        # Passing runs first, then by score. Stable: on a tie the earlier candidate stays ahead.
-        ranked.sort(key=lambda b: b.rank(), reverse=True)
+            db.finish_round(conn, round_id, round_best.candidate_id if round_best else None)
+            if round_best and (best is None or round_best.rank() > best.rank()):
+                best = round_best
+                db.set_request(conn, rid, best_score=best.score, best_candidate_id=best.candidate_id)
+            db.log_event(conn, rid, "round", f"Round {n} done, best score {best.score if best else 'n/a'}")
 
-        db.finish_round(conn, round_id, round_best.candidate_id if round_best else None)
-        if round_best and (best is None or round_best.rank() > best.rank()):
-            best = round_best
-            db.set_request(conn, rid, best_score=best.score, best_candidate_id=best.candidate_id)
-        db.log_event(conn, rid, "round", f"Round {n} done, best score {best.score if best else 'n/a'}")
-
-        if best and n >= settings.min_rounds and _succeeded(best, settings):
-            break
+            if best and n >= settings.min_rounds and _succeeded(best, settings):
+                break
+        finally:
+            close_pool = getattr(sim, "close_warm_pool", None)
+            if close_pool:
+                close_pool()
 
     db.set_request(conn, rid, succeeded=int(best is not None and _succeeded(best, settings)))
     return best
