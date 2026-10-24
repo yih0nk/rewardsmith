@@ -67,6 +67,7 @@ def run_request(
     # The critic sees the frames; naming the objects helps it judge them.
     critic_request = text if not scene.objects else f"{text}\n\nScene: {scene.summary()}"
     spec = _success_spec(conn, req, checker)
+    check_error = db.get_request(conn, rid).get("success_check_error")
 
     for n in range(1, settings.max_rounds + 1):
         round_id = db.add_round(conn, rid, n)
@@ -133,6 +134,8 @@ def run_request(
                 continue
             video = _relative(result.video_path, settings.artifacts_dir)
             check = check_spec.evaluate(spec, result.metrics) if spec else None
+            if check is not None and check_error:
+                check.update({"pass": False, "verified": False, "error": check_error})
             db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
             trained.append((cid, src, result, check))
 
@@ -240,6 +243,7 @@ def _success_spec(
         log.exception("success check for %s failed", rid)
         db.log_event(conn, rid, "check", f"Could not write the success check ({type(exc).__name__}); using: don't fall")
         spec = [check_spec.NO_FALL]
+        db.set_request(conn, rid, success_check_error=_describe(exc))
     db.set_success_spec(conn, rid, spec)
     db.log_event(conn, rid, "check", "Success check: " + ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in spec))
     return spec

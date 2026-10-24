@@ -261,3 +261,33 @@ def test_api_exposes_the_spec_and_the_results(tmp_path, monkeypatch):
     assert set(cand["check_result"]) == {"pass", "clauses"}
     assert [c["metric"] for c in cand["check_result"]["clauses"]] == ["forward_velocity", "fell"]
     assert client.get("/api/requests").json()[0]["success_spec"] == BACKWARDS
+
+
+def test_checker_failure_cannot_verify_success_even_with_a_high_score(tmp_path):
+    from rewardsmith.agents.base import Review
+
+    class Broken:
+        def write_spec(self, request):
+            raise ConnectionError("checker unavailable")
+
+    class Stationary(FakeSimulator):
+        def run(self, source, out_dir, scene=None):
+            return RunResult(metrics={"forward_velocity": 0.0, "fell": 0.0})
+
+    class Optimistic:
+        def review(self, request, result, check=None):
+            return Review(9.0, "Looks good")
+
+    s = _settings(tmp_path, max_rounds=1, success_score=8)
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+    best = run_request(conn, s, req, FakeWriter(), FakeEditor(), Optimistic(), Stationary(), checker=Broken())
+    detail = db.get_request(conn, rid)
+    assert detail["succeeded"] == 0 and not best.passed
+    assert "checker unavailable" in detail["success_check_error"]
+    check = detail["rounds"][0]["candidates"][0]["check_result"]
+    assert check["pass"] is False and check["verified"] is False
+    # Reloading the stored fallback must retain its degraded state.
+    best = run_request(conn, s, detail, FakeWriter(), FakeEditor(), Optimistic(), Stationary(), checker=Broken())
+    assert best.passed is False
