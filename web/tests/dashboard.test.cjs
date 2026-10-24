@@ -440,8 +440,96 @@ test("scored candidates keep a small learning curve and drop the bar", () => {
     best_score: 8.2,
     rounds: [scoredRound(1, 1, { ...candidate, progress: live("done", 1, curve) })],
   });
-  assert.match(html, /8.2 \/ 10/);
+  // The score and its "/ 10" are styled apart, so markup sits between them.
+  assert.match(html, />8\.2<small> \/ 10</);
   assert.match(html, /how it learned/);
   assert.match(html, /<polyline/);
   assert.doesNotMatch(html, /role="progressbar"|Judging|LIVE/);
+});
+
+const timeline = require("../src/components/RoundTimeline.tsx");
+
+test("rounds report their winner's score and the change from the last scored round", () => {
+  const round = (id, n, scores, bestIdx) => ({
+    id,
+    n,
+    status: "done",
+    best_candidate_id: bestIdx == null ? null : id * 10 + bestIdx,
+    candidates: scores.map((score, i) => ({ ...candidate, id: id * 10 + i, idx: i, score })),
+  });
+  const rounds = [
+    round(1, 1, [4.2, 3.1], 0),
+    round(2, 2, [null, null], null),
+    round(3, 3, [6.1, 7.4], 1),
+    round(4, 4, [5, 6.5], 0),
+  ];
+  // No winner yet: fall back to the best scored candidate; none at all: null.
+  assert.equal(timeline.roundScore(round(9, 9, [2, 5], null)), 5);
+  assert.equal(timeline.roundScore(rounds[1]), null);
+  const deltas = timeline.roundDeltas(rounds).map((r) => r.delta);
+  assert.equal(deltas[0], null);
+  assert.equal(deltas[1], null);
+  // Round 3 compares with round 1, skipping the unscored round 2.
+  assert.ok(Math.abs(deltas[2] - 3.2) < 1e-9);
+  assert.ok(Math.abs(deltas[3] + 2.4) < 1e-9);
+  assert.equal(timeline.formatDelta(3.2), "+3.2");
+  assert.equal(timeline.formatDelta(-2.4), "−2.4");
+  assert.equal(timeline.formatDelta(0), "±0.0");
+});
+
+test("the run summary and round timeline show the improvement since round 1", () => {
+  const html = render({
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    rounds: [
+      scoredRound(1, 1, { ...candidate, id: 1, score: 5 }),
+      scoredRound(2, 2, { ...candidate, id: 2, score: 8.2 }),
+    ],
+  });
+  assert.match(html, /Since round 1/);
+  assert.match(html, /\+3\.2/);
+  assert.match(html, /5\.0 → 8\.2/);
+  assert.match(html, /Round 2 · Candidate 1/);
+  assert.match(html, /class="round-best">Best</);
+  assert.doesNotMatch(html, /NaN|undefined/);
+});
+
+test("the stage draws the full reward curve, or says why there is none", () => {
+  const curve = [point(0, 1), point(500000, null), point(1000000, 4)];
+  const full = renderToStaticMarkup(
+    React.createElement(progress.RewardCurve, { curve }),
+  );
+  assert.match(full, /<path class="curve-line" d="M/);
+  assert.match(full, /latest 4/);
+  assert.match(full, />1M</);
+  assert.match(full, /final/);
+  const empty = (live) =>
+    renderToStaticMarkup(React.createElement(progress.RewardCurve, { curve: [], live }));
+  assert.match(empty(true), /First evaluation in a few seconds/);
+  assert.match(empty(false), /No learning curve recorded/);
+  assert.equal(progress.formatSteps(26214400), "26.2M");
+  assert.equal(progress.formatSteps(500), "500");
+});
+
+test("mid-round, the stage shows the candidate furthest into training", () => {
+  const html = render({
+    ...base,
+    status: "running",
+    rounds: [
+      {
+        id: 1,
+        n: 1,
+        status: "running",
+        best_candidate_id: null,
+        candidates: [
+          training({ id: 1, idx: 0, progress: live("training", 0.3) }),
+          training({ id: 2, idx: 1, progress: live("training", 0.6) }),
+          training({ id: 3, idx: 2, status: "written" }),
+        ],
+      },
+    ],
+  });
+  assert.match(html, /class="label">Round 1 · Candidate 2</);
+  assert.match(html, /class="training-stage">Training 60%/);
 });
