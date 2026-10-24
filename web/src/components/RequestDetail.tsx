@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { RequestDetail as Detail, Health, artifactUrl } from "../api";
 import CandidateCard from "./CandidateCard";
 import DiffView from "./DiffView";
 import FlagControl from "./FlagControl";
 import RewardTerms from "./RewardTerms";
 import RoundGallery from "./RoundGallery";
-import TrainingProgress, { liveState } from "./TrainingProgress";
+import RoundTimeline, { formatDelta, roundScore } from "./RoundTimeline";
+import TrainingProgress, { RewardCurve, liveState } from "./TrainingProgress";
 
 export default function RequestDetail({
   detail,
@@ -16,6 +17,22 @@ export default function RequestDetail({
 }) {
   const [round, setRound] = useState<number | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
+  // Rounds and candidates are picked below the stage; bring it back into view when it has scrolled away.
+  const stageRef = useRef<HTMLElement>(null);
+  const show = (n: number, id: number | null) => {
+    setRound(n);
+    setCandidateId(id);
+    const stage = stageRef.current;
+    if (stage && stage.getBoundingClientRect().top < 0) {
+      const still = window.matchMedia?.(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      stage.scrollIntoView({
+        behavior: still ? "auto" : "smooth",
+        block: "start",
+      });
+    }
+  };
   const bestRound =
     detail.status === "done" && detail.best_score != null
       ? detail.rounds.find((r) =>
@@ -29,6 +46,14 @@ export default function RequestDetail({
   const candidate =
     current?.candidates.find((c) => c.id === candidateId) ??
     current?.candidates.find((c) => c.id === current.best_candidate_id) ??
+    // Mid-round, show a candidate still training (the furthest along) so the stage has something moving.
+    current?.candidates
+      .filter((c) => liveState(c)?.fraction != null)
+      .sort(
+        (a, b) =>
+          Number(b.status === "training") - Number(a.status === "training") ||
+          liveState(b)!.fraction! - liveState(a)!.fraction!,
+      )[0] ??
     current?.candidates.at(-1);
   const running = detail.status === "running" || detail.status === "queued";
   const live = candidate ? liveState(candidate) : null;
@@ -36,31 +61,50 @@ export default function RequestDetail({
     detail.status === "queued"
       ? "Queued · waiting for worker"
       : (detail.events.at(-1)?.message ?? "Waiting for worker updates");
+  // The best scored candidate anywhere in the run, for the summary and the round markers.
+  const scoredAll = detail.rounds.flatMap((r) =>
+    r.candidates
+      .filter((c) => typeof c.score === "number" && Number.isFinite(c.score))
+      .map((c) => ({ round: r, c, score: c.score as number })),
+  );
+  const top = scoredAll.reduce<(typeof scoredAll)[number] | null>(
+    (a, b) => (a && a.score >= b.score ? a : b),
+    null,
+  );
+  const firstScore =
+    detail.rounds.map(roundScore).find((s): s is number => s != null) ?? null;
+  const roundsDone = detail.rounds.filter((r) => r.status === "done").length;
+  const candidatesTotal = detail.rounds.reduce(
+    (n, r) => n + r.candidates.length,
+    0,
+  );
+  const statusText =
+    detail.status === "queued"
+      ? "Queued"
+      : running
+        ? "In progress"
+        : detail.status === "failed"
+          ? "Failed"
+          : "Completed";
   const metrics = Object.entries(candidate?.metrics ?? {}).filter(
     (entry): entry is [string, number] =>
       typeof entry[1] === "number" && Number.isFinite(entry[1]),
   );
   return (
-    <>
-      <div className="experiment-title">
+    <article className="experiment">
+      <header className="exp-head">
         <div>
-          <span className="eyebrow">CURRENT EXPERIMENT</span>
+          <span className="eyebrow">
+            Experiment <span className="num">#{detail.id}</span>
+          </span>
           <h2>{detail.text}</h2>
         </div>
-        <span className={`badge ${running ? "working" : ""}`}>
-          <span
-            className={`status-dot ${detail.status === "failed" ? "red" : detail.status === "done" ? "green" : ""}`}
-          />
-          {detail.status === "queued"
-            ? "Queued"
-            : running
-              ? "In progress"
-              : detail.status === "failed"
-                ? "Failed"
-                : "Completed"}
+        <span className={`badge ${detail.status}`}>
+          <span className={`lamp ${detail.status}`} />
+          {statusText}
         </span>
-      </div>
-      <div className="pipeline">
+      </header>
+      <div className={`pipeline ${running ? "running" : ""}`}>
         <span className="pipeline-label" role="status">
           {detail.status === "failed"
             ? "Experiment failed"
@@ -69,58 +113,104 @@ export default function RequestDetail({
               : "Experiment complete"}
         </span>
         <span className="round-count">
-          {detail.rounds.filter((r) => r.status === "done").length} rounds
-          completed
+          {roundsDone} {roundsDone === 1 ? "round" : "rounds"} completed
         </span>
       </div>
+      <dl className="summary">
+        <div className="summary-best">
+          <dt className="label">Best score</dt>
+          <dd className="num">
+            {top ? top.score.toFixed(1) : "—"}
+            <small>/10</small>
+          </dd>
+          {top && (
+            <dd className="summary-note">
+              Round {top.round.n} · Candidate {top.c.idx + 1}
+            </dd>
+          )}
+        </div>
+        <div>
+          <dt className="label">Since round 1</dt>
+          <dd
+            className={`num delta ${top && firstScore != null ? (top.score - firstScore > 0.05 ? "up" : "flat") : ""}`}
+          >
+            {top && firstScore != null
+              ? formatDelta(top.score - firstScore)
+              : "—"}
+          </dd>
+          {top && firstScore != null && (
+            <dd className="summary-note">
+              {firstScore.toFixed(1)} → {top.score.toFixed(1)}
+            </dd>
+          )}
+        </div>
+        <div>
+          <dt className="label">Rounds</dt>
+          <dd className="num">{roundsDone}</dd>
+          <dd className="summary-note">{detail.rounds.length} started</dd>
+        </div>
+        <div>
+          <dt className="label">Rewards tried</dt>
+          <dd className="num">{candidatesTotal}</dd>
+          <dd className="summary-note">
+            {scoredAll.length} scored by the critic
+          </dd>
+        </div>
+      </dl>
+
       <div className="result-grid">
-        <section className="preview-card" aria-label="Robot rollout">
-          <div className="panel-heading">
-            <span>
-              Policy preview{" "}
-              <span className="subtle">
-                / Round {current?.n ?? "—"}
-                {candidate ? ` · Candidate ${candidate.idx + 1}` : ""}
-              </span>
+        <section className="stage" aria-label="Robot rollout" ref={stageRef}>
+          <div className="stage-head">
+            <span className="label">
+              Round {current?.n ?? "—"}
+              {candidate ? ` · Candidate ${candidate.idx + 1}` : ""}
             </span>
-            <span className="mini-badge">
+            <span
+              className={`tag ${candidate?.video_path ? "rollout" : live ? "live" : ""}`}
+            >
               {candidate?.video_path ? "ROLLOUT" : live ? "LIVE" : "NO FOOTAGE"}
             </span>
           </div>
-          {candidate?.video_path ? (
-            <video
-              key={candidate.id}
-              src={artifactUrl(candidate.video_path)}
-              controls
-              muted
-              loop
-              playsInline
-            />
-          ) : candidate && live ? (
-            <div className="video-empty">
+          <div className="well">
+            {candidate?.video_path ? (
+              <video
+                key={candidate.id}
+                src={artifactUrl(candidate.video_path)}
+                controls
+                muted
+                loop
+                playsInline
+              />
+            ) : candidate && live ? (
               <TrainingProgress c={candidate} large />
-            </div>
-          ) : (
-            <div className="video-empty">
-              <strong>
-                {candidate?.status === "gate_failed"
-                  ? "Reward did not pass validation"
-                  : candidate?.status === "failed"
-                    ? "Candidate failed"
-                    : candidate?.status === "stopped"
-                      ? "Stopped early: another candidate looked more promising"
-                    : health?.fake_sim
-                      ? "Fake simulator · no video generated"
-                      : "No rollout video yet"}
-              </strong>
-              <span>
-                {running
-                  ? "Results update automatically while the worker runs."
-                  : "This candidate has no recorded footage."}
-              </span>
-            </div>
-          )}
-          <div className="playback">
+            ) : (
+              <div className="well-empty">
+                <span className="label">No signal</span>
+                <strong>
+                  {candidate?.status === "gate_failed"
+                    ? "Reward did not pass validation"
+                    : candidate?.status === "failed"
+                      ? "Candidate failed"
+                      : candidate?.status === "stopped"
+                        ? "Stopped early: another candidate looked more promising"
+                        : health?.fake_sim
+                          ? "Fake simulator · no video generated"
+                          : "No rollout video yet"}
+                </strong>
+                <span>
+                  {running
+                    ? "Results update automatically while the worker runs."
+                    : "This candidate has no recorded footage."}
+                </span>
+              </div>
+            )}
+          </div>
+          <RewardCurve
+            key={candidate?.id}
+            curve={candidate?.progress?.curve}
+            live={Boolean(live)}
+          />
+          <div className="stage-foot">
             <span>
               {candidate?.video_path
                 ? "Recorded rollout · use video controls"
@@ -128,107 +218,84 @@ export default function RequestDetail({
                   ? "Training live · updates automatically"
                   : "No recorded footage"}
             </span>
-            <span className="playback-end">MuJoCo Playground</span>
+            <span>MuJoCo Playground · Unitree Go1</span>
           </div>
         </section>
-        <section className="evaluation">
-          <div className="eyebrow">
+        <section className="evaluation" aria-label="Evaluation">
+          <div className="label">
             {candidate
-              ? `CANDIDATE · ${candidate.status.replaceAll("_", " ")}`
-              : "WAITING FOR CANDIDATES"}
+              ? `Candidate · ${candidate.status.replaceAll("_", " ")}`
+              : "Waiting for candidates"}
           </div>
-          <div className="score">
-            {candidate?.score?.toFixed(1) ?? "—"}
-            <span>/ 10</span>
-            <span className="score-label">Critic score</span>
+          <div className={`score ${candidate?.score == null ? "none" : ""}`}>
+            <span className="num">{candidate?.score?.toFixed(1) ?? "—"}</span>
+            <span className="score-of num">/ 10</span>
           </div>
-          <div className="metrics">
+          <span className="score-label label">Critic score</span>
+          <dl className="metrics">
             {metrics
               .filter(([key]) => !key.startsWith("term_"))
               .map(([key, value]) => (
                 <div className="metric" key={key}>
-                  <div>
-                    <span>{key.replaceAll("_", " ")}</span>
-                    <strong>{Number(value.toFixed(4))}</strong>
-                  </div>
+                  <dt>{key.replaceAll("_", " ")}</dt>
+                  <dd className="num">{Number(value.toFixed(4))}</dd>
                 </div>
               ))}
-            {metrics.length === 0 && (
-              <p className="subtle">No metrics reported yet.</p>
-            )}
-          </div>
-          <div className="critic">
-            <span>✧ CRITIC NOTES</span>
-            <p>
+          </dl>
+          {metrics.length === 0 && (
+            <p className="subtle">No metrics reported yet.</p>
+          )}
+          <figure className="critic">
+            <figcaption className="label">Critic notes</figcaption>
+            <blockquote>
               {candidate?.critique ??
                 (running
                   ? "Waiting for the critic to evaluate this candidate."
                   : "No critique was returned for this candidate.")}
-            </p>
-          </div>
-          {(candidate?.status === "trained" || candidate?.status === "scored") && (
+            </blockquote>
+          </figure>
+          {(candidate?.status === "trained" ||
+            candidate?.status === "scored") && (
             <FlagControl key={candidate.id} candidate={candidate} />
           )}
         </section>
       </div>
+
       <div className="section-heading">
-        <h2>
-          Learning, one round at a time
-          <span>{detail.rounds.length} rounds</span>
-        </h2>
-        <span className="subtle">Select a round to explore</span>
+        <h3>Learning, one round at a time</h3>
+        <span className="subtle">
+          {detail.rounds.length} rounds · select one to explore
+        </span>
       </div>
-      <div className="attempts">
-        {detail.rounds.map((r) => {
-          const c =
-            r.candidates.find((c) => c.id === r.best_candidate_id) ??
-            r.candidates.at(-1);
-          return (
-            <button
-              key={r.id}
-              aria-pressed={current?.n === r.n}
-              className={`attempt ${current?.n === r.n ? "active" : ""}`}
-              onClick={() => {
-                setRound(r.n);
-                setCandidateId(null);
-              }}
-            >
-              <div className="attempt-top">
-                <span>ROUND {String(r.n).padStart(2, "0")}</span>
-                {c?.score != null && c.score === detail.best_score && (
-                  <span className="best">↗ BEST RESULT</span>
-                )}
-              </div>
-              <div className="attempt-score">
-                {c?.score?.toFixed(1) ?? "—"}
-                <small>/ 10</small>
-                <span>
-                  {r.candidates.length} candidates · {r.status}
-                </span>
-              </div>
-            </button>
-          );
-        })}
-        {running && (
-          <div className="attempt pending">
-            <span className="spinner" />
-            <strong>{stage}</strong>
-            <span>Waiting for the next worker update</span>
-          </div>
-        )}
-      </div>
+      <RoundTimeline
+        rounds={detail.rounds}
+        current={current?.n}
+        bestScore={top?.score ?? null}
+        pending={running ? stage : null}
+        onSelect={(n) => show(n, null)}
+      />
+
       {current && (
-        <div className="candidate-list" aria-label="Candidates">
-          {current.candidates.map((c) => (
-            <CandidateCard
-              key={c.id}
-              c={c}
-              best={c.id === current.best_candidate_id}
-              selected={candidate?.id === c.id}
-              onSelect={() => setCandidateId(c.id)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="section-heading">
+            <h3>Candidates in round {current.n}</h3>
+            <span className="subtle">
+              {current.candidates.length} reward functions · select one to load
+              it on the stage
+            </span>
+          </div>
+          <div className="candidate-list" aria-label="Candidates">
+            {current.candidates.map((c) => (
+              <CandidateCard
+                key={c.id}
+                c={c}
+                best={c.id === current.best_candidate_id}
+                selected={candidate?.id === c.id}
+                onSelect={() => show(current.n, c.id)}
+              />
+            ))}
+          </div>
+        </>
       )}
       {candidate?.error && (
         <pre className="error" role="alert">
@@ -236,26 +303,20 @@ export default function RequestDetail({
         </pre>
       )}
       <RewardTerms metrics={candidate?.metrics ?? null} />
-      <RoundGallery
-        rounds={detail.rounds}
-        onPick={(n, id) => {
-          setRound(n);
-          setCandidateId(id);
-        }}
-      />
+      <RoundGallery rounds={detail.rounds} onPick={(n, id) => show(n, id)} />
       <div className="technical">
         {candidate && (
           <>
             <details>
               <summary>
-                Reward function <span>View generated Python ↗</span>
+                Reward function <span>View generated Python</span>
               </summary>
-              <pre>{candidate.reward_src}</pre>
+              <pre className="code">{candidate.reward_src}</pre>
             </details>
             {candidate.diff && (
               <details>
                 <summary>
-                  What changed <span>Revision diff ↗</span>
+                  What changed <span>Revision diff</span>
                 </summary>
                 <DiffView diff={candidate.diff} />
               </details>
@@ -264,24 +325,27 @@ export default function RequestDetail({
         )}
         <details>
           <summary>
-            Activity log <span>{detail.events.length} events ↗</span>
+            Activity log <span>{detail.events.length} events</span>
           </summary>
           {detail.events.length ? (
-            detail.events.map((event) => (
-              <p key={event.id}>
-                <time
-                  dateTime={new Date(event.created_at * 1000).toISOString()}
-                >
-                  {new Date(event.created_at * 1000).toLocaleTimeString()}
-                </time>{" "}
-                · {event.kind}: {event.message}
-              </p>
-            ))
+            <ol className="log">
+              {detail.events.map((event) => (
+                <li key={event.id}>
+                  <time
+                    dateTime={new Date(event.created_at * 1000).toISOString()}
+                  >
+                    {new Date(event.created_at * 1000).toLocaleTimeString()}
+                  </time>
+                  <span className="log-kind">{event.kind}</span>
+                  <span>{event.message}</span>
+                </li>
+              ))}
+            </ol>
           ) : (
             <p>No events yet.</p>
           )}
         </details>
       </div>
-    </>
+    </article>
   );
 }
