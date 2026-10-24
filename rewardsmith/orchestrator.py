@@ -60,8 +60,9 @@ def run_request(
 
         # Gate every draft first, then train the survivors together: on the GPU,
         # sim.run_many trains them side by side, which hides most of the JIT time.
-        # The gates (and any writer fixes) run at once, in threads: each one is
-        # mostly XLA compile or a Claude call, and both release the GIL.
+        # Each draft is gated in its own thread, so one draft's writer.fix call to
+        # Claude overlaps the others' gates. (The simulator may still run the GPU
+        # part of its gates one at a time; PlaygroundSimulator does.)
         cids = [db.add_candidate(conn, round_id, idx, src, diff) for idx, (src, diff) in enumerate(drafts)]
         lock = threading.Lock()  # the threads share conn
         with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:

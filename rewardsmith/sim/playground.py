@@ -7,6 +7,7 @@ Settings (env vars):
 """
 
 import os
+import threading
 from pathlib import Path
 
 # The worker gates rewards on the GPU itself, so it must not grab 75% of GPU memory
@@ -26,12 +27,17 @@ class PlaygroundSimulator:
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
         self._pool: parallel.WarmPool | None = None
+        # The worker gates drafts in threads, but two warp rollouts at once in one
+        # process crash: warp captures a CUDA graph on its first call, and any other
+        # GPU work during the capture fails it (CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED).
+        self._gate_lock = threading.Lock()
 
     def describe(self) -> str:
         return go1_spec.describe()
 
     def gate(self, source: str) -> str | None:
-        return gate.check_reward(source, impl=self.impl)
+        with self._gate_lock:
+            return gate.check_reward(source, impl=self.impl)
 
     def run(self, source: str, out_dir: Path) -> RunResult:
         progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
