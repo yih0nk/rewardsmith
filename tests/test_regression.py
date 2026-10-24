@@ -178,3 +178,26 @@ def test_clauses_that_fail_in_different_runs_fail_the_behavior(tmp_path):
     rows = regression.compare(_run(sim, tmp_path), baseline)
     assert rows[2]["status"] == "WARN"
     assert rows[2]["reasons"] == ["behavior check passed in only 1/3 runs"]
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf"), None])
+def test_non_finite_rewards_cannot_pass_or_be_recorded(tmp_path, bad):
+    baseline = _run(_good_sim(), tmp_path)
+    sim = _good_sim()
+    sim.metrics_by_source[_source(regression.CASES[0])] = _metrics(reward=bad)
+    assert regression.compare(_run(sim, tmp_path), baseline)[0]["status"] == "FAIL"
+    path = tmp_path / "invalid.json"
+    assert regression.main(["--record", "--baseline", str(path), "--out", str(tmp_path)], sim=sim) == 1
+    assert not path.exists()
+    invalid = {"cases": {"walk_backwards": {"episode_reward": bad}}}
+    assert regression.compare(baseline, invalid)[0]["status"] == "FAIL"
+
+
+def test_diverged_run_counts_against_majority_without_poisoning_median(tmp_path):
+    sim = _good_sim()
+    source = _source(regression.CASES[0])
+    sim.metrics_by_source[source] = [_metrics(reward=float("nan")), _metrics(reward=29), _metrics(reward=31)]
+    case = _run(sim, tmp_path)["cases"]["walk_backwards"]
+    assert case["episode_reward"] == 30 and case["behavior_passed"] == "2/3"
+    sim.metrics_by_source[source][1] = _metrics(reward=float("inf"))
+    assert not _run(sim, tmp_path)["cases"]["walk_backwards"]["behavior_pass"]

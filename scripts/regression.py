@@ -20,6 +20,7 @@ Run it on the GPU pod under the shared lock (see the README).
 
 import argparse
 import json
+import math
 import operator
 import os
 import statistics
@@ -63,7 +64,7 @@ def check(metrics: dict[str, Any], checks: tuple[tuple[str, str, float], ...]) -
     out = []
     for metric, op, value in checks:
         actual = metrics.get(metric)
-        ok = actual is not None and OPS[op](float(actual), value)
+        ok = _finite(actual) and OPS[op](float(actual), value)
         out.append({"metric": metric, "op": op, "value": value, "actual": actual, "pass": ok})
     return out
 
@@ -102,6 +103,8 @@ def _one_run(result, case: Case) -> dict[str, Any]:
     if isinstance(result, str):
         return {"error": result[-2000:]}
     m = result.metrics
+    if not _finite(m.get("episode_reward")):
+        return {"error": "Non-finite or missing episode_reward"}
     clauses = check(m, case.checks)
     return {
         "episode_reward": m.get("episode_reward"),
@@ -113,8 +116,12 @@ def _one_run(result, case: Case) -> dict[str, Any]:
     }
 
 
+def _finite(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def _median(values) -> float | None:
-    nums = [v for v in values if isinstance(v, (int, float))]
+    nums = [v for v in values if _finite(v)]
     return round(statistics.median(nums), 3) if nums else None
 
 
@@ -124,6 +131,10 @@ def compare(run: dict[str, Any], baseline: dict[str, Any]) -> list[dict[str, Any
     rows = []
     for name, base in baseline["cases"].items():
         cur = run["cases"].get(name)
+        if not _finite(base.get("episode_reward")):
+            rows.append({"case": name, "status": "FAIL", "reasons": ["invalid baseline episode_reward"],
+                         "current": cur or {}, "baseline": base})
+            continue
         reasons = []
         if cur is None:
             reasons.append("not run")
@@ -136,7 +147,7 @@ def compare(run: dict[str, Any], baseline: dict[str, Any]) -> list[dict[str, Any
                 failed = [f"behavior check passed in only {cur.get('behavior_passed')} runs"]
             reasons += failed
             floor = base["episode_reward"] - REWARD_DROP * abs(base["episode_reward"])
-            if cur["episode_reward"] is None or cur["episode_reward"] < floor:
+            if not _finite(cur["episode_reward"]) or cur["episode_reward"] < floor:
                 reasons.append(f"episode_reward {cur['episode_reward']} < {floor:.3f} (baseline - 5%)")
         status = "PASS" if not reasons else "FAIL" if gating.get(name, True) else "WARN"
         rows.append({"case": name, "status": status, "reasons": reasons,
@@ -236,7 +247,7 @@ def main(argv: list[str] | None = None, sim=None) -> int:
 
     if args.record:
         gating = {c.name: c.gating for c in cases}
-        failed = [name for name, r in run["cases"].items() if not r["behavior_pass"] and gating[name]]
+        failed = [name for name, r in run["cases"].items() if (not r["behavior_pass"] and gating[name]) or not _finite(r.get("episode_reward"))]
         if failed:
             print(f"not recording: behavior check failed for {', '.join(failed)}", file=sys.stderr)
             return 1
