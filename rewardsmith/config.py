@@ -14,6 +14,7 @@ class Settings:
     success_score: float
     fake_sim: bool
     fake_llm: bool
+    min_rounds: int = 2  # always run at least this many, so the editor and its diffs get used
 
 
 def _flag(name: str, default: str) -> bool:
@@ -32,4 +33,5 @@ def load() -> Settings:
         success_score=float(os.environ.get("REWARDSMITH_SUCCESS_SCORE", "8")),
         fake_sim=_flag("REWARDSMITH_FAKE_SIM", "1"),
         fake_llm=_flag("REWARDSMITH_FAKE_LLM", "1"),
+        min_rounds=int(os.environ.get("REWARDSMITH_MIN_ROUNDS", "2")),
     )

@@ -85,7 +85,7 @@ def run_request(
             db.set_request(conn, rid, best_score=best.score)
         db.log_event(conn, rid, "round", f"Round {n} done, best score {best.score if best else 'n/a'}")
 
-        if best and best.score >= settings.success_score:
+        if best and n >= settings.min_rounds and best.score >= settings.success_score:
             break
 
     return best
