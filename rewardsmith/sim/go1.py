@@ -22,6 +22,9 @@ from .go1_spec import FEATURES
 from .reward_slot import load_reward
 
 BASE_ENV = "Go1JoystickFlatTerrain"
+# Config overrides that turn on Playground's random pushes: every 1-3 s a velocity kick
+# of up to 3 m/s, in a random horizontal direction, lasting 0.05-0.2 s.
+PUSH_OVERRIDES: dict[str, Any] = {"pert_config.enable": True}
 RewardFn = Callable[[dict[str, jax.Array], jax.Array, jax.Array], Mapping[str, Any]]
 
 
