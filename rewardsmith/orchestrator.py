@@ -47,6 +47,9 @@ def run_request(
     for n in range(1, settings.max_rounds + 1):
         round_id = db.add_round(conn, rid, n)
         db.log_event(conn, rid, "round", f"Round {n} started")
+        warm_up = getattr(sim, "warm_up", None)  # start the training processes while Claude writes
+        if warm_up:
+            warm_up(settings.candidates_per_round)
 
         if best is None:
             drafts = [(src, None) for src in writer.write(text, env_doc, settings.candidates_per_round)]
