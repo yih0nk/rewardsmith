@@ -1,3 +1,4 @@
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def test_gate_failure_is_recorded(tmp_path):
     gate_events = [e["message"] for e in detail["events"] if e["kind"] == "gate"]
     # every attempt is logged, not just the last: 3 rounds x 3 candidates x 3 attempts
     assert len(gate_events) == 3 * 3 * 3
-    assert "Candidate 0, attempt 1 failed: SyntaxError" in gate_events[0]
+    assert any("Candidate 0, attempt 1 failed: SyntaxError" in e for e in gate_events)  # gates run concurrently
 
 
 def test_behavior_checks():
@@ -121,3 +122,48 @@ def test_candidates_are_marked_training_before_results_come_back(tmp_path):
     from rewardsmith.sim.progress import read_progress
 
     assert all(read_progress(s.artifacts_dir / rid / f"r1c{i}")["stage"] == "done" for i in range(3))
+
+
+class _Barrier:
+    """Counts callers inside a call at once; each call waits briefly so overlaps show."""
+
+    def __init__(self):
+        import threading
+
+        self.lock, self.inside, self.peak = threading.Lock(), 0, 0
+
+    def __enter__(self):
+        with self.lock:
+            self.inside += 1
+            self.peak = max(self.peak, self.inside)
+        time.sleep(0.2)
+
+    def __exit__(self, *exc):
+        with self.lock:
+            self.inside -= 1
+
+
+def test_gates_and_critic_calls_run_concurrently(tmp_path):
+    s = replace(_settings(tmp_path), max_rounds=1, min_rounds=1)
+    gates, reviews = _Barrier(), _Barrier()
+
+    class SlowGateSimulator(FakeSimulator):
+        def gate(self, source):
+            with gates:
+                return super().gate(source)
+
+    class SlowCritic(FakeCritic):
+        def review(self, request, result):
+            with reviews:
+                return super().review(request, result)
+
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    best = run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), SlowCritic(), SlowGateSimulator())
+
+    assert gates.peak == s.candidates_per_round
+    assert reviews.peak == s.candidates_per_round
+    # the round's best is still the top score, with ties going to the lowest index
+    cands = db.get_request(conn, rid)["rounds"][0]["candidates"]
+    top = max(c["score"] for c in cands)
+    assert best.candidate_id == min((c for c in cands if c["score"] == top), key=lambda c: c["idx"])["id"]
