@@ -421,62 +421,69 @@ export default function RequestDetail({
               Optional detail · click a row to open it
             </span>
           </h3>
-          <details>
-            <summary>
-              All candidates{" "}
-              <span>
-                {candidatesTotal} {candidatesTotal === 1 ? "reward" : "rewards"}{" "}
-                in {detail.rounds.length}{" "}
-                {detail.rounds.length === 1 ? "round" : "rounds"}
-                {top ? ` · best: ${candidateName(top.round.n, top.c.idx)}` : ""}
-              </span>
-            </summary>
-            <div>
-              <p className="subtle">
-                Each round, Claude writes several{" "}
-                <Explain term="candidate">candidates</Explain> and trains them
-                side by side. Pick a round, then a candidate to show it above.
-              </p>
-              <RoundTimeline
-                rounds={detail.rounds}
-                current={explored?.n}
-                bestScore={top?.score ?? null}
-                bestRound={detail.status === "done" ? top?.round.n : undefined}
-                pending={null}
-                onSelect={(n) => show(n, null)}
-              />
-              {explored && (
-                <div
-                  className="candidate-list"
-                  aria-label={`Candidates in round ${explored.n}`}
-                >
-                  {explored.candidates.length === 0 && (
-                    <p className="subtle">
-                      Claude is still writing this round's rewards.
-                    </p>
-                  )}
-                  {explored.candidates.map((c) => (
-                    <CandidateCard
-                      key={c.id}
-                      c={c}
-                      round={explored.n}
-                      best={c.id === explored.best_candidate_id}
-                      overall={c.id === top?.c.id}
-                      selected={candidate?.id === c.id}
-                      onSelect={() => show(explored.n, c.id)}
-                      reply={renderReply?.({
-                        kind: "candidate",
-                        requestId: detail.id,
-                        round: explored.n,
-                        candidateId: c.id,
-                        idx: c.idx,
-                      })}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          </details>
+          {detail.rounds.length > 0 && (
+            <details>
+              <summary>
+                All candidates{" "}
+                <span>
+                  {candidatesTotal}{" "}
+                  {candidatesTotal === 1 ? "reward" : "rewards"} in{" "}
+                  {detail.rounds.length}{" "}
+                  {detail.rounds.length === 1 ? "round" : "rounds"}
+                  {top
+                    ? ` · best: ${candidateName(top.round.n, top.c.idx)}`
+                    : ""}
+                </span>
+              </summary>
+              <div>
+                <p className="subtle">
+                  Each round, Claude writes several{" "}
+                  <Explain term="candidate">candidates</Explain> and trains them
+                  side by side. Pick a round, then a candidate to show it above.
+                </p>
+                <RoundTimeline
+                  rounds={detail.rounds}
+                  current={explored?.n}
+                  bestScore={top?.score ?? null}
+                  bestRound={
+                    detail.status === "done" ? top?.round.n : undefined
+                  }
+                  pending={null}
+                  onSelect={(n) => show(n, null)}
+                />
+                {explored && (
+                  <div
+                    className="candidate-list"
+                    aria-label={`Candidates in round ${explored.n}`}
+                  >
+                    {explored.candidates.length === 0 && (
+                      <p className="subtle">
+                        Claude is still writing this round's rewards.
+                      </p>
+                    )}
+                    {explored.candidates.map((c) => (
+                      <CandidateCard
+                        key={c.id}
+                        c={c}
+                        round={explored.n}
+                        best={c.id === explored.best_candidate_id}
+                        overall={c.id === top?.c.id}
+                        selected={candidate?.id === c.id}
+                        onSelect={() => show(explored.n, c.id)}
+                        reply={renderReply?.({
+                          kind: "candidate",
+                          requestId: detail.id,
+                          round: explored.n,
+                          candidateId: c.id,
+                          idx: c.idx,
+                        })}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
           {candidate && (
             <details>
               <summary>

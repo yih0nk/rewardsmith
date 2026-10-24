@@ -422,6 +422,23 @@ button.round:hover .label {
 }
 
 /* ---- Disclosures: question row with +/− on the right, answer indented ---- */
+.technical {
+  margin-top: var(--dp-spacing-row);
+}
+.details-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--dp-spacing-column-gap);
+  padding-bottom: var(--dp-spacing-inset);
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+  font-size: var(--dp-typography-body);
+  color: var(--dp-color-emphasis);
+}
+.details-title .subtle {
+  font-weight: 400;
+}
 .technical details {
   border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
 }
