@@ -25,7 +25,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
-from . import gate, go1, go1_spec, parallel, render, robustness, scene_eval, train  # noqa: E402
+from . import evaluation, gate, go1, go1_spec, parallel, train  # noqa: E402
 from .base import Cull, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 from .scene import EMPTY, SceneSpec  # noqa: E402
@@ -79,9 +79,8 @@ class PlaygroundSimulator:
         )
         result = train.train(train_env, self.preset, on_progress=progress.point, randomize=self.randomize)
         progress.stage("rendering")
-        video, frames, rollout = render.rollout_and_render(env, result, out_dir)
-        rollout.update(scene_eval.target_metrics(env, result.make_inference_fn, result.params))
-        robust = robustness.evaluate(env, result, rollout, out_dir) if self.robustness else {}
+        # The video, target metrics and robustness rollouts, all in one batch (see evaluation.py).
+        video, frames, rollout, robust = evaluation.evaluate(env, result, out_dir, robust=self.robustness)
         (out_dir / "reward.py").write_text(source)
 
         last = result.curve[-1]

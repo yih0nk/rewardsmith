@@ -1,0 +1,83 @@
+"""Every rollout after training in one compiled batch: the video, the target metrics, robustness.
+
+Each is ROLLOUT_STEPS control steps of the trained policy. With warp a step costs
+about the same for one env as for fifty (the kernels are launch-bound), so three
+separate rollouts took ~37 s per candidate on the 4090; one batch of all of them
+costs about as much as the largest alone. The batch is
+
+    env 0                the board's video (render.py): the nominal robot from seed 0
+    the next TARGET_ENVS the target episodes (scene_eval.py), when the scene has a target
+    the rest             robustness.py's rollouts, when robustness is on
+
+Each env runs the rollout it ran on its own before: the same robot, reset key and
+per-step action keys. The one change is in the target episodes, which used to share
+one action key per step across the batch and now each draw their own, so their
+numbers move by sampling noise only.
+"""
+
+import time
+from pathlib import Path
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+from . import render, robustness, scene_eval
+from .base import ROLLOUT_STEPS
+from .go1 import Go1Env
+from .train import TrainResult
+
+VIDEO_SEED = 0  # render.rollout_and_render's default
+TARGET_ENVS = 32  # scene_eval.target_metrics's defaults
+TARGET_SEED = 1
+
+
+def evaluate(
+    env: Go1Env,
+    result: TrainResult,
+    out_dir: Path,
+    *,
+    robust: bool = True,
+    steps: int = ROLLOUT_STEPS,
+) -> tuple[Path, list[bytes], dict[str, float], dict[str, float]]:
+    """Return (mp4 path, critic PNGs, rollout + target metrics, robust_* metrics or {})."""
+    start = time.perf_counter()
+    target_obj = env.scene.target_object
+    n_target = TARGET_ENVS if target_obj is not None else 0
+    plan = robustness.plan() if robust else robustness.plan(n_robots=0, n_seeds=0, pushes=False)
+    n_robots = plan.groups.count("robots")
+
+    # robustness.models_for puts the randomized robots first, so the batch is
+    # [robots] [video] [target episodes] [seeds, pushes], and everything after the robots
+    # is the nominal robot. Plan position i < n_robots is batch row i; later ones shift by 1 + n_target.
+    video = n_robots
+    target = slice(n_robots + 1, n_robots + 1 + n_target)
+    robust_rows = list(range(n_robots)) + list(range(target.stop, target.stop + len(plan.groups) - n_robots))
+    target_keys = jax.random.split(jax.random.split(jax.random.PRNGKey(TARGET_SEED))[0], n_target)
+    keys = jnp.concatenate([plan.keys[:n_robots], jax.random.PRNGKey(VIDEO_SEED)[None], target_keys, plan.keys[n_robots:]])
+    push_dirs = plan.push_dirs[:n_robots] + [(0.0, 0.0)] * (1 + n_target) + plan.push_dirs[n_robots:]
+    if n_robots:
+        models, in_axes = robustness.models_for(env, n_robots, len(keys) - n_robots, plan.rng_models)
+    else:
+        models, in_axes = env.mjx_model, None
+    reset, outs = robustness.run_batch(env, result, models, in_axes, keys, push_dirs, steps)
+
+    summary, n = render.rollout_summary(*(outs[k][video] for k in ("qpos", "lin", "yaw", "up", "done")))
+    qpos = np.concatenate([reset["qpos"][video][None], outs["qpos"][video][:n]])
+    video_path, frames = render.render_rollout(
+        env, qpos, out_dir, mocap_pos=reset["mocap_pos"][video], mocap_quat=reset["mocap_quat"][video]
+    )
+    metrics = dict(summary)
+    if target_obj is not None:
+        metrics.update(scene_eval.summarize(
+            reset["target_dist"][target], outs["target_dist"][target].T, outs["done"][target].T,
+            target_obj.reach_radius, env.dt,
+        ))
+
+    robust_metrics: dict[str, float] = {}
+    if robust:
+        rows = [robustness.summarize(outs, i) for i in robust_rows]
+        # Every row past the robots is the nominal robot, so robustness.json's physics
+        # for plan position i can be read from batch row i.
+        robust_metrics = robustness.report(plan, rows, models, summary, out_dir=out_dir, start=start)
+    return video_path, frames, metrics, robust_metrics
