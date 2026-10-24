@@ -14,11 +14,7 @@ import QrPanel from "./components/QrPanel";
 import RequestDetail from "./components/RequestDetail";
 import RequestList from "./components/RequestList";
 
-const suggestions = [
-  "Walk backwards",
-  "Spin in place",
-  "Walk to the red ball",
-];
+const suggestions = ["Walk backwards", "Spin in place", "Walk to the red ball"];
 export default function App() {
   const [runs, setRuns] = useState<RequestSummary[]>([]);
   const [selected, setSelected] = useState(location.hash.slice(1));
@@ -125,7 +121,9 @@ export default function App() {
     event.preventDefault();
     if (busy) return;
     if (text.trim().length < 3) {
-      setSubmitError("Type a behavior first (at least 3 characters), or click an example.");
+      setSubmitError(
+        "Type a behavior first (at least 3 characters), or click an example.",
+      );
       inputRef.current?.focus();
       return;
     }
@@ -191,17 +189,12 @@ export default function App() {
             <section className="cmd hero" aria-labelledby="hero-title">
               <div className="hero-main">
                 <h1 id="hero-title">
-                  Teach a robot dog a new behavior,{" "}
-                  <span className="em">in plain English.</span>
+                  <label htmlFor="behavior">
+                    Teach a robot dog a new behavior.{" "}
+                    <span className="em">What should it learn?</span>
+                  </label>
                 </h1>
-                <ol className="how" aria-label="How it works">
-                  <li>You describe a behavior</li>
-                  <li>Claude writes reward functions (code that scores motion)</li>
-                  <li>Robots train in a physics simulator</li>
-                  <li>Claude judges the videos and improves the best reward</li>
-                </ol>
                 <form className="composer" onSubmit={submit}>
-                  <label htmlFor="behavior">What should the robot learn?</label>
                   <div className="composer-row">
                     <span className="prompt" aria-hidden="true">
                       &gt;
@@ -223,12 +216,12 @@ export default function App() {
                     </button>
                   </div>
                   <p
-                    className={`composer-help ${submitError ? "error-text" : ""}`}
+                    className="composer-help error-text"
                     id="behavior-help"
-                    role={submitError ? "alert" : undefined}
+                    role="alert"
+                    hidden={!submitError}
                   >
-                    {submitError ||
-                      "A run takes about 5–15 minutes on the GPU. Every step shows up below as it happens."}
+                    {submitError}
                   </p>
                   <div className="suggestions">
                     <span className="label">Examples, click to use</span>
@@ -238,7 +231,9 @@ export default function App() {
                         className="link"
                         key={suggestion}
                         onClick={() => {
-                          setText(`Make the robot dog ${suggestion.toLowerCase()}`);
+                          setText(
+                            `Make the robot dog ${suggestion.toLowerCase()}`,
+                          );
                           inputRef.current?.focus();
                         }}
                       >
@@ -247,6 +242,15 @@ export default function App() {
                     ))}
                   </div>
                 </form>
+                <ol className="how" aria-label="How it works">
+                  <li>You describe a behavior</li>
+                  <li>
+                    Claude writes reward functions (code that scores motion)
+                  </li>
+                  <li>Robots train in a physics simulator</li>
+                  <li>Claude judges the videos and improves the best reward</li>
+                  <li className="how-time">about 5–15 min per run</li>
+                </ol>
               </div>
             </section>
             {listError && (
@@ -301,7 +305,9 @@ export default function App() {
             <section className="cmd" aria-labelledby="runs-title" ref={listRef}>
               <h2 className="cmd-title" id="runs-title">
                 All experiments
-                <span className="subtle">newest first · select one to open it</span>
+                <span className="subtle">
+                  newest first · select one to open it
+                </span>
               </h2>
               <RequestList
                 requests={runs}
