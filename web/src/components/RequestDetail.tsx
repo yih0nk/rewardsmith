@@ -1,6 +1,12 @@
 import { useRef, useState } from "react";
 import { RequestDetail as Detail, Health, artifactUrl } from "../api";
-import { Explain, isListedMetric, metricInfo, successSentence, describeClause } from "../explain";
+import {
+  Explain,
+  isListedMetric,
+  metricInfo,
+  successSentence,
+  describeClause,
+} from "../explain";
 import { candidateName, candidateState, isScored } from "../stages";
 import CandidateCard from "./CandidateCard";
 import DiffView from "./DiffView";
@@ -82,7 +88,9 @@ export default function RequestDetail({
   const shown =
     picked ??
     (top ? { round: top.round, c: top.c } : null) ??
-    (lastRound && liveCandidate ? { round: lastRound, c: liveCandidate } : null) ??
+    (lastRound && liveCandidate
+      ? { round: lastRound, c: liveCandidate }
+      : null) ??
     (lastRound?.candidates.length
       ? { round: lastRound, c: lastRound.candidates.at(-1)! }
       : null);
@@ -121,233 +129,266 @@ export default function RequestDetail({
   return (
     <>
       <section className="cmd exp" aria-labelledby="exp-title">
-        <p className="eyebrow">
-          Experiment <span className="num">#{detail.id}</span>
-          <span className={`badge ${detail.status} ${nothingWorked ? "empty" : ""}`}>
+        <div className="exp-head">
+          <h2 className="exp-title" id="exp-title">
+            {detail.text}
+          </h2>
+          <span
+            className={`badge ${detail.status} ${nothingWorked ? "empty" : ""}`}
+          >
             {statusText}
           </span>
-        </p>
-        <h2 className="exp-title" id="exp-title">
-          {detail.text}
-        </h2>
-        <RunStatus
-          detail={detail}
-          candidatesPerRound={health?.candidates_per_round}
-          now={now}
-        />
-        <div className="success-spec">
-          <span className="label">
-            <Explain term="successCheck">Success check</Explain>
-          </span>
-          <div>
-            <p>
-              {sentence ??
-                (running
-                  ? "Claude writes a pass/fail test from your prompt before training starts."
-                  : "This run has no pass/fail test.")}
-            </p>
-            {detail.success_check_error ? (
-              <p className="success-check" role="status">
-                Success could not be verified: the checker failed, so the test
-                fell back to “don't fall over”.
-              </p>
-            ) : detail.status === "done" && detail.succeeded != null ? (
-              <p
-                className={`success-check ${detail.succeeded ? "pass" : ""}`}
-                role="status"
-              >
-                {detail.succeeded
-                  ? "Success verified: the best robot passed the test with a high critic score."
-                  : "Success criteria not met: no robot both passed the test and scored high enough."}
-              </p>
-            ) : null}
-          </div>
+          <span className="exp-id num">Experiment #{detail.id}</span>
         </div>
-      </section>
-
-      <section className="cmd result" aria-label="Robot rollout" ref={stageRef}>
-        <h2 className="cmd-title">
-          <span>
-            {nothingWorked
-              ? "No result"
-              : viewingBest
-                ? running
-                  ? "Best so far"
-                  : "Best result"
-                : picked
-                  ? "Selected candidate"
-                  : "Live view"}
-          </span>
-          {name && !nothingWorked && (
-            <span className="result-who">
-              <span className="stage-title">{name}</span>
-              {viewingBest && <span className="winner-tag">Best overall</span>}
-              <span
-                className={`tag ${candidate?.video_path ? "rollout" : live ? "live" : ""}`}
-              >
-                {candidate?.video_path ? "VIDEO" : live ? "LIVE" : "NO VIDEO"}
+        <div className="run-grid">
+          <div className="run-side">
+            <RunStatus
+              detail={detail}
+              candidatesPerRound={health?.candidates_per_round}
+              now={now}
+            />
+            <div className="success-spec">
+              <span className="label">
+                <Explain term="successCheck">Success check</Explain>
               </span>
-            </span>
-          )}
-        </h2>
-        {picked && top && !viewingBest && (
-          <p className="viewing-note">
-            You picked this candidate below.{" "}
-            <button className="link" onClick={() => show(null, null)}>
-              Back to the best result
-            </button>
-          </p>
-        )}
-        {nothingWorked ? (
-          <RunProblem detail={detail} onRetry={onRetry} />
-        ) : (
-          <div className="result-grid">
-            <div className="stage">
-              <div className="well">
-                {candidate?.video_path ? (
-                  <video
-                    key={candidate.id}
-                    src={artifactUrl(candidate.video_path)}
-                    controls
-                    muted
-                    loop
-                    autoPlay
-                    playsInline
-                  />
-                ) : candidate && live ? (
-                  <TrainingProgress c={candidate} large />
-                ) : (
-                  <div className="well-empty">
-                    <strong>
-                      {!candidate
-                        ? running
-                          ? "No robot has trained yet"
-                          : "No candidates"
-                        : candidate.status === "gate_failed" ||
-                            candidate.status === "failed" ||
-                            candidate.status === "stopped"
-                          ? candidateState(candidate).text
-                          : health?.fake_sim
-                            ? "Fake simulator · no video generated"
-                            : "No video for this candidate"}
-                    </strong>
+              <div>
+                <p>
+                  {sentence ??
+                    (running
+                      ? "Claude writes a pass/fail test from your prompt before training starts."
+                      : "This run has no pass/fail test.")}
+                </p>
+                {detail.success_check_error ? (
+                  <p className="success-check" role="status">
+                    Success could not be verified: the checker failed, so the
+                    test fell back to “don't fall over”.
+                  </p>
+                ) : detail.status === "done" && detail.succeeded != null ? (
+                  <p
+                    className={`success-check ${detail.succeeded ? "pass" : ""}`}
+                    role="status"
+                  >
+                    {detail.succeeded
+                      ? "Success verified: the best robot passed the test with a high critic score."
+                      : "Success criteria not met: no robot both passed the test and scored high enough."}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          <section className="result" aria-label="Robot rollout" ref={stageRef}>
+            <h3 className="cmd-title">
+              <span>
+                {nothingWorked
+                  ? "No result"
+                  : viewingBest
+                    ? running
+                      ? "Best so far"
+                      : "Best result"
+                    : picked
+                      ? "Selected candidate"
+                      : "Live view"}
+              </span>
+              {name && !nothingWorked && (
+                <span className="result-who">
+                  <span className="stage-title">{name}</span>
+                  {viewingBest && (
+                    <span className="winner-tag">Best overall</span>
+                  )}
+                  <span
+                    className={`tag ${candidate?.video_path ? "rollout" : live ? "live" : ""}`}
+                  >
+                    {candidate?.video_path
+                      ? "VIDEO"
+                      : live
+                        ? "LIVE"
+                        : "NO VIDEO"}
+                  </span>
+                </span>
+              )}
+            </h3>
+            {picked && top && !viewingBest && (
+              <p className="viewing-note">
+                You picked this candidate below.{" "}
+                <button className="link" onClick={() => show(null, null)}>
+                  Back to the best result
+                </button>
+              </p>
+            )}
+            {nothingWorked ? (
+              <RunProblem detail={detail} onRetry={onRetry} />
+            ) : (
+              <div className="result-grid">
+                <div className="stage">
+                  <div className="well">
+                    {candidate?.video_path ? (
+                      <video
+                        key={candidate.id}
+                        src={artifactUrl(candidate.video_path)}
+                        controls
+                        muted
+                        loop
+                        autoPlay
+                        playsInline
+                      />
+                    ) : candidate && live ? (
+                      <TrainingProgress c={candidate} large />
+                    ) : (
+                      <div className="well-empty">
+                        <strong>
+                          {!candidate
+                            ? running
+                              ? "No robot has trained yet"
+                              : "No candidates"
+                            : candidate.status === "gate_failed" ||
+                                candidate.status === "failed" ||
+                                candidate.status === "stopped"
+                              ? candidateState(candidate).text
+                              : health?.fake_sim
+                                ? "Fake simulator · no video generated"
+                                : "No video for this candidate"}
+                        </strong>
+                        <span>
+                          {!candidate && running
+                            ? "The first videos appear after training, a few minutes in. This page updates by itself."
+                            : candidate
+                              ? (candidateState(candidate).why ??
+                                (running ? "This page updates by itself." : ""))
+                              : ""}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <p className="stage-foot">
                     <span>
-                      {!candidate && running
-                        ? "The first videos appear after training, a few minutes in. This page updates by itself."
-                        : candidate
-                          ? (candidateState(candidate).why ??
-                            (running ? "This page updates by itself." : ""))
+                      {candidate?.video_path
+                        ? "A 10 s test run of the trained robot"
+                        : live
+                          ? "Training live · updates by itself"
                           : ""}
                     </span>
-                  </div>
-                )}
-              </div>
-              <p className="stage-foot">
-                <span>
-                  {candidate?.video_path
-                    ? "A 10 s test run of the trained robot"
-                    : live
-                      ? "Training live · updates by itself"
-                      : ""}
-                </span>
-                <span>MuJoCo Playground · Unitree Go1</span>
-              </p>
-            </div>
-            <div className="evaluation summary-best">
-              <p className={`score ${candidate?.score == null ? "none" : ""}`}>
-                <span className="num">{candidate?.score?.toFixed(1) ?? "—"}</span>
-                <span className="score-of num">/ 10</span>
-              </p>
-              <p className="score-label label">
-                <Explain term="critic">Critic score</Explain>
-                {candidate && candidate.score == null && (
-                  <> · {candidateState(candidate, live?.label).text}</>
-                )}
-              </p>
-              {viewingBest && top && firstScore != null && top.round.n > 1 && (
-                <p className="improvement">
-                  Since round 1{" "}
-                  <span className={`num delta ${top.score - firstScore > 0.05 ? "up" : ""}`}>
-                    {formatDelta(top.score - firstScore)}
-                  </span>{" "}
-                  <span className="subtle num">
-                    ({firstScore.toFixed(1)} → {top.score.toFixed(1)})
-                  </span>
-                </p>
-              )}
-              {check && (
-                <div
-                  className={`check-result ${check.pass && check.verified !== false ? "pass" : ""}`}
-                >
-                  <p>
-                    Success check:{" "}
-                    {check.verified === false
-                      ? "unavailable"
-                      : check.pass
-                        ? "passed"
-                        : "failed"}
+                    <span>MuJoCo Playground · Unitree Go1</span>
                   </p>
-                  {check.verified !== false && check.clauses?.length > 0 && (
-                    <ul className="clauses">
-                      {check.clauses.map((cl, i) => (
-                        <li key={i} className={cl.pass ? "pass" : "fail"}>
-                          <span aria-hidden="true">{cl.pass ? "✓" : "✕"}</span>
-                          <span className="sr-only">{cl.pass ? "Passed: " : "Failed: "}</span>
-                          {describeClause(cl)}
-                          {cl.actual != null && (
-                            <span className="subtle">
-                              {" "}
-                              (measured {metricInfo(cl.metric.replace(/^abs_/, "")).format(cl.actual)})
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                </div>
+                <div className="evaluation summary-best">
+                  <p
+                    className={`score ${candidate?.score == null ? "none" : ""}`}
+                  >
+                    <span className="num">
+                      {candidate?.score?.toFixed(1) ?? "—"}
+                    </span>
+                    <span className="score-of num">/ 10</span>
+                  </p>
+                  <p className="score-label label">
+                    <Explain term="critic">Critic score</Explain>
+                    {candidate && candidate.score == null && (
+                      <> · {candidateState(candidate, live?.label).text}</>
+                    )}
+                  </p>
+                  {viewingBest &&
+                    top &&
+                    firstScore != null &&
+                    top.round.n > 1 && (
+                      <p className="improvement">
+                        Since round 1{" "}
+                        <span
+                          className={`num delta ${top.score - firstScore > 0.05 ? "up" : ""}`}
+                        >
+                          {formatDelta(top.score - firstScore)}
+                        </span>{" "}
+                        <span className="subtle num">
+                          ({firstScore.toFixed(1)} → {top.score.toFixed(1)})
+                        </span>
+                      </p>
+                    )}
+                  {check && (
+                    <div
+                      className={`check-result ${check.pass && check.verified !== false ? "pass" : ""}`}
+                    >
+                      <p>
+                        Success check:{" "}
+                        {check.verified === false
+                          ? "unavailable"
+                          : check.pass
+                            ? "passed"
+                            : "failed"}
+                      </p>
+                      {check.verified !== false &&
+                        check.clauses?.length > 0 && (
+                          <ul className="clauses">
+                            {check.clauses.map((cl, i) => (
+                              <li key={i} className={cl.pass ? "pass" : "fail"}>
+                                <span aria-hidden="true">
+                                  {cl.pass ? "✓" : "✕"}
+                                </span>
+                                <span className="sr-only">
+                                  {cl.pass ? "Passed: " : "Failed: "}
+                                </span>
+                                {describeClause(cl)}
+                                {cl.actual != null && (
+                                  <span className="subtle">
+                                    {" "}
+                                    (measured{" "}
+                                    {metricInfo(
+                                      cl.metric.replace(/^abs_/, ""),
+                                    ).format(cl.actual)}
+                                    )
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                    </div>
+                  )}
+                  {candidate?.critique ? (
+                    <figure className="critic">
+                      <blockquote>{candidate.critique}</blockquote>
+                      <figcaption>— Claude, judging the video</figcaption>
+                    </figure>
+                  ) : (
+                    <p className="critic-waiting subtle">
+                      {candidate && running && candidate.score == null
+                        ? "Claude's notes appear here after it watches the video."
+                        : candidate
+                          ? "Claude left no notes for this candidate."
+                          : ""}
+                    </p>
+                  )}
+                  {(candidate?.status === "trained" ||
+                    candidate?.status === "scored") && (
+                    <FlagControl key={candidate.id} candidate={candidate} />
                   )}
                 </div>
-              )}
-              {candidate?.critique ? (
-                <figure className="critic">
-                  <blockquote>{candidate.critique}</blockquote>
-                  <figcaption>— Claude, judging the video</figcaption>
-                </figure>
-              ) : (
-                <p className="critic-waiting subtle">
-                  {candidate && running && candidate.score == null
-                    ? "Claude's notes appear here after it watches the video."
-                    : candidate
-                      ? "Claude left no notes for this candidate."
-                      : ""}
-                </p>
-              )}
-              {(candidate?.status === "trained" ||
-                candidate?.status === "scored") && (
-                <FlagControl key={candidate.id} candidate={candidate} />
-              )}
-            </div>
-          </div>
-        )}
+              </div>
+            )}
+          </section>
+        </div>
       </section>
 
       <section className="cmd technical" aria-labelledby="explore-title">
         <h2 className="cmd-title" id="explore-title">
           Explore the run
-          <span className="subtle">Optional detail · click a row to open it</span>
+          <span className="subtle">
+            Optional detail · click a row to open it
+          </span>
         </h2>
         <details>
           <summary>
             All candidates{" "}
             <span>
-              {candidatesTotal} {candidatesTotal === 1 ? "reward" : "rewards"} in{" "}
-              {detail.rounds.length} {detail.rounds.length === 1 ? "round" : "rounds"}
+              {candidatesTotal} {candidatesTotal === 1 ? "reward" : "rewards"}{" "}
+              in {detail.rounds.length}{" "}
+              {detail.rounds.length === 1 ? "round" : "rounds"}
               {top ? ` · best: ${candidateName(top.round.n, top.c.idx)}` : ""}
             </span>
           </summary>
           <div>
             <p className="subtle">
               Each round, Claude writes several{" "}
-              <Explain term="candidate">candidates</Explain> and trains them side
-              by side. Pick a round, then a candidate to show it above.
+              <Explain term="candidate">candidates</Explain> and trains them
+              side by side. Pick a round, then a candidate to show it above.
             </p>
             <RoundTimeline
               rounds={detail.rounds}
@@ -358,9 +399,14 @@ export default function RequestDetail({
               onSelect={(n) => show(n, null)}
             />
             {explored && (
-              <div className="candidate-list" aria-label={`Candidates in round ${explored.n}`}>
+              <div
+                className="candidate-list"
+                aria-label={`Candidates in round ${explored.n}`}
+              >
                 {explored.candidates.length === 0 && (
-                  <p className="subtle">Claude is still writing this round's rewards.</p>
+                  <p className="subtle">
+                    Claude is still writing this round's rewards.
+                  </p>
                 )}
                 {explored.candidates.map((c) => (
                   <CandidateCard
@@ -406,7 +452,9 @@ export default function RequestDetail({
                         <div className="metric" key={key}>
                           <dt>
                             {info.label}
-                            {info.help && <span className="subtle"> ({info.help})</span>}
+                            {info.help && (
+                              <span className="subtle"> ({info.help})</span>
+                            )}
                           </dt>
                           <dd className="num">{info.format(value)}</dd>
                         </div>
@@ -427,7 +475,9 @@ export default function RequestDetail({
                 </dl>
               ) : (
                 <p className="subtle">
-                  {running ? "Measurements appear once it finishes training." : "No measurements were recorded."}
+                  {running
+                    ? "Measurements appear once it finishes training."
+                    : "No measurements were recorded."}
                 </p>
               )}
             </div>
@@ -444,7 +494,8 @@ export default function RequestDetail({
         {candidate?.diff && (
           <details>
             <summary>
-              What changed <span>Claude's edit to the reward it started from</span>
+              What changed{" "}
+              <span>Claude's edit to the reward it started from</span>
             </summary>
             <DiffView diff={candidate.diff} />
           </details>
@@ -468,7 +519,9 @@ export default function RequestDetail({
                   >
                     {new Date(event.created_at * 1000).toLocaleTimeString()}
                   </time>
-                  <span className="log-kind">{EVENT_KINDS[event.kind] ?? event.kind}</span>
+                  <span className="log-kind">
+                    {EVENT_KINDS[event.kind] ?? event.kind}
+                  </span>
                   <span>{event.message}</span>
                 </li>
               ))}
@@ -498,7 +551,9 @@ function RunProblem({
   }
   const firstError = all.find((c) => c.error)?.error?.split("\n")[0];
   const failedRun = detail.status === "failed";
-  const reason = [...detail.events].reverse().find((e) => e.kind === "error")?.message;
+  const reason = [...detail.events]
+    .reverse()
+    .find((e) => e.kind === "error")?.message;
   return (
     <div className="run-problem">
       <p className="problem-title">
@@ -510,7 +565,10 @@ function RunProblem({
       {all.length > 0 && (
         <p>
           What happened:{" "}
-          {[...counts].map(([text, n]) => `${n} × ${text.toLowerCase()}`).join(", ")}.
+          {[...counts]
+            .map(([text, n]) => `${n} × ${text.toLowerCase()}`)
+            .join(", ")}
+          .
           {firstError && (
             <>
               {" "}
@@ -520,8 +578,8 @@ function RunProblem({
         </p>
       )}
       <p>
-        What to try: run it again (Claude writes different rewards each time), or
-        describe the behavior more concretely. The candidates and the full
+        What to try: run it again (Claude writes different rewards each time),
+        or describe the behavior more concretely. The candidates and the full
         errors are under “Explore the run”.
       </p>
       {onRetry && (

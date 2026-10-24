@@ -12,7 +12,8 @@ export type StepKey =
   | "rendering"
   | "judging";
 
-export type StageKey = "queued" | StepKey | "between" | "done" | "no_results" | "failed";
+export type StageKey =
+  "queued" | StepKey | "between" | "done" | "no_results" | "failed";
 
 // The steps one run goes through, in order. Writing to judging repeats every round.
 export const STEPS: { key: StepKey; short: string }[] = [
@@ -36,7 +37,12 @@ export interface RunStage {
   startedAt: number | null;
 }
 
-const PROGRESS_ORDER = { compiling: 0, training: 1, rendering: 2, done: 3 } as const;
+const PROGRESS_ORDER = {
+  compiling: 0,
+  training: 1,
+  rendering: 2,
+  done: 3,
+} as const;
 
 const plural = (n: number, one: string, many = `${one}s`) =>
   `${n} ${n === 1 ? one : many}`;
@@ -102,7 +108,9 @@ export function runStage(
       ? {
           key: "done",
           label: `Finished after ${plural(rounds.length, "round")}${
-            finite(detail.best_score) ? ` · best score ${detail.best_score.toFixed(1)} / 10` : ""
+            finite(detail.best_score)
+              ? ` · best score ${detail.best_score.toFixed(1)} / 10`
+              : ""
           }`,
           round: last?.n ?? null,
           startedAt: lastEvent?.created_at ?? null,
@@ -232,7 +240,8 @@ export function stepIndex(key: StageKey): number {
 export function formatElapsed(seconds: number): string {
   const s = Math.max(0, Math.floor(finite(seconds) ? seconds : 0));
   if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  if (s < 3600)
+    return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`;
 }
 
@@ -246,7 +255,8 @@ export function elapsedSince(
   return Math.max(0, nowMs / 1000 + offsetS - startedAt);
 }
 
-export type CandidateKind = "waiting" | "live" | "scored" | "failed" | "stopped";
+export type CandidateKind =
+  "waiting" | "live" | "scored" | "failed" | "stopped";
 
 // A candidate's state in plain words, for cards and status lines. `live` comes from
 // TrainingProgress.liveState while it trains.
@@ -254,7 +264,8 @@ export function candidateState(
   c: Candidate,
   liveLabel?: string | null,
 ): { kind: CandidateKind; text: string; why?: string } {
-  if (isScored(c)) return { kind: "scored", text: `Scored ${c.score!.toFixed(1)} / 10` };
+  if (isScored(c))
+    return { kind: "scored", text: `Scored ${c.score!.toFixed(1)} / 10` };
   switch (c.status) {
     case "written":
       return { kind: "waiting", text: "Testing its code" };
@@ -272,9 +283,17 @@ export function candidateState(
       };
     case "failed":
       if (c.error?.startsWith("The critic could not"))
-        return { kind: "failed", text: "Couldn't be judged", why: "Claude's scoring call failed." };
+        return {
+          kind: "failed",
+          text: "Couldn't be judged",
+          why: "Claude's scoring call failed.",
+        };
       if (c.error?.startsWith("Stopped: the run failed"))
-        return { kind: "failed", text: "Cut short", why: "The whole run stopped before it finished." };
+        return {
+          kind: "failed",
+          text: "Cut short",
+          why: "The whole run stopped before it finished.",
+        };
       return { kind: "failed", text: "Crashed while training" };
     case "trained":
       return { kind: "live", text: "Being judged by Claude" };

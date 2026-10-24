@@ -46,12 +46,16 @@ export default function RunStatus({
   const broken = stage.key === "failed" || stage.key === "no_results";
   const last = detail.rounds.at(-1);
   const lanes =
-    active && last && ["compiling", "training", "rendering", "judging"].includes(stage.key)
+    active &&
+    last &&
+    ["compiling", "training", "rendering", "judging"].includes(stage.key)
       ? last.candidates
       : [];
 
   return (
-    <div className={`run-status-panel ${broken ? "broken" : ""} ${finished ? "finished" : ""}`}>
+    <div
+      className={`run-status-panel ${broken ? "broken" : ""} ${finished ? "finished" : ""}`}
+    >
       <div className="now">
         <span className="now-tag">
           {active ? "NOW" : finished ? "DONE" : "STOPPED"}
@@ -80,6 +84,11 @@ export default function RunStatus({
       {active && (
         <>
           <ol className="steps" aria-label="Pipeline steps">
+            {stage.round != null && (
+              <li className="steps-round" aria-hidden="true">
+                Round {stage.round}
+              </li>
+            )}
             {STEPS.map((s, i) => {
               const state = i < step ? "done" : i === step ? "current" : "todo";
               return (
@@ -91,23 +100,28 @@ export default function RunStatus({
                   <span aria-hidden="true">
                     {state === "done" ? "✓" : state === "current" ? "▸" : "·"}
                   </span>{" "}
-                  {s.key === "gate" ? <Explain term="gate">{s.short}</Explain> : s.short}
+                  {s.key === "gate" ? (
+                    <Explain term="gate">{s.short}</Explain>
+                  ) : (
+                    s.short
+                  )}
                   <span className="sr-only">
-                    {state === "done" ? " (done)" : state === "current" ? " (in progress)" : ""}
+                    {state === "done"
+                      ? " (done)"
+                      : state === "current"
+                        ? " (in progress)"
+                        : ""}
                   </span>
                 </li>
               );
             })}
           </ol>
           <p className="steps-note">
-            {stage.round != null && active ? (
-              <>
-                <strong>Round {stage.round}.</strong>{" "}
-              </>
-            ) : null}
-            Steps 2–7 repeat each round: Claude{" "}
-            <Explain term="carry">revises the best rewards</Explain> and trains
-            them again, keeping the best robot so far.
+            {stage.round != null && (
+              <span className="sr-only">Round {stage.round}. </span>
+            )}
+            ↻ Steps 2–7 repeat each round:{" "}
+            <Explain term="carry">Claude revises the best rewards</Explain>.
           </p>
         </>
       )}
@@ -118,7 +132,9 @@ export default function RunStatus({
             const state = candidateState(c, live?.label);
             return (
               <li key={c.id} className={`lane ${state.kind}`}>
-                <span className="lane-name">{candidateName(last!.n, c.idx)}</span>
+                <span className="lane-name">
+                  {candidateName(last!.n, c.idx)}
+                </span>
                 <span className="lane-bar" aria-hidden="true">
                   {live?.fraction != null ? textBar(live.fraction, 20) : ""}
                 </span>

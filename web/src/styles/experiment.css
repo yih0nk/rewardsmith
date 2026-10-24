@@ -1,12 +1,20 @@
 /* One experiment: its header, the result, the rounds and the record. */
 
 /* ---- Header ---- */
-.exp .eyebrow {
+/* The prompt, its status badge and the run id on one line. */
+.exp-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0 var(--dp-spacing-column-gap);
-  line-height: 36px;
+  gap: 0 var(--dp-spacing-gutter);
+}
+.exp-id {
+  margin-left: auto;
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.cmd.exp {
+  padding-top: var(--dp-spacing-section-compact);
 }
 .badge {
   padding: 0 var(--dp-spacing-cell);
@@ -23,8 +31,8 @@
   color: var(--dp-color-emphasis);
 }
 .exp-title {
-  font-size: var(--dp-typography-display-narrow);
-  line-height: var(--dp-typography-display-leading-narrow);
+  font-size: var(--dp-typography-heading);
+  line-height: 36px;
   color: var(--dp-color-emphasis);
   overflow-wrap: anywhere;
 }

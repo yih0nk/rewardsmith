@@ -48,27 +48,65 @@ interface MetricInfo {
 }
 
 const num = (v: number, digits = 2) => String(Number(v.toFixed(digits)));
-const unit = (u: string, digits = 2) => (v: number) => `${num(v, digits)} ${u}`;
+const unit =
+  (u: string, digits = 2) =>
+  (v: number) =>
+    `${num(v, digits)} ${u}`;
 const percent = (v: number) => `${Math.round(v * 100)}%`;
 const yesNo = (v: number) => (v >= 0.5 ? "yes" : "no");
 const ofOne = (v: number) => `${num(v)} of 1`;
 
 const METRICS: Record<string, MetricInfo> = {
-  forward_velocity: { label: "Forward speed", format: unit("m/s"), help: "negative = backwards" },
-  lateral_velocity: { label: "Sideways speed", format: unit("m/s"), help: "positive = to its left" },
-  yaw_rate: { label: "Turning rate", format: unit("rad/s"), help: "positive = counter-clockwise" },
-  base_height: { label: "Body height", format: unit("m"), help: "about 0.28 m standing" },
-  upright: { label: "Uprightness", format: ofOne, help: "1 = level, 0 = on its side" },
+  forward_velocity: {
+    label: "Forward speed",
+    format: unit("m/s"),
+    help: "negative = backwards",
+  },
+  lateral_velocity: {
+    label: "Sideways speed",
+    format: unit("m/s"),
+    help: "positive = to its left",
+  },
+  yaw_rate: {
+    label: "Turning rate",
+    format: unit("rad/s"),
+    help: "positive = counter-clockwise",
+  },
+  base_height: {
+    label: "Body height",
+    format: unit("m"),
+    help: "about 0.28 m standing",
+  },
+  upright: {
+    label: "Uprightness",
+    format: ofOne,
+    help: "1 = level, 0 = on its side",
+  },
   fell: { label: "Fell over", format: yesNo },
-  episode_reward: { label: "Training reward", format: (v) => `${num(v)} pts`, help: "on its reward's own scale" },
+  episode_reward: {
+    label: "Training reward",
+    format: (v) => `${num(v)} pts`,
+    help: "on its reward's own scale",
+  },
   fake_quality: { label: "Fake quality", format: (v) => `${num(v, 1)} / 10` },
-  rollout_steps: { label: "Video length", format: (v) => `${Math.round(v)} steps (${num(v / 50, 1)} s)` },
-  target_reached: { label: "Reached the target", format: percent, help: "share of test episodes" },
+  rollout_steps: {
+    label: "Video length",
+    format: (v) => `${Math.round(v)} steps (${num(v / 50, 1)} s)`,
+  },
+  target_reached: {
+    label: "Reached the target",
+    format: percent,
+    help: "share of test episodes",
+  },
   target_start_dist: { label: "Start distance to target", format: unit("m") },
   target_min_dist: { label: "Closest to target", format: unit("m") },
   target_final_dist: { label: "Final distance to target", format: unit("m") },
   target_time_to_reach: { label: "Time to reach target", format: unit("s", 1) },
-  target_fell: { label: "Fell on the way", format: percent, help: "share of test episodes" },
+  target_fell: {
+    label: "Fell on the way",
+    format: percent,
+    help: "share of test episodes",
+  },
   train_s: { label: "Training time", format: unit("s", 0) },
   compile_s: { label: "Compile time", format: unit("s", 0) },
   robust_s: { label: "Robustness test time", format: unit("s", 0) },
@@ -109,8 +147,10 @@ export function describeClause({ metric, op, value }: SuccessClause): string {
     case "base_height":
       return `keeps its body ${above ? "above" : "below"} ${num(value)} m`;
     case "forward_velocity":
-      if (!above && value <= 0) return `walks backwards faster than ${speed(value)}`;
-      if (above && value >= 0) return `walks forwards faster than ${speed(value)}`;
+      if (!above && value <= 0)
+        return `walks backwards faster than ${speed(value)}`;
+      if (above && value >= 0)
+        return `walks forwards faster than ${speed(value)}`;
       return above
         ? `goes backwards no faster than ${speed(value)}`
         : `goes forwards no faster than ${speed(value)}`;
@@ -118,13 +158,16 @@ export function describeClause({ metric, op, value }: SuccessClause): string {
       return `moves forwards or backwards ${faster} than ${speed(value)}`;
     case "lateral_velocity":
       if (above && value >= 0) return `steps left faster than ${speed(value)}`;
-      if (!above && value <= 0) return `steps right faster than ${speed(value)}`;
+      if (!above && value <= 0)
+        return `steps right faster than ${speed(value)}`;
       return `moves sideways ${above ? "above" : "below"} ${num(value)} m/s (left is positive)`;
     case "abs_lateral_velocity":
       return `moves sideways ${faster} than ${speed(value)}`;
     case "yaw_rate":
-      if (above && value >= 0) return `turns counter-clockwise faster than ${turn(value)}`;
-      if (!above && value <= 0) return `turns clockwise faster than ${turn(value)}`;
+      if (above && value >= 0)
+        return `turns counter-clockwise faster than ${turn(value)}`;
+      if (!above && value <= 0)
+        return `turns clockwise faster than ${turn(value)}`;
       return `turns ${above ? "above" : "below"} ${num(value)} rad/s (counter-clockwise is positive)`;
     case "abs_yaw_rate":
       return `turns either way ${faster} than ${turn(value)}`;
