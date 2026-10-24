@@ -78,20 +78,18 @@ def compile_xml(spec: SceneSpec, base_xml: str, sensor_xml: str, robot_xml: str 
         _inline_robot_with_bumper(root, robot_xml)
     asset = _child(root, "asset")
     world = _child(root, "worldbody")
-    lift = ROUGH_BUMP if spec.terrain == "rough" else 0.0
-
     for o in spec.objects:
         r, g, b = o.rgb
         alpha = 0.55 if o.kind == "zone" else 1.0
         ET.SubElement(asset, "material", name=body_name(o), rgba=f"{r:.3f} {g:.3f} {b:.3f} {alpha}",
                       specular="0.3", shininess="0.3")
-        world.append(_body(o, _nominal_pos(o, lift)))
+        world.append(_body(o, _nominal_pos(o, spec.terrain)))
 
     ET.SubElement(world, "camera", name=OVERVIEW_CAMERA, mode="targetbodycom", target="trunk",
                   pos="0 -4.5 4.5", fovy="55")
 
     _inline_sensors(root, sensor_xml, any_contact=any(o.kind != "zone" for o in spec.objects))
-    _extend_keyframes(root, [o for o in spec.objects if o.movable], lift)
+    _extend_keyframes(root, [o for o in spec.objects if o.movable], spec.terrain)
     return ET.tostring(root, encoding="unicode")
 
 
@@ -126,15 +124,20 @@ def _child(root: ET.Element, tag: str) -> ET.Element:
     return el
 
 
-def _nominal_pos(o: SceneObject, lift: float) -> tuple[float, float, float]:
+def spawn_z(o: SceneObject, terrain: str) -> float:
+    """Height of the object's centre at reset. Movable objects on rough ground start above
+    the bumps and drop; fixed ones sit at floor level, partly sunk into any bump."""
+    lift = ROUGH_BUMP if terrain == "rough" else 0.0
+    if o.kind == "zone":
+        return lift + 0.003
+    return o.rest_height + (lift if o.movable else 0.0)
+
+
+def _nominal_pos(o: SceneObject, terrain: str) -> tuple[float, float, float]:
     """Mid-range placement for a robot at the origin facing +x. Reset replaces it every episode."""
     d = 0.5 * (o.distance[0] + o.distance[1])
     a = math.radians(0.5 * (o.bearing[0] + o.bearing[1]))
-    if o.kind == "zone":
-        z = lift + 0.003
-    else:
-        z = o.rest_height + (lift if o.movable else 0.0)
-    return d * math.cos(a), d * math.sin(a), z
+    return d * math.cos(a), d * math.sin(a), spawn_z(o, terrain)
 
 
 def _fmt(*xs: float) -> str:
@@ -206,13 +209,13 @@ def _inline_sensors(root: ET.Element, sensor_xml: str, any_contact: bool) -> Non
     root.append(sensors)
 
 
-def _extend_keyframes(root: ET.Element, movable: list[SceneObject], lift: float) -> None:
+def _extend_keyframes(root: ET.Element, movable: list[SceneObject], terrain: str) -> None:
     """Free bodies add 7 qpos each; every keyframe must list them, after the robot's."""
     if not movable:
         return
     extra = []
     for o in movable:
-        extra += [*_nominal_pos(o, lift), 1.0, 0.0, 0.0, 0.0]
+        extra += [*_nominal_pos(o, terrain), 1.0, 0.0, 0.0, 0.0]
     for key in root.iter("key"):
         if key.get("qpos"):
             key.set("qpos", " ".join(key.get("qpos").split()) + " " + _fmt(*extra))
