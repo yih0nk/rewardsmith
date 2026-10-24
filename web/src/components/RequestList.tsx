@@ -4,6 +4,7 @@ interface Props {
   selected: string | null;
   onSelect: (id: string) => void;
 }
+// One row per run: status, best score, request. The selected row is filled green.
 export default function RequestList({ requests, selected, onSelect }: Props) {
   return (
     <nav aria-label="Recent experiments" className="runs">
@@ -15,18 +16,19 @@ export default function RequestList({ requests, selected, onSelect }: Props) {
           onClick={() => onSelect(run.id)}
           className={`run-link ${run.id === selected ? "selected" : ""}`}
         >
-          <span className="run-text">{run.text}</span>
-          <small className="run-status">
-            <span className={`lamp ${run.status}`} />
-            {run.status}
-            {run.best_score != null && (
-              <span className="run-score">
+          <span className={`run-status ${run.status}`}>{run.status}</span>
+          <span className="run-score num">
+            {run.best_score != null ? (
+              <>
                 {run.best_score.toFixed(1)}
                 <span aria-hidden="true">/10</span>
                 <span className="sr-only"> out of 10</span>
-              </span>
+              </>
+            ) : (
+              "—"
             )}
-          </small>
+          </span>
+          <span className="run-text">{run.text}</span>
         </button>
       ))}
     </nav>

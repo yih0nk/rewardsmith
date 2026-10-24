@@ -139,92 +139,52 @@ export default function App() {
     : health.fake_sim
       ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
       : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
-  const brand = (
-    <a className="brand" href="#" onClick={() => setSelected("")}>
-      <svg viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="4" />
-        <path d="M5 22 Q11 22 13 15 T21 9 T27 8" />
-      </svg>
-      Rewardsmith
-    </a>
-  );
+  const goHome = () => setSelected(runs[0]?.id ?? "");
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        {brand}
-        <nav className="nav" aria-label="Board">
+    <div className="term">
+      <header className="session-bar">
+        <a className="wordmark" href="#" onClick={() => setSelected("")}>
+          rewardsmith
+          <span className="cursor" aria-hidden="true" />
+        </a>
+        <nav aria-label="Board">
           <button
-            className={`nav-item ${hall ? "" : "active"}`}
-            onClick={() => setSelected(runs[0]?.id ?? "")}
+            className={`nav-link ${hall ? "" : "active"}`}
+            aria-current={hall ? undefined : "page"}
+            onClick={goHome}
           >
-            Experiments <span className="count num">{runs.length}</span>
+            Experiments <span className="num">({runs.length})</span>
           </button>
-          <a className={`nav-item ${hall ? "active" : ""}`} href="#hall">
-            Hall of fame <span aria-hidden="true">⚑</span>
+          <a
+            className={`nav-link ${hall ? "active" : ""}`}
+            aria-current={hall ? "page" : undefined}
+            href="#hall"
+          >
+            Hall of fame
           </a>
         </nav>
-        <div className="sidebar-heading label">Logbook</div>
-        <RequestList
-          requests={runs}
-          selected={selected}
-          onSelect={setSelected}
-        />
-        <div className="sidebar-footer">
-          <QrPanel />
-        </div>
-      </aside>
-      <main>
-        <header className="topbar">
-          <span className="mobile-brand">{brand}</span>
-          <span className="crumb label">
-            Workspace <span aria-hidden="true">/</span>{" "}
-            <strong>{hall ? "Hall of fame" : "Experiments"}</strong>
-          </span>
-          <span className={`mode label ${health ? "" : "down"}`}>
-            <span className={`lamp ${health ? "done" : "failed"}`} />
-            <span className="mode-long">{mode}</span>
-            <span className="mode-short">
-              {!health ? "API down" : health.fake_sim ? "Fake sim" : "Real sim"}
-            </span>
-          </span>
-        </header>
-        <div className="content">
-          <select
-            className="mobile-runs"
-            aria-label="Select experiment"
-            value={selected}
-            onChange={(event) => setSelected(event.target.value)}
-          >
-            <option value="">Experiments</option>
-            <option value="hall">Hall of fame</option>
-            {runs.map((run) => (
-              <option key={run.id} value={run.id}>
-                {run.text} · {run.status}
-              </option>
-            ))}
-          </select>
-          {hall ? (
-            <HallOfFame
-              onOpen={setSelected}
-              onBack={() => setSelected(runs[0]?.id ?? "")}
-            />
-          ) : (
-            <>
-              <div className="hero">
-                <section className="masthead">
-                  <div className="eyebrow">
-                    The reinforcement learning playground
-                  </div>
-                  <h1>
-                    A little prompt. A new <em>behavior.</em>
-                  </h1>
-                  <p>Describe a behavior. Watch your robot figure it out.</p>
-                </section>
+        <span className={`mode ${health ? "" : "down"}`}>{mode}</span>
+      </header>
+      <main className="session">
+        {hall ? (
+          <HallOfFame onOpen={setSelected} onBack={goHome} />
+        ) : (
+          <>
+            <section className="cmd hero" aria-labelledby="hero-title">
+              <div className="hero-main">
+                <p className="eyebrow">The reinforcement learning playground</p>
+                <h1 id="hero-title">
+                  A little prompt. A new <span className="em">behavior.</span>
+                </h1>
+                <p className="hero-sub">
+                  Describe a behavior. Watch your robot figure it out.
+                </p>
                 <form className="composer" onSubmit={submit}>
-                  <label htmlFor="behavior" className="label">
-                    What should the robot learn?
-                  </label>
+                  <label htmlFor="behavior">What should the robot learn?</label>
                   <div className="composer-row">
+                    <span className="prompt" aria-hidden="true">
+                      &gt;
+                    </span>
                     <input
                       id="behavior"
                       value={text}
@@ -238,8 +198,7 @@ export default function App() {
                       className="primary"
                       disabled={busy || text.trim().length < 3}
                     >
-                      {busy ? "Starting…" : "Start experiment"}{" "}
-                      <span aria-hidden="true">→</span>
+                      {busy ? "Starting…" : "Start experiment"}
                     </button>
                   </div>
                   <div className="suggestions">
@@ -247,6 +206,7 @@ export default function App() {
                     {suggestions.map((suggestion) => (
                       <button
                         type="button"
+                        className="link"
                         key={suggestion}
                         onClick={() =>
                           setText(
@@ -260,81 +220,103 @@ export default function App() {
                   </div>
                 </form>
               </div>
-              {submitError && (
-                <div className="error" role="alert">
-                  {submitError}
+              <dl className="facts">
+                <div>
+                  <dt>Mode</dt>
+                  <dd>{mode}</dd>
                 </div>
-              )}
-              {listError && (
-                <div className="error" role="alert">
-                  {listError} Retrying automatically.
+                <div>
+                  <dt>Experiments</dt>
+                  <dd className="num">{runs.length}</dd>
                 </div>
-              )}
-              {detailError && (
-                <div className="error" role="alert">
-                  {detailError}{" "}
-                  <button
-                    className="link"
-                    onClick={() => setSelected(runs[0]?.id ?? "")}
-                  >
-                    Back to experiments
-                  </button>
+                <div className="facts-qr">
+                  <dt>On your phone</dt>
+                  <dd>
+                    <QrPanel />
+                  </dd>
                 </div>
-              )}
-              {detail ? (
-                <RequestDetail
-                  key={detail.id}
-                  detail={detail}
-                  health={health}
-                />
-              ) : detailLoading || listLoading ? (
-                <div className="loading" role="status">
-                  <span className="label">Loading experiment…</span>
-                  <i />
-                  <i />
-                  <i />
-                </div>
-              ) : (
-                !detailError && (
-                  <section className="empty-state">
-                    <svg viewBox="0 0 240 64" aria-hidden="true">
-                      <path
-                        className="grid"
-                        d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64"
-                      />
-                      <path
-                        className="trace"
-                        d="M0 40H96Q104 40 108 30T116 22T124 40H240"
-                      />
-                    </svg>
-                    {runs.length ? (
-                      <>
-                        <h2>Pick up where you left off.</h2>
-                        <p>
-                          Choose an experiment from the logbook, or describe a
-                          new behavior above.
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <h2>Your first experiment starts here.</h2>
-                        <p>
-                          Describe a behavior above to queue a request. Run the
-                          worker to train and evaluate candidates.
-                        </p>
-                      </>
-                    )}
-                  </section>
-                )
-              )}
-            </>
-          )}
-          <footer>
-            <span className="label">Rewardsmith</span>
-            <span>Language → reward → motion.</span>
-            <span className="label">Made at Cal Hacks 13.0</span>
-          </footer>
-        </div>
+              </dl>
+            </section>
+            <section className="cmd" aria-labelledby="runs-title">
+              <h2 className="cmd-title" id="runs-title">
+                Experiments
+              </h2>
+              <RequestList
+                requests={runs}
+                selected={selected}
+                onSelect={setSelected}
+              />
+            </section>
+            {submitError && (
+              <div className="error" role="alert">
+                {submitError}
+              </div>
+            )}
+            {listError && (
+              <div className="error" role="alert">
+                {listError} Retrying automatically.
+              </div>
+            )}
+            {detailError && (
+              <div className="error" role="alert">
+                {detailError}{" "}
+                <button className="link" onClick={goHome}>
+                  Back to experiments
+                </button>
+              </div>
+            )}
+            {detail ? (
+              <RequestDetail key={detail.id} detail={detail} health={health} />
+            ) : detailLoading || listLoading ? (
+              <p className="cmd-note" role="status">
+                Loading experiment…
+              </p>
+            ) : (
+              !detailError && (
+                <section className="cmd empty-state">
+                  {runs.length ? (
+                    <>
+                      <h2 className="cmd-title">Pick up where you left off.</h2>
+                      <p>
+                        Choose an experiment from the list above, or describe a
+                        new behavior.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="cmd-title">
+                        Your first experiment starts here.
+                      </h2>
+                      <p>
+                        Describe a behavior above to queue a request. Run the
+                        worker to train and evaluate candidates.
+                      </p>
+                    </>
+                  )}
+                </section>
+              )
+            )}
+          </>
+        )}
+        <footer className="directory">
+          <div>
+            <h2>Rewardsmith</h2>
+            <p>Language → reward → motion.</p>
+          </div>
+          <div>
+            <h2>Board</h2>
+            <button className="link" onClick={goHome}>
+              Experiments
+            </button>
+            <a className="link" href="#hall">
+              Hall of fame
+            </a>
+          </div>
+          <div>
+            <h2>Made at</h2>
+            <p>Cal Hacks 13.0</p>
+          </div>
+        </footer>
       </main>
     </div>
   );
