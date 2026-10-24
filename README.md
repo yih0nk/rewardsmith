@@ -86,6 +86,26 @@ To try the reward writer alone with a real API key: `.venv/bin/python scripts/tr
 .venv/bin/python -m pytest -q
 ```
 
+## Benchmark
+
+`scripts/benchmark.py` runs the team plan's behaviors through the full loop (Claude and
+training, like any request) and reports the four Devpost numbers: success rate after
+round 1 vs. by the last round, median rounds to success, generated vs. hand-written
+forward walking, and GPU minutes per learned behavior. It also reports how often the
+critic's score agreed with the check.
+
+```sh
+python scripts/benchmark.py queue                    # on the pod, with the worker running
+python scripts/benchmark.py report --wait --gpu-dollars-per-hour 0.69
+```
+
+Each behavior gets a fixed success check from `rewardsmith/bench/suite.py`, stored with
+the request so the checker can't change it. Success means the check passed, not the
+critic's score. `limp` and `pronk` need foot-contact metrics the rollout doesn't report
+yet, so they are skipped and listed as unmeasured. Three other checks stand in for the
+plan's (spin drift, run_fast fall rate, hind_stand pitch); the report says how.
+Results go next to the manifest in `<REWARDSMITH_HOME>/benchmark/`.
+
 ## Quality regression suite
 
 `scripts/regression.py` trains three fixed rewards (walk backwards, walk forward,
