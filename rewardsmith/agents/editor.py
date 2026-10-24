@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from .base import Attempt, Draft
 from .claude import ask_json
+from .references import reference
 from .stream import IdeaStream, OnIdea
 from .writer import SYSTEM, WRITE_SCHEMA
 
@@ -68,11 +69,13 @@ class ClaudeEditor:
         prompt = (
             f"Environment notes:\n{env_doc}\n\n"
             f"Behavior the user wants: {request}\n\n"
+            f"{reference(request, env_doc)}"
             f"Best reward so far:\n```python\n{best_source}\n```\n\n"
             f"Metrics from its rollout:\n{json.dumps(metrics, indent=2)}\n\n"
             f"Critic's notes after watching the video:\n{critique}\n\n"
             f"{earlier}"
-            f"Write {k} revised reward modules that fix what the critic saw. "
+            f"Write {k} revised reward modules that fix what the critic saw. If the critique names the "
+            "phase where the task fails, change the terms for that phase first. "
             "Each idea should say what you changed and why."
         )
         out = ask_json(
