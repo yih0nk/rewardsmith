@@ -1,0 +1,211 @@
+/* Run status: what is happening now, the timers, the step strip and the
+   per-candidate lanes. Then the success check sentence and the no-result panel. */
+.run-status-panel {
+  margin-top: var(--dp-spacing-row-compact);
+  padding: var(--dp-spacing-row-compact) var(--dp-spacing-gutter);
+  border: var(--dp-border-hairline) solid var(--dp-color-ink);
+}
+.run-status-panel.finished {
+  border-color: var(--dp-color-rule);
+}
+/* A run that produced nothing: emphasis border, dashed, so it never reads as "still working". */
+.run-status-panel.broken {
+  border: 2px dashed var(--dp-color-emphasis);
+}
+.now {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--dp-spacing-gutter);
+}
+.now-tag {
+  padding: 0 var(--dp-spacing-cell);
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+  font-size: var(--dp-typography-label);
+  font-weight: 500;
+}
+.finished .now-tag {
+  background: none;
+  color: var(--dp-color-ink);
+  outline: var(--dp-border-hairline) solid var(--dp-color-ink);
+}
+.broken .now-tag {
+  background: var(--dp-color-emphasis);
+}
+.now-label {
+  font-size: var(--dp-typography-heading);
+  font-weight: 500;
+  line-height: 36px;
+  color: var(--dp-color-emphasis);
+  overflow-wrap: anywhere;
+}
+.timers {
+  display: flex;
+  gap: var(--dp-spacing-column-gap);
+}
+.timers div {
+  display: grid;
+  justify-items: end;
+}
+.timers dt {
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.timers dd {
+  font-size: var(--dp-typography-heading);
+  font-weight: 500;
+  line-height: 36px;
+  color: var(--dp-color-emphasis);
+}
+.now-hint {
+  margin-top: 4px;
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-cell);
+  margin: var(--dp-spacing-row-compact) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--dp-typography-label);
+  counter-reset: step;
+}
+.step {
+  padding: 2px var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-rule);
+  color: var(--dp-color-ink-muted);
+  white-space: nowrap;
+}
+.step.done {
+  border-color: var(--dp-color-ink-muted);
+  color: var(--dp-color-ink);
+}
+.step.current {
+  border-color: var(--dp-color-ink);
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+  font-weight: 500;
+}
+.step.current .explain-term {
+  color: inherit;
+}
+.steps-note {
+  margin-top: var(--dp-spacing-inset);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.steps-note strong {
+  color: var(--dp-color-ink);
+}
+.lanes {
+  margin: var(--dp-spacing-row-compact) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
+  font-size: var(--dp-typography-label);
+}
+.lane {
+  display: grid;
+  grid-template-columns: 22ch 22ch minmax(0, 1fr);
+  column-gap: var(--dp-spacing-column-gap);
+  padding: 4px 0;
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+  line-height: var(--dp-typography-list-leading);
+}
+.lane-bar {
+  white-space: pre;
+}
+.lane-state {
+  color: var(--dp-color-emphasis);
+}
+.lane.failed .lane-state,
+.lane.stopped .lane-state {
+  color: var(--dp-color-ink-muted);
+}
+
+/* The pass/fail check, as a sentence. */
+.success-spec {
+  display: grid;
+  grid-template-columns: 16ch minmax(0, 1fr);
+  column-gap: var(--dp-spacing-column-gap);
+  padding: var(--dp-spacing-inset) 0;
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+}
+.success-spec p {
+  color: var(--dp-color-emphasis);
+}
+
+/* ---- The result section ---- */
+.cmd.result {
+  padding-top: var(--dp-spacing-section-compact);
+}
+.result-who {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--dp-spacing-gutter);
+}
+.viewing-note {
+  margin-bottom: var(--dp-spacing-row-compact);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.improvement {
+  margin-top: var(--dp-spacing-inset);
+  font-size: var(--dp-typography-label);
+}
+.clauses {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.clauses li {
+  display: block;
+  padding-left: 2ch;
+  text-indent: -2ch;
+}
+.clauses li > span[aria-hidden] {
+  display: inline-block;
+  width: 2ch;
+  text-indent: 0;
+}
+.clauses li.pass {
+  color: var(--dp-color-emphasis);
+}
+.clauses li.fail {
+  color: var(--dp-color-ink-muted);
+}
+
+/* A finished run with no robot: what happened and what to do. */
+.run-problem {
+  display: grid;
+  gap: var(--dp-spacing-inset);
+  justify-items: start;
+  padding: var(--dp-spacing-row) var(--dp-spacing-gutter);
+  border: 2px dashed var(--dp-color-emphasis);
+  overflow-wrap: anywhere;
+}
+.problem-title {
+  font-size: var(--dp-typography-heading);
+  font-weight: 500;
+  line-height: 36px;
+  color: var(--dp-color-emphasis);
+}
+.run-problem code {
+  color: var(--dp-color-emphasis);
+}
+.run-problem .primary {
+  margin-top: var(--dp-spacing-inset);
+}
+.sub-title {
+  margin-top: var(--dp-spacing-row);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-emphasis);
+}
+.technical details > div > * + * {
+  margin-top: var(--dp-spacing-row-compact);
+}
