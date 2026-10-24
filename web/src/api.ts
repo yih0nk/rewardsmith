@@ -1,11 +1,41 @@
 export type Status = "queued" | "running" | "done" | "failed";
 
+// Live training progress, written by the training process as it goes.
+export type ProgressStage = "compiling" | "training" | "rendering" | "done";
+
+export interface CurvePoint {
+  steps: number;
+  wall_s: number;
+  // null when a diverged run reported NaN.
+  episode_reward: number | null;
+  terms: Record<string, number | null>;
+}
+
+export interface Progress {
+  stage: ProgressStage;
+  // Can pass total_steps (brax rounds up); fraction is capped at 1.
+  steps: number;
+  total_steps: number;
+  fraction: number;
+  wall_s: number;
+  curve: CurvePoint[];
+}
+
+// written → training → trained → scored, or gate_failed / failed.
+export type CandidateStatus =
+  | "written"
+  | "gate_failed"
+  | "training"
+  | "trained"
+  | "scored"
+  | "failed";
+
 export interface Candidate {
   id: number;
   idx: number;
   reward_src: string;
   diff: string | null;
-  status: string;
+  status: CandidateStatus | (string & {});
   error: string | null;
   metrics: Record<string, unknown> | null;
   video_path: string | null;
@@ -14,6 +44,8 @@ export interface Candidate {
   // Set when someone flags the candidate as reward hacking (the hall of fame).
   flagged_at: number | null;
   flag_note: string | null;
+  // null until the training process writes its first progress file. Absent on hall of fame entries.
+  progress?: Progress | null;
 }
 
 export interface HallEntry extends Candidate {
