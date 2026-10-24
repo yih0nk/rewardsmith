@@ -8,7 +8,6 @@ import {
   getRequest,
   listRequests,
   getHealth,
-  MOCK_MODE,
 } from "./api";
 import RequestDetail from "./components/RequestDetail";
 import RequestList from "./components/RequestList";
@@ -128,13 +127,11 @@ export default function App() {
       setBusy(false);
     }
   }
-  const mode = MOCK_MODE
-    ? "Demo · Mock API"
-    : !health
-      ? "API unavailable"
-      : health.fake_sim
-        ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
-        : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
+  const mode = !health
+    ? "API unavailable"
+    : health.fake_sim
+      ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
+      : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
   return (
     <div className="shell">
       <aside className="sidebar">

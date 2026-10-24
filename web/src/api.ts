@@ -1,9 +1,3 @@
-import { mockApi } from "./mockApi";
-
-// The real backend is the default. Opt into the isolated demo with VITE_MOCK_API=1.
-export const MOCK_MODE =
-  (import.meta as ImportMeta & { env: Record<string, string> }).env
-    .VITE_MOCK_API === "1";
 export type Status = "queued" | "running" | "done" | "failed";
 
 export interface Candidate {
@@ -74,31 +68,23 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const getHealth = (): Promise<Health> =>
-  MOCK_MODE
-    ? Promise.resolve({ ok: true, fake_sim: true, fake_llm: true })
-    : fetch("/api/health").then((r) => json<Health>(r));
+  fetch("/api/health").then((r) => json<Health>(r));
 
 // Worker paths may use Windows separators; URLs always use forward slashes.
 export const artifactUrl = (path: string) =>
   `/artifacts/${path.replaceAll("\\", "/").split("/").map(encodeURIComponent).join("/")}`;
 
 export const listRequests = (): Promise<RequestSummary[]> =>
-  MOCK_MODE
-    ? mockApi.list()
-    : fetch("/api/requests").then((r) => json<RequestSummary[]>(r));
+  fetch("/api/requests").then((r) => json<RequestSummary[]>(r));
 
 export const getRequest = (id: string): Promise<RequestDetail> =>
-  MOCK_MODE
-    ? mockApi.get(id)
-    : fetch(`/api/requests/${encodeURIComponent(id)}`).then((r) =>
-        json<RequestDetail>(r),
-      );
+  fetch(`/api/requests/${encodeURIComponent(id)}`).then((r) =>
+    json<RequestDetail>(r),
+  );
 
 export const createRequest = (text: string) =>
-  MOCK_MODE
-    ? mockApi.create(text)
-    : fetch("/api/requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      }).then((r) => json<{ id: string }>(r));
+  fetch("/api/requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  }).then((r) => json<{ id: string }>(r));

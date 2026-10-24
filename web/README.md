@@ -1,6 +1,6 @@
 # Frontend dashboard
 
-The dashboard uses the real FastAPI backend by default. Start the API and worker
+The dashboard uses the FastAPI backend. Start the API and worker
 from the repository root in separate terminals:
 
 ```powershell
@@ -42,21 +42,6 @@ or candidates is assumed by the UI.
 `#<request id>` links directly to an experiment. `#hall` is reserved for the
 upcoming hall of fame and shows a placeholder, without requesting an experiment
 named `hall`.
-
-## Standalone mock demo
-
-To run without a backend, create `web/.env.local`:
-
-```env
-VITE_MOCK_API=1
-```
-
-Restart Vite after changing this setting. The mock API starts with a completed
-three-round experiment. New experiments advance through five stages per round,
-finishing after about 33 seconds. Mock scores and critiques are fixtures for all
-prompts. The animated quadruped is an illustrative SVG, not training footage.
-Mock runs reset on reload. Delete the setting or set it to `0` to return to the
-backend. Production builds use the same setting at build time.
 
 ## Build
 

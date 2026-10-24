@@ -1,12 +1,6 @@
 import { useState } from "react";
-import {
-  RequestDetail as Detail,
-  Health,
-  MOCK_MODE,
-  artifactUrl,
-} from "../api";
+import { RequestDetail as Detail, Health, artifactUrl } from "../api";
 import CandidateCard from "./CandidateCard";
-import RobotScene from "./RobotScene";
 
 export default function RequestDetail({
   detail,
@@ -17,7 +11,6 @@ export default function RequestDetail({
 }) {
   const [round, setRound] = useState<number | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
-  const [playing, setPlaying] = useState(true);
   const bestRound =
     detail.status === "done" && detail.best_score != null
       ? detail.rounds.find((r) =>
@@ -86,11 +79,7 @@ export default function RequestDetail({
               </span>
             </span>
             <span className="mini-badge">
-              {candidate?.video_path
-                ? "ROLLOUT"
-                : MOCK_MODE
-                  ? "ILLUSTRATION"
-                  : "NO FOOTAGE"}
+              {candidate?.video_path ? "ROLLOUT" : "NO FOOTAGE"}
             </span>
           </div>
           {candidate?.video_path ? (
@@ -102,8 +91,6 @@ export default function RequestDetail({
               loop
               playsInline
             />
-          ) : MOCK_MODE ? (
-            <RobotScene playing={playing} round={current?.n ?? 0} />
           ) : (
             <div className="video-empty">
               <strong>
@@ -123,20 +110,10 @@ export default function RequestDetail({
             </div>
           )}
           <div className="playback">
-            {MOCK_MODE && !candidate?.video_path && (
-              <button
-                aria-label={playing ? "Pause animation" : "Play animation"}
-                onClick={() => setPlaying(!playing)}
-              >
-                {playing ? "Ⅱ" : "▶"}
-              </button>
-            )}
             <span>
               {candidate?.video_path
                 ? "Recorded rollout · use video controls"
-                : MOCK_MODE
-                  ? "Animated placeholder · no training footage"
-                  : "No recorded footage"}
+                : "No recorded footage"}
             </span>
             <span className="playback-end">MuJoCo Playground</span>
           </div>

@@ -399,87 +399,6 @@ h2 {
   letter-spacing: 0.8px;
   color: #8c987d;
 }
-.scene {
-  position: relative;
-  background: radial-gradient(ellipse at 50% 45%, #f3f6ed, #e3e9da);
-  overflow: hidden;
-  aspect-ratio: 1.92;
-}
-.scene svg {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
-}
-.floor {
-  position: absolute;
-  inset: 20% -45% -70%;
-  background-image:
-    linear-gradient(#9aa99126 1px, transparent 1px),
-    linear-gradient(90deg, #9aa99126 1px, transparent 1px);
-  background-size: 40px 40px;
-  transform: perspective(330px) rotateX(56deg);
-  transform-origin: 50% 30%;
-}
-.scene-label {
-  position: absolute;
-  top: 17px;
-  left: 18px;
-  font-size: 8px;
-  letter-spacing: 1px;
-  color: #819276;
-  z-index: 2;
-}
-.scene-label i {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  background: #7c9e61;
-  border-radius: 50%;
-  margin-right: 6px;
-}
-.scene-bottom,
-.scene-coords {
-  position: absolute;
-  bottom: 15px;
-  font: 8px monospace;
-  color: #849578;
-  z-index: 2;
-}
-.scene-bottom {
-  left: 18px;
-}
-.scene-coords {
-  right: 16px;
-}
-.robot {
-  animation: bob 0.7s ease-in-out infinite alternate;
-  transform-origin: center;
-}
-.leg {
-  animation: stride 0.7s ease-in-out infinite alternate;
-  transform-box: fill-box;
-  transform-origin: top;
-}
-.leg.back {
-  animation-direction: alternate-reverse;
-}
-.paused * {
-  animation-play-state: paused !important;
-}
-@keyframes bob {
-  to {
-    transform: translateY(-4px);
-  }
-}
-@keyframes stride {
-  from {
-    transform: rotate(-9deg);
-  }
-  to {
-    transform: rotate(9deg);
-  }
-}
 .playback {
   padding: 11px 15px;
   display: flex;
@@ -487,13 +406,6 @@ h2 {
   gap: 11px;
   color: #9aa18f;
   font-size: 8px;
-}
-.playback button {
-  border: 0;
-  background: none;
-  color: #486342;
-  font-size: 14px;
-  padding: 0 4px;
 }
 .playback-end {
   margin-left: auto;
@@ -752,9 +664,6 @@ footer span:last-child {
   .content {
     padding-top: 55px;
   }
-  .scene {
-    aspect-ratio: 1.8;
-  }
 }
 @media (max-width: 1150px) {
   .sidebar {
@@ -882,9 +791,6 @@ footer span:last-child {
     white-space: nowrap;
     font-size: 8px;
   }
-  .scene {
-    aspect-ratio: 1.5;
-  }
   .mini-badge {
     font-size: 6px;
   }
@@ -906,9 +812,6 @@ footer span:last-child {
   }
   .best {
     font-size: 8px;
-  }
-  .scene-coords {
-    display: none;
   }
   footer {
     flex-wrap: wrap;

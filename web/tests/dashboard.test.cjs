@@ -6,12 +6,9 @@ const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
 
 // Compile the real components with the existing TypeScript dependency.
-// Vite supplies import.meta.env; an empty environment represents the live default.
 for (const extension of [".ts", ".tsx"]) {
   require.extensions[extension] = (module, filename) => {
-    const source = fs
-      .readFileSync(filename, "utf8")
-      .replaceAll("import.meta", "({ env: {} })");
+    const source = fs.readFileSync(filename, "utf8");
     const result = ts.transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
@@ -187,8 +184,7 @@ test("video URLs normalize worker paths and escape reserved characters", () => {
   assert.match(html, /src="\/artifacts\/abc\/r1c0\/rollout.mp4"/);
 });
 
-test("live API is the default and preserves the server request contract", async () => {
-  assert.equal(api.MOCK_MODE, false);
+test("API calls preserve the server request contract", async () => {
   const originalFetch = global.fetch;
   const calls = [];
   global.fetch = async (url, options) => {
