@@ -36,12 +36,12 @@ export default function HallOfFame({
 
   return (
     <>
-      <section className="masthead">
-        <div className="eyebrow">Hall of fame</div>
-        <h1>
-          Reward hacking, <em>caught on camera.</em>
+      <section className="cmd hall-hero" aria-labelledby="hall-title">
+        <p className="eyebrow">Hall of fame</p>
+        <h1 id="hall-title">
+          Reward hacking, <span className="em">caught on camera.</span>
         </h1>
-        <p>
+        <p className="hero-sub">
           Candidates that earned their score by gaming the reward instead of
           doing the behavior.
         </p>
@@ -53,36 +53,35 @@ export default function HallOfFame({
       )}
       {entries === null ? (
         !error && (
-          <div className="loading hall-loading" role="status">
-            <span className="label">Loading the hall of fame…</span>
-            <i />
-            <i />
-          </div>
+          <p className="cmd-note" role="status">
+            Loading the hall of fame…
+          </p>
         )
       ) : entries.length === 0 ? (
-        <section className="empty-state">
-          <svg viewBox="0 0 240 64" aria-hidden="true">
-            <path
-              className="grid"
-              d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64"
-            />
-            <path className="trace" d="M0 40H240" />
-          </svg>
-          <h2>Nothing flagged yet.</h2>
+        <section className="cmd empty-state">
+          <h2 className="cmd-title">Nothing flagged yet.</h2>
           <p>
             When a robot games its reward, open that candidate and choose “Flag
             as reward hacking”. It will show up here.
           </p>
-          <button className="primary" onClick={onBack}>
-            Back to experiments
-          </button>
+          <div>
+            <button className="primary" onClick={onBack}>
+              Back to experiments
+            </button>
+          </div>
         </section>
       ) : (
-        <div className="hall">
-          {entries.map((entry) => (
-            <HallCard key={entry.id} entry={entry} onOpen={onOpen} />
-          ))}
-        </div>
+        <section className="cmd" aria-labelledby="flagged-title">
+          <h2 className="cmd-title" id="flagged-title">
+            Flagged candidates
+            <span className="subtle">{entries.length} in the hall</span>
+          </h2>
+          <div className="hall">
+            {entries.map((entry) => (
+              <HallCard key={entry.id} entry={entry} onOpen={onOpen} />
+            ))}
+          </div>
+        </section>
       )}
     </>
   );
@@ -110,7 +109,6 @@ export function HallCard({
             />
           ) : (
             <div className="well-empty">
-              <span className="label">No signal</span>
               <strong>No rollout video</strong>
             </div>
           )}
@@ -121,8 +119,11 @@ export function HallCard({
           ROUND {entry.round_n} · CANDIDATE {entry.idx + 1} ·{" "}
           {entry.score?.toFixed(1) ?? "—"} / 10
         </span>
-        <h2>{entry.request_text}</h2>
-        <blockquote className="hall-note">{entry.flag_note}</blockquote>
+        <h3>{entry.request_text}</h3>
+        <figure className="critic hall-note">
+          <blockquote>{entry.flag_note}</blockquote>
+          <figcaption>— Flag note</figcaption>
+        </figure>
         <RewardTerms metrics={entry.metrics} />
         <button className="link" onClick={() => onOpen(entry.request_id)}>
           Open experiment →

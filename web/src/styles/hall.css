@@ -1,129 +1,128 @@
 /* Flagging a candidate, and the hall of fame it lands in. */
 .flag {
-  margin-top: auto;
-  padding-top: 22px;
-}
-.flag > .flag-open {
-  color: var(--bad);
-  text-decoration-color: #e3c2ba;
+  margin-top: var(--dp-spacing-row);
+  padding-top: var(--dp-spacing-inset);
+  border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
+  font-size: var(--dp-typography-label);
 }
 .flag-title {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  color: var(--bad);
+  color: var(--dp-color-emphasis);
 }
 .flag > p {
-  margin: 6px 0 10px;
-  font-style: italic;
-  color: var(--ink-2);
+  margin: 4px 0 var(--dp-spacing-inset);
+  color: var(--dp-color-ink);
 }
 .flag form {
   display: grid;
-  gap: 8px;
+  gap: var(--dp-spacing-inset);
+}
+.flag label {
+  color: var(--dp-color-ink-muted);
 }
 .flag input {
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius);
-  background: var(--paper);
-  font-size: 15px;
+  min-height: 40px;
+  padding: 0 var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-rule);
+  background: var(--dp-color-ground);
+  color: var(--dp-color-emphasis);
+}
+.flag input::placeholder {
+  color: var(--dp-color-ink-muted);
+  opacity: 1;
 }
 .flag input:focus {
-  outline: none;
-  border-color: var(--signal);
-  box-shadow: 0 0 0 3px var(--signal-soft);
+  border-color: var(--dp-color-ink);
 }
 .flag-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-column-gap);
 }
 .flag-actions a {
-  font-family: var(--mono);
-  font-size: 12px;
-  text-underline-offset: 4px;
+  color: var(--dp-color-ink);
+  text-decoration: none;
+}
+.flag-actions a::before {
+  content: "[";
+  content: "[" / "";
+}
+.flag-actions a::after {
+  content: "]";
+  content: "]" / "";
+}
+.flag-actions a:hover {
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
 }
 .flag .primary {
-  padding: 8px 14px;
-  font-size: 12px;
+  min-height: 36px;
+  padding: 0 var(--dp-spacing-cell);
 }
 .flag .candidate-error {
-  margin-top: 8px;
+  margin-top: var(--dp-spacing-inset);
 }
 
+/* ---- Hall of fame ---- */
+.hall-hero {
+  padding-top: var(--dp-spacing-section-compact);
+}
+.hall-hero h1 {
+  margin-top: var(--dp-spacing-inset);
+  font-size: var(--dp-typography-display);
+  line-height: var(--dp-typography-display-leading);
+}
 .hall {
   display: grid;
-  gap: 20px;
 }
 .hall-card {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  border: 1px solid var(--rule);
-  border-radius: 5px;
-  background: var(--card);
-  overflow: hidden;
-  animation: rise 0.4s var(--ease) both;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--dp-spacing-column-gap-wide);
+  padding: var(--dp-spacing-row) 0;
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
 }
-.hall-media {
-  display: grid;
-  align-content: center;
-  padding: 16px 0;
-  background: var(--scope);
-}
-.hall-media .well-empty strong {
-  font-size: 20px;
+.hall-card:first-child {
+  padding-top: 0;
 }
 .hall-body {
   display: grid;
   align-content: start;
-  gap: 12px;
-  padding: 22px 24px;
+  gap: var(--dp-spacing-inset);
+  min-width: 0;
 }
-.hall-body h2 {
-  font-size: 26px;
-  font-weight: 420;
+.hall-body h3 {
+  font-size: var(--dp-typography-heading);
+  color: var(--dp-color-emphasis);
 }
 .hall-note {
-  position: relative;
-  margin: 4px 0 0;
-  padding-left: 28px;
-  font-family: var(--display);
-  font-size: 21px;
-  font-style: italic;
-  font-weight: 340;
-  line-height: 1.35;
-  color: var(--bad);
-}
-.hall-note::before {
-  content: "“";
-  position: absolute;
-  left: 0;
-  top: -10px;
-  font-size: 48px;
-  line-height: 1;
-  color: #e3c2ba;
+  margin-top: var(--dp-spacing-inset);
 }
 .hall-body .reward-terms {
-  margin: 4px 0 0;
-  padding: 0;
-  border: 0;
-  background: none;
+  margin-top: var(--dp-spacing-row-compact);
 }
-.hall-body .reward-terms h3 {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-3);
+.hall-body .reward-terms .cmd-title {
+  font-size: var(--dp-typography-label);
+  font-weight: 400;
+  line-height: var(--dp-typography-body-leading);
+  color: var(--dp-color-ink-muted);
+  margin-bottom: 0;
 }
-.hall-body .link {
+.hall-body .reward-terms > .term {
+  grid-template-columns: minmax(8ch, 16ch) minmax(0, 1fr) 8ch;
+}
+.hall-body > .link {
   justify-self: start;
+  margin-top: var(--dp-spacing-inset);
 }
-.hall-loading i:nth-child(3) {
-  height: 260px;
+@media (max-width: 800px) {
+  .hall-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--dp-spacing-row-compact);
+  }
+  .hall-hero h1 {
+    font-size: var(--dp-typography-display-narrow);
+    line-height: var(--dp-typography-display-leading-narrow);
+  }
 }
