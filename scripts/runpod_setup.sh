@@ -24,8 +24,9 @@ apt-get update -y && apt-get install -y --no-install-recommends libegl1 libgl1 f
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
-# Reuse the venv if its Python still exists; rebuild it if a restart broke it.
-if ! .venv/bin/python -c "pass" 2>/dev/null; then
+# Reuse the venv only if its key packages import. A restart or pod migration can leave
+# a half-copied venv whose Python still starts (the migration lost ml_dtypes metadata).
+if ! .venv/bin/python -c "import jax, brax, mujoco, mujoco_playground, warp" 2>/dev/null; then
   uv venv --clear --python 3.11 .venv
 fi
 uv pip install --python .venv/bin/python -U "jax[cuda12]"

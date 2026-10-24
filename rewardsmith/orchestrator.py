@@ -58,7 +58,7 @@ def run_request(
         ready: list[tuple[int, str, Path]] = []
         for idx, (src, diff) in enumerate(drafts):
             cid = db.add_candidate(conn, round_id, idx, src, diff)
-            src = _pass_gate(conn, cid, src, writer, env_doc, sim)
+            src = _pass_gate(conn, rid, idx, cid, src, writer, env_doc, sim)
             if src is not None:
                 ready.append((cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}"))
         if ready:
@@ -85,18 +85,31 @@ def run_request(
             db.set_request(conn, rid, best_score=best.score)
         db.log_event(conn, rid, "round", f"Round {n} done, best score {best.score if best else 'n/a'}")
 
-        if best and best.score >= settings.success_score:
+        if best and n >= settings.min_rounds and best.score >= settings.success_score:
             break
 
     return best
 
 
 def _pass_gate(
-    conn: sqlite3.Connection, cid: int, src: str, writer: Writer, env_doc: str, sim: Simulator
+    conn: sqlite3.Connection,
+    rid: str,
+    idx: int,
+    cid: int,
+    src: str,
+    writer: Writer,
+    env_doc: str,
+    sim: Simulator,
 ) -> str | None:
-    """Return a source that compiles, asking the writer to fix errors, or None."""
+    """Return a source that compiles, asking the writer to fix errors, or None.
+
+    Every failed attempt is logged as a "gate" event, so we can show what Claude
+    got wrong and how it fixed it, even when the retry passes.
+    """
     for attempt in range(GATE_RETRIES + 1):
         error = sim.gate(src)
+        if error is not None:
+            db.log_event(conn, rid, "gate", f"Candidate {idx}, attempt {attempt + 1} failed: {error}")
         if error is None:
             if attempt:
                 db.set_candidate(conn, cid, reward_src=src)

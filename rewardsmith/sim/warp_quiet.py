@@ -1,11 +1,11 @@
-"""Stop MuJoCo Warp from printing "solver iterations limit reached" every physics step.
+"""Stop MuJoCo Warp from printing solver-iteration warnings every physics step.
 
 mujoco_warp turns on every overflow warning by default, and the Go1 model's
 `iterations="1"` hits the solver-iterations limit on purpose, every step. On the
 4090 that printed 13 GB of log in 21 minutes and filled the pod's volume.
 
-We clear only the ITERATIONS bit, so real overflows (contacts, constraints) still
-warn. Imported for its side effect by go1.py; harmless when warp isn't used.
+We clear only the ITERATIONS and LS_ITERATIONS (linesearch) bits, so real overflows
+(contacts, constraints) still warn. LS_ITERATIONS alone was ~1.5 MB of log per run. Imported for its side effect by go1.py; harmless when warp isn't used.
 """
 
 from collections.abc import Callable
@@ -18,10 +18,13 @@ except ImportError:  # no warp in this environment
     _mjwp = None
 
 
+_SILENCED = int(OverflowType.ITERATIONS) | int(OverflowType.LS_ITERATIONS) if _mjwp is not None else 0
+
+
 def quiet(put_model: Callable[..., Any]) -> Callable[..., Any]:
     def put_model_quietly(*args: Any, **kwargs: Any) -> Any:
         model = put_model(*args, **kwargs)
-        model.opt.warn_overflow = int(model.opt.warn_overflow) & ~int(OverflowType.ITERATIONS)
+        model.opt.warn_overflow = int(model.opt.warn_overflow) & ~_SILENCED
         return model
 
     put_model_quietly.__wrapped__ = put_model

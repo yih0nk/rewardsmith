@@ -44,6 +44,21 @@ def test_fake_loop_runs_all_rounds(tmp_path):
     assert detail["best_score"] == best.score
 
 
+def test_runs_min_rounds_even_when_round_one_succeeds(tmp_path):
+    from dataclasses import replace
+
+    s = replace(_settings(tmp_path), success_score=0, min_rounds=2)  # round 1 already "succeeds"
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator())
+
+    rounds = db.get_request(conn, req["id"])["rounds"]
+    assert len(rounds) == 2
+    assert rounds[1]["candidates"][0]["diff"]  # the editor ran
+
+
 def test_gate_failure_is_recorded(tmp_path):
     class BrokenWriter(FakeWriter):
         def write(self, request, env_doc, k):
@@ -59,6 +74,10 @@ def test_gate_failure_is_recorded(tmp_path):
     detail = db.get_request(conn, req["id"])
     assert best is None
     assert {c["status"] for r in detail["rounds"] for c in r["candidates"]} == {"gate_failed"}
+    gate_events = [e["message"] for e in detail["events"] if e["kind"] == "gate"]
+    # every attempt is logged, not just the last: 3 rounds x 3 candidates x 3 attempts
+    assert len(gate_events) == 3 * 3 * 3
+    assert "Candidate 0, attempt 1 failed: SyntaxError" in gate_events[0]
 
 
 def test_behavior_checks():
