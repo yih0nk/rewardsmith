@@ -29,30 +29,32 @@
 }
 
 @media (max-width: 800px) {
+  .now {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .timers {
+    grid-column: 1 / -1;
+    margin-top: var(--dp-spacing-inset);
+  }
+  .timers div {
+    justify-items: start;
+  }
+  .lane {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .lane-bar {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .success-spec {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .cmd.hero {
     grid-template-columns: var(--gutter-width) minmax(0, 1fr);
-  }
-  .cmd.hero > .facts {
-    grid-column: 2;
-    margin-top: var(--dp-spacing-section-compact);
-  }
-  .hero-main h1 {
-    font-size: var(--dp-typography-display-narrow);
-    line-height: var(--dp-typography-display-leading-narrow);
   }
   .mode {
     margin-left: 0;
     flex-basis: 100%;
-  }
-  .summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .summary > div:nth-child(3) {
-    padding-left: 0;
-    border-left: 0;
-  }
-  .summary > div:nth-child(n + 3) {
-    border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
   }
   /* Rounds become two lines: identity and score, then the strip and counts. */
   .round {
@@ -81,6 +83,16 @@
 @media (max-width: 540px) {
   :root {
     --gutter-width: 2ch;
+  }
+  .run-status-panel {
+    padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
+  }
+  .now-label {
+    font-size: var(--dp-typography-body);
+    line-height: var(--dp-typography-body-leading);
+  }
+  .lane-bar {
+    font-size: 12px;
   }
   .cmd {
     padding-top: var(--dp-spacing-section-compact);
@@ -123,15 +135,6 @@
   .runs {
     max-height: calc(5 * 72px);
   }
-  .summary > div {
-    padding-right: var(--dp-spacing-cell);
-  }
-  .summary > div + div {
-    padding-left: var(--dp-spacing-cell);
-  }
-  .summary > div:nth-child(3) {
-    padding-left: 0;
-  }
   .stage-foot span:last-child {
     display: none;
   }
@@ -154,7 +157,7 @@
     grid-column: 1 / -1;
   }
   .candidate-select {
-    grid-template-columns: 12ch minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .reward-terms > .term {
     grid-template-columns: minmax(0, 1fr) 9ch;
@@ -175,6 +178,43 @@
     grid-column: 1 / -1;
   }
   .gallery {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Phones: explanations dock to the bottom of the screen instead of running off its edge. */
+@media (max-width: 540px) {
+  .explain-tip {
+    position: fixed;
+    top: auto;
+    right: var(--dp-spacing-cell);
+    bottom: var(--dp-spacing-cell);
+    left: var(--dp-spacing-cell);
+    width: auto;
+    max-width: none;
+  }
+}
+@media (max-width: 540px) {
+  /* Disclosure rows: the title, then its description on the next line. */
+  .technical summary {
+    grid-template-columns: minmax(0, 1fr) 2ch;
+    row-gap: 0;
+  }
+  .technical summary span {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .technical summary::after {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .lane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lane-bar {
+    grid-row: auto;
+  }
+  .directory {
     grid-template-columns: minmax(0, 1fr);
   }
 }
