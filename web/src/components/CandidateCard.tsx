@@ -1,4 +1,5 @@
 import { Candidate } from "../api";
+import { candidateName, candidateState } from "../stages";
 import TrainingProgress, {
   Sparkline,
   liveState,
@@ -9,20 +10,26 @@ import TrainingProgress, {
 // the button stretches over the card, so the whole card still selects it.
 export default function CandidateCard({
   c,
+  round,
   best,
+  overall = false,
   selected,
   onSelect,
 }: {
   c: Candidate;
+  round: number;
+  // Its round's winner.
   best: boolean;
+  // The best of the whole run.
+  overall?: boolean;
   selected: boolean;
   onSelect: () => void;
 }) {
   const live = liveState(c);
-  const failed = c.status === "failed" || c.status === "gate_failed";
+  const state = candidateState(c, live?.label);
   return (
     <div
-      className={`candidate-option ${selected ? "active" : ""} ${best ? "winner" : ""} ${failed ? "failed" : ""} ${live ? "live" : ""}`}
+      className={`candidate-option ${selected ? "active" : ""} ${best ? "winner" : ""} ${state.kind}`}
     >
       <button
         className="candidate-select"
@@ -30,8 +37,12 @@ export default function CandidateCard({
         onClick={onSelect}
       >
         <span className="candidate-head">
-          <span className="label">Candidate {c.idx + 1}</span>
-          {best && <span className="winner-tag">Winner</span>}
+          <span className="label">{candidateName(round, c.idx)}</span>
+          {overall ? (
+            <span className="winner-tag">Best overall</span>
+          ) : (
+            best && <span className="winner-tag">Round winner</span>
+          )}
         </span>
         {c.score != null ? (
           <strong className="candidate-score num">
@@ -40,18 +51,11 @@ export default function CandidateCard({
           </strong>
         ) : (
           <strong className="candidate-state">
-            {live?.label ?? c.status.replaceAll("_", " ")}
+            {state.kind === "failed" && <span aria-hidden="true">✕ </span>}
+            {state.text}
           </strong>
         )}
-        {c.error && (
-          <span className="candidate-error">
-            {c.status === "gate_failed"
-              ? "Validation failed"
-              : c.status === "stopped"
-                ? "Stopped early"
-                : "Failed"}
-          </span>
-        )}
+        {state.why && <span className="candidate-error">{state.why}</span>}
       </button>
       {c.score != null && (
         <span className="score-bar" aria-hidden="true">

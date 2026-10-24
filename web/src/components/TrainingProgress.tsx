@@ -28,7 +28,7 @@ export function liveState(c: Candidate): LiveState | null {
     case "compiling":
       return { label: "Compiling", fraction };
     case "rendering":
-      return { label: "Rendering video", fraction: 1 };
+      return { label: "Recording video", fraction: 1 };
     case "done":
       // Its round trains candidates together: until the others finish, it isn't judged yet.
       return { label: c.status === "training" ? "Finishing up" : "Judging", fraction: 1 };

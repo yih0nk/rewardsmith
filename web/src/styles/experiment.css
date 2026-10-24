@@ -1,4 +1,4 @@
-/* One experiment: its header and summary, the stage, the rounds and the record. */
+/* One experiment: its header, the result, the rounds and the record. */
 
 /* ---- Header ---- */
 .exp .eyebrow {
@@ -23,64 +23,12 @@
   color: var(--dp-color-emphasis);
 }
 .exp-title {
-  margin-top: var(--dp-spacing-inset);
   font-size: var(--dp-typography-display-narrow);
   line-height: var(--dp-typography-display-leading-narrow);
   color: var(--dp-color-emphasis);
   overflow-wrap: anywhere;
 }
-.pipeline {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0 var(--dp-spacing-column-gap);
-  margin-top: var(--dp-spacing-row-compact);
-  padding: var(--dp-spacing-inset) 0;
-  border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
-  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
-  font-size: var(--dp-typography-label);
-}
-.pipeline-label {
-  overflow-wrap: anywhere;
-}
-.round-count {
-  color: var(--dp-color-ink-muted);
-}
 
-/* Four readouts in a row, divided by rules. */
-.summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
-}
-.summary > div {
-  padding: var(--dp-spacing-row-compact) var(--dp-spacing-gutter)
-    var(--dp-spacing-row-compact) 0;
-}
-.summary > div + div {
-  padding-left: var(--dp-spacing-gutter);
-  border-left: var(--dp-border-hairline) solid var(--dp-color-rule);
-}
-.summary dt {
-  font-size: var(--dp-typography-label);
-  color: var(--dp-color-ink-muted);
-}
-.summary dd {
-  font-size: var(--dp-typography-heading);
-  font-weight: 500;
-  line-height: 36px;
-}
-.summary dd small {
-  font-size: var(--dp-typography-label);
-  font-weight: 400;
-  color: var(--dp-color-ink-muted);
-}
-.summary .summary-note {
-  font-size: var(--dp-typography-label);
-  font-weight: 400;
-  line-height: var(--dp-typography-body-leading);
-  color: var(--dp-color-ink-muted);
-}
 .delta.up {
   color: var(--dp-color-emphasis);
 }
@@ -558,8 +506,6 @@ button.round:hover .label {
 
 /* Success check results from the backend's checker. */
 .success-check {
-  padding: var(--dp-spacing-inset) 0;
-  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
   font-size: var(--dp-typography-label);
   color: var(--dp-color-ink-muted);
 }
