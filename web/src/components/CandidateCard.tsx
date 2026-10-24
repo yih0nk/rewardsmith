@@ -15,28 +15,41 @@ export default function CandidateCard({
   onSelect: () => void;
 }) {
   const live = liveState(c);
+  const failed = c.status === "failed" || c.status === "gate_failed";
   return (
-    <div className={`candidate-option ${selected ? "active" : ""}`}>
+    <div
+      className={`candidate-option ${selected ? "active" : ""} ${best ? "winner" : ""} ${failed ? "failed" : ""} ${live ? "live" : ""}`}
+    >
       <button
         className="candidate-select"
         aria-pressed={selected}
         onClick={onSelect}
       >
-        <span>
-          Candidate {c.idx + 1}
-          {best ? " · Round winner" : ""}
+        <span className="candidate-head">
+          <span className="label">Candidate {c.idx + 1}</span>
+          {best && <span className="winner-tag">Winner</span>}
         </span>
-        <strong>
-          {c.score != null
-            ? `${c.score.toFixed(1)} / 10`
-            : (live?.label ?? c.status.replaceAll("_", " "))}
-        </strong>
+        {c.score != null ? (
+          <strong className="candidate-score num">
+            {c.score.toFixed(1)}
+            <small> / 10</small>
+          </strong>
+        ) : (
+          <strong className="candidate-state">
+            {live?.label ?? c.status.replaceAll("_", " ")}
+          </strong>
+        )}
         {c.error && (
           <span className="candidate-error">
             {c.status === "gate_failed" ? "Validation failed" : "Training failed"}
           </span>
         )}
       </button>
+      {c.score != null && (
+        <span className="score-bar" aria-hidden="true">
+          <i style={{ width: `${Math.min(10, Math.max(0, c.score)) * 10}%` }} />
+        </span>
+      )}
       {live ? (
         <TrainingProgress c={c} />
       ) : (
