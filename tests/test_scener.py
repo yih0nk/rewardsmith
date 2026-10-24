@@ -33,7 +33,7 @@ def _run(tmp_path, text, scener_=None, given_scene=None, writer=None):
     rid = db.create_request(conn, text, given_scene)
     req = db.claim_next_request(conn)
     writer = writer or RecordingWriter()
-    run_request(conn, s, req, writer, FakeEditor(), FakeCritic(), FakeSimulator(), scener_)
+    run_request(conn, s, req, writer, FakeEditor(), FakeCritic(), FakeSimulator(), scener=scener_)
     return db.get_request(conn, rid), writer
 
 

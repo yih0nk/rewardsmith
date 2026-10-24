@@ -66,7 +66,21 @@ def get_request(rid: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         for cand in rnd["candidates"]:
             out_dir = progress.candidate_dir(settings.artifacts_dir, rid, rnd["n"], cand["idx"])
             cand["progress"] = progress.read_progress(out_dir)
+            cand["robustness"] = robustness_summary(cand.get("metrics"))
     return req
+
+
+ROBUSTNESS_GROUPS = ("robots", "seeds", "pushes")
+
+
+def robustness_summary(metrics: dict | None) -> dict | None:
+    """{"robots": {"passed": 8, "total": 10}, ...} from the robust_* metrics; null if not scored."""
+    out = {
+        group: {"passed": metrics[f"robust_{group}_pass"], "total": metrics[f"robust_{group}_n"]}
+        for group in ROBUSTNESS_GROUPS
+        if metrics and f"robust_{group}_n" in metrics
+    }
+    return out or None
 
 
 class Flag(BaseModel):

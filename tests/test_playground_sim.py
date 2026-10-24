@@ -20,3 +20,28 @@ def test_simulator_uses_the_go1_contract_and_gate():
 def test_unsupported_env_is_refused():
     with pytest.raises(ValueError):
         PlaygroundSimulator("Go1Handstand")
+
+
+def test_gates_from_threads_take_turns(monkeypatch):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from rewardsmith.sim import gate
+
+    inside, peak, lock = [0], [0], threading.Lock()
+
+    def slow_check(source, impl=None, scene=None):
+        with lock:
+            inside[0] += 1
+            peak[0] = max(peak[0], inside[0])
+        time.sleep(0.05)
+        with lock:
+            inside[0] -= 1
+        return None
+
+    monkeypatch.setattr(gate, "check_reward", slow_check)
+    sim = PlaygroundSimulator(preset="smoke")
+    with ThreadPoolExecutor(4) as pool:
+        assert list(pool.map(sim.gate, ["a", "b", "c", "d"])) == [None] * 4
+    assert peak[0] == 1  # warp's CUDA graph capture breaks if two gates run at once

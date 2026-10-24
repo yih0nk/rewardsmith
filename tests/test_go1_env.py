@@ -142,3 +142,15 @@ def test_reward_reading_a_missing_object_is_refused():
     source = "def reward(s, a, p):\n    return {'x': s['cube_dist']}"
     with pytest.raises(go1.RewardError, match="cube_dist"):
         go1.make_env(source, scene=SCENE)
+
+
+def test_behavior_metrics_are_reported_at_reset_and_step_only_when_asked():
+    plain = jax.jit(go1.make_env(WALK_BACKWARDS, impl="jax").reset)(jax.random.PRNGKey(0))
+    assert not any(k.startswith("behavior/") for k in plain.metrics)  # default training is unchanged
+
+    env = go1.make_env(WALK_BACKWARDS, impl="jax", behavior_metrics=True)
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    names = {"forward_velocity", "lateral_velocity", "yaw_rate", "base_height", "upright"}
+    assert {f"behavior/{n}" for n in names} <= set(state.metrics)
+    state = jax.jit(env.step)(state, jnp.zeros(env.action_size))
+    assert float(state.metrics["behavior/upright"]) > 0.9  # standing at the start

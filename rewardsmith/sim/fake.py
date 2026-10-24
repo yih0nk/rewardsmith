@@ -2,10 +2,11 @@
 
 import ast
 import hashlib
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from .base import RunResult, run_sequentially
+from .base import Cull, RunResult, Stopped, run_sequentially
 from .go1_spec import describe
 from .progress import ProgressWriter
 from .scene import EMPTY, SceneSpec
@@ -41,15 +42,37 @@ class FakeSimulator:
         return RunResult(
             metrics={
                 "fake_quality": quality,
+                # the rollout metrics PlaygroundSimulator reports, so the success check has data
                 "forward_velocity": round((h % 200 - 100) / 100, 2),
+                "lateral_velocity": round((h // 7 % 40 - 20) / 100, 2),
+                "yaw_rate": round((h // 11 % 300 - 150) / 100, 2),
+                "base_height": 0.27,
+                "upright": 0.98,
+                "fell": 0.0,
                 **terms,
                 **_fake_target_metrics(scene, quality),
             },
             reward_curve=curve,
         )
 
-    def run_many(self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None) -> list[RunResult | str]:
-        return run_sequentially(self, jobs, scene)
+    def run_many(
+        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+    ) -> list[RunResult | Stopped | str]:
+        results: list[RunResult | Stopped | str] = list(run_sequentially(self, jobs, scene))
+        if cull is None:
+            return results
+        # Every fake run is already "done", with its whole curve on disk; let the cull
+        # pick its rungs from those curves, then stop whoever it names.
+        live = {i for i, r in enumerate(results) if isinstance(r, RunResult)}
+        deadline = time.monotonic() + 30
+        while live and not getattr(cull, "finished", True) and time.monotonic() < deadline:
+            for i, reason in cull(set(live)).items():
+                if i in live:
+                    live.discard(i)
+                    r = results[i]
+                    results[i] = Stopped(reason=reason, metrics=r.metrics, reward_curve=r.reward_curve)
+            time.sleep(0.01)
+        return results
 
 
 def _write_fake_progress(out_dir: Path, curve: list[float], terms: dict[str, float]) -> None:

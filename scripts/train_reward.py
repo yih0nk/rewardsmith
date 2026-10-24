@@ -23,13 +23,18 @@ def main() -> None:
     ap.add_argument("--impl", help="jax or warp (default: warp on a CUDA GPU, jax elsewhere)")
     ap.add_argument("--timesteps", type=int, help="override num_timesteps")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--randomize", action="store_true", help="train on domain-randomized robots")
+    ap.add_argument("--push", action="store_true", help="train with random pushes")
     ap.add_argument("--video", type=Path, help="write a rollout mp4 here")
     ap.add_argument("--scene", type=Path, help="scene spec JSON (default: plain flat floor)")
     args = ap.parse_args()
 
     spec = scene.parse(args.scene.read_text()) if args.scene else None
     t0 = time.perf_counter()
-    env = go1.make_env(args.reward.read_text(), impl=args.impl, scene=spec)
+    env = go1.make_env(
+        args.reward.read_text(), impl=args.impl, scene=spec,
+        overrides=go1.PUSH_OVERRIDES if args.push else None,
+    )
     print(f"env built in {time.perf_counter() - t0:.1f}s ({env._config.impl}), terms: {', '.join(env.term_names)}")
 
     overrides = {"num_timesteps": args.timesteps} if args.timesteps else None
@@ -38,7 +43,7 @@ def main() -> None:
         terms = "  ".join(f"{k}={v:.2f}" for k, v in sorted(p.terms.items()))
         print(f"  {p.steps:>10,} steps  {p.wall_s:7.1f}s  reward {p.episode_reward:8.2f}  {terms}")
 
-    result = train.train(env, args.preset, overrides, seed=args.seed, on_progress=show)
+    result = train.train(env, args.preset, overrides, seed=args.seed, on_progress=show, randomize=args.randomize)
     print(json.dumps({
         "compile_s": round(result.compile_s, 1),
         "train_s": round(result.train_s, 1),

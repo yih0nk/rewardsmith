@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .scene import SceneSpec
 
@@ -11,6 +11,20 @@ class RunResult:
     frames: list[bytes] = field(default_factory=list)  # PNG bytes, in time order, for the critic
     video_path: Path | None = None  # mp4 under the artifacts dir, for the board
     reward_curve: list[float] = field(default_factory=list)  # eval episode reward over training
+
+
+@dataclass
+class Stopped:
+    """A job stopped mid-training by successive halving. metrics are from its last eval."""
+
+    reason: str
+    metrics: dict[str, Any]
+    reward_curve: list[float] = field(default_factory=list)
+
+
+# Called by run_many about twice a second with the indices of the jobs still training.
+# Returns {job index: reason} for the jobs to stop now (see rewardsmith.search.Halving).
+Cull = Callable[[set[int]], dict[int, str]]
 
 
 class Simulator(Protocol):
@@ -28,8 +42,13 @@ class Simulator(Protocol):
         """Train a policy on this reward, roll it out, render, and measure."""
         ...
 
-    def run_many(self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None) -> list["RunResult | str"]:
-        """Run several (source, out_dir) jobs. Same order as jobs; a failed job gives its error text."""
+    def run_many(
+        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+    ) -> list["RunResult | Stopped | str"]:
+        """Run several (source, out_dir) jobs. Same order as jobs; a failed job gives its error text.
+
+        With cull, all jobs train at once and the ones it names are stopped early.
+        """
         ...
 
 

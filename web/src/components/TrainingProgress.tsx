@@ -12,7 +12,7 @@ const clamp01 = (v: unknown) =>
 // What an unfinished candidate is doing right now, or null once it has a score or failed.
 export function liveState(c: Candidate): LiveState | null {
   if (c.score != null) return null;
-  if (c.status === "scored" || c.status === "failed" || c.status === "gate_failed")
+  if (c.status === "scored" || c.status === "failed" || c.status === "gate_failed" || c.status === "stopped")
     return null;
   // Trained means the video exists and Claude is scoring it, whatever the progress file says.
   if (c.status === "trained") return { label: "Judging", fraction: 1 };
@@ -46,6 +46,8 @@ export interface SparklineShape {
   latest: number;
   min: number;
   max: number;
+  firstStep: number;
+  lastStep: number;
 }
 
 // Episode reward over training steps, scaled into a width x height box. Null rewards are skipped.
@@ -78,8 +80,22 @@ export function sparkline(
     latest: rewards[rewards.length - 1],
     min,
     max,
+    firstStep: s0,
+    lastStep: s1,
   };
 }
+
+const describe = (shape: SparklineShape) =>
+  `Episode reward over ${shape.points.length} ${
+    shape.points.length === 1 ? "eval" : "evals"
+  }, from ${formatReward(shape.min)} to ${formatReward(shape.max)}, latest ${formatReward(shape.latest)}`;
+
+export const formatSteps = (n: number) =>
+  n >= 1e6
+    ? `${Number((n / 1e6).toFixed(1))}M`
+    : n >= 1e3
+      ? `${Number((n / 1e3).toFixed(1))}k`
+      : String(Math.round(n));
 
 export function Sparkline({
   curve,
@@ -95,9 +111,7 @@ export function Sparkline({
   const shape = sparkline(curve, width, height);
   if (!shape) return null;
   const last = shape.points[shape.points.length - 1];
-  const summary = `Episode reward over ${shape.points.length} ${
-    shape.points.length === 1 ? "eval" : "evals"
-  }, from ${formatReward(shape.min)} to ${formatReward(shape.max)}, latest ${formatReward(shape.latest)}`;
+  const summary = describe(shape);
   return (
     <span className="sparkline">
       <svg
@@ -155,11 +169,76 @@ export default function TrainingProgress({
           {Math.round(p.wall_s)} s
         </span>
       )}
-      <Sparkline
-        curve={p?.curve}
-        width={large ? 240 : 90}
-        height={large ? 56 : 28}
-      />
+      {!large && <Sparkline curve={p?.curve} width={90} height={28} />}
     </div>
+  );
+}
+
+// The stage's full learning curve: episode reward against training steps.
+// The SVG stretches to its box, so labels and the last-point dot are HTML.
+export function RewardCurve({
+  curve,
+  live = false,
+}: {
+  curve: CurvePoint[] | null | undefined;
+  live?: boolean;
+}) {
+  const W = 600;
+  const H = 140;
+  const shape = sparkline(curve, W, H, 8);
+  if (!shape)
+    return (
+      <figure className="curve empty">
+        <figcaption>
+          <span className="label">Episode reward</span>
+        </figcaption>
+        <div className="curve-plot">
+          <span className="curve-note">
+            {live ? "First evaluation in a few seconds…" : "No learning curve recorded"}
+          </span>
+        </div>
+      </figure>
+    );
+  const pts = shape.points;
+  const last = pts[pts.length - 1];
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p.x} ${p.y}`).join(" ");
+  const area =
+    pts.length > 1 ? `${line} L${last.x} ${H} L${pts[0].x} ${H} Z` : "";
+  return (
+    <figure className={`curve ${live ? "live" : ""}`}>
+      <figcaption>
+        <span className="label">Episode reward</span>
+        <span className="curve-latest">
+          <span className="label">{live ? "now" : "final"}</span>
+          <strong className="num">{formatReward(shape.latest)}</strong>
+        </span>
+      </figcaption>
+      <div className="curve-plot">
+        <span className="curve-y top num">{formatReward(shape.max)}</span>
+        <span className="curve-y bottom num">{formatReward(shape.min)}</span>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={describe(shape)}
+        >
+          <path
+            className="curve-grid"
+            d={`M0 ${H / 4}H${W}M0 ${H / 2}H${W}M0 ${(3 * H) / 4}H${W}`}
+          />
+          {area && <path className="curve-area" d={area} />}
+          <path className="curve-line" d={line} />
+        </svg>
+        <i
+          className="curve-dot"
+          style={{ left: `${(last.x / W) * 100}%`, top: `${(last.y / H) * 100}%` }}
+        />
+      </div>
+      <div className="curve-x num">
+        <span>{formatSteps(shape.firstStep)}</span>
+        <span>steps</span>
+        <span>{formatSteps(shape.lastStep)}</span>
+      </div>
+    </figure>
   );
 }

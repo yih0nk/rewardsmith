@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS requests (
     status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | failed
     best_score  REAL,
     created_at  REAL NOT NULL,
-    scene       TEXT   -- JSON scene spec; NULL until the scene writer has run
+    scene        TEXT,     -- JSON scene spec; NULL until the scene writer has run
+    success_spec TEXT,     -- JSON: the pass/fail check, written once before training (agents/checker.py)
+    succeeded    INTEGER   -- 1 if the best candidate passed both the critic and the check
 );
 CREATE TABLE IF NOT EXISTS rounds (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,7 +44,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     critique     TEXT,
     created_at   REAL NOT NULL,
     flagged_at   REAL,   -- set when someone flags it as reward hacking (hall of fame)
-    flag_note    TEXT
+    flag_note    TEXT,
+    check_result TEXT    -- JSON: the success check on this run, {"pass": bool, "clauses": [...]}
 );
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +72,11 @@ def connect(path: Path) -> sqlite3.Connection:
 
 # Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
 # existing table alone, so a db file from an older version gets them here.
-ADDED_COLUMNS = {"candidates": {"flagged_at": "REAL", "flag_note": "TEXT"}, "requests": {"scene": "TEXT"}}
+ADDED_COLUMNS = {
+    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER"},
+    "candidates": {"flagged_at": "REAL", "flag_note": "TEXT", "check_result": "TEXT"},
+}
+JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -88,8 +95,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
-    out = dict(row)
-    for key in ("metrics", "scene"):
+    out = _decode(dict(row))
+    if out.get("metrics"):
+        out["metrics"] = json.loads(out["metrics"])
+    return out
+
+
+def _decode(out: dict[str, Any]) -> dict[str, Any]:
+    for key in JSON_COLUMNS:
         if out.get(key):
             out[key] = json.loads(out[key])
     return out
@@ -149,6 +162,15 @@ def set_request(conn: sqlite3.Connection, rid: str, **fields: Any) -> None:
     _update(conn, "requests", "id", rid, fields)
 
 
+def set_success_spec(conn: sqlite3.Connection, rid: str, spec: list[dict[str, Any]]) -> bool:
+    """Store the request's success check. Only once: False if it already has one,
+    so the target can't move after results come in."""
+    cur = conn.execute(
+        "UPDATE requests SET success_spec = ? WHERE id = ? AND success_spec IS NULL", (json.dumps(spec), rid)
+    )
+    return cur.rowcount > 0
+
+
 def add_round(conn: sqlite3.Connection, rid: str, n: int) -> int:
     cur = conn.execute(
         "INSERT INTO rounds (request_id, n, created_at) VALUES (?, ?, ?)", (rid, n, time.time())
@@ -171,6 +193,8 @@ def add_candidate(
 
 
 def set_candidate(conn: sqlite3.Connection, cid: int, **fields: Any) -> None:
+    if fields.get("check_result") is not None:
+        fields["check_result"] = json.dumps(fields["check_result"])
     if "metrics" in fields and fields["metrics"] is not None:
         fields["metrics"] = json.dumps(fields["metrics"])
     _update(conn, "candidates", "id", cid, fields)
