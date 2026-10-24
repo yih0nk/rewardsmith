@@ -196,3 +196,16 @@ def test_request_detail_attaches_live_progress(tmp_path, monkeypatch):
     assert (p["stage"], p["steps"], p["total_steps"], p["fraction"]) == ("training", 250, 1000, 0.25)
     assert p["curve"] == [{"steps": 250, "wall_s": 31.0, "episode_reward": 1.5, "terms": {"task": 1.2}}]
     assert by_id[waiting]["progress"] is None
+
+
+def test_request_detail_reports_robustness(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    rid, cid = _scored_candidate(tmp_path)
+    [cand] = client.get(f"/api/requests/{rid}").json()["rounds"][0]["candidates"]
+    assert cand["robustness"] is None  # not scored for robustness
+
+    conn = db.connect(tmp_path / "rewardsmith.db")
+    metrics = {"robust_robots_pass": 8, "robust_robots_n": 10, "robust_pushes_pass": 3, "robust_pushes_n": 4}
+    db.set_candidate(conn, cid, metrics=metrics)
+    [cand] = client.get(f"/api/requests/{rid}").json()["rounds"][0]["candidates"]
+    assert cand["robustness"] == {"robots": {"passed": 8, "total": 10}, "pushes": {"passed": 3, "total": 4}}

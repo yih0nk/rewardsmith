@@ -4,6 +4,10 @@ Settings (env vars):
   REWARDSMITH_PRESET  smoke | round | final   (default round; use smoke on a laptop)
   REWARDSMITH_IMPL    jax | warp              (default: warp on a CUDA GPU, jax elsewhere)
   REWARDSMITH_PARALLEL  candidates trained at once, one process each (default 4)
+  REWARDSMITH_RANDOMIZE 1 = train on domain-randomized robots (default 1: about 5% slower,
+                        same learning within a round, and spin in place falls less)
+  REWARDSMITH_PUSH      1 = train with random pushes (default 0)
+  REWARDSMITH_ROBUSTNESS  1 = score the policy on unseen robots, seeds and pushes (default 1)
   REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
 """
 
@@ -21,14 +25,20 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
-from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
+from . import gate, go1, go1_spec, parallel, render, robustness, train  # noqa: E402
 from .base import Cull, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 
 
 class PlaygroundSimulator:
     def __init__(
-        self, env_name: str = go1.BASE_ENV, preset: str | None = None, impl: str | None = None,
+        self,
+        env_name: str = go1.BASE_ENV,
+        preset: str | None = None,
+        impl: str | None = None,
+        randomize: bool | None = None,
+        push: bool | None = None,
+        robustness: bool | None = None,
         behavior_metrics: bool = False,
     ):
         if env_name != go1.BASE_ENV:
@@ -36,6 +46,9 @@ class PlaygroundSimulator:
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
+        self.randomize = _flag("REWARDSMITH_RANDOMIZE", "1") if randomize is None else randomize
+        self.push = _flag("REWARDSMITH_PUSH") if push is None else push
+        self.robustness = _flag("REWARDSMITH_ROBUSTNESS", "1") if robustness is None else robustness
         self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
         self._pool: parallel.WarmPool | None = None
         # The worker gates drafts in threads, but two warp rollouts at once in one
@@ -54,9 +67,17 @@ class PlaygroundSimulator:
         progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
         progress.stage("compiling")
         env = go1.make_env(source, impl=self.impl, behavior_metrics=self.behavior_metrics)
-        result = train.train(env, self.preset, on_progress=progress.point)
+        # Pushes are a training condition only: the video and metrics come from a push-free env.
+        # The training env keeps the behavior metrics too: halving ranks on the training curve.
+        train_env = (
+            go1.make_env(source, impl=self.impl, overrides=go1.PUSH_OVERRIDES, behavior_metrics=self.behavior_metrics)
+            if self.push
+            else env
+        )
+        result = train.train(train_env, self.preset, on_progress=progress.point, randomize=self.randomize)
         progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
+        robust = robustness.evaluate(env, result, rollout, out_dir) if self.robustness else {}
         (out_dir / "reward.py").write_text(source)
 
         last = result.curve[-1]
@@ -64,8 +85,11 @@ class PlaygroundSimulator:
             "episode_reward": round(last.episode_reward, 3),
             **{f"term_{k}": round(v, 3) for k, v in last.terms.items()},
             **{k: round(v, 3) for k, v in rollout.items()},
+            **robust,
             "train_s": round(result.train_s, 1),
             "compile_s": round(result.compile_s, 1),
+            "train_randomized": int(self.randomize),
+            "train_pushes": int(self.push),
         }
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
@@ -87,3 +111,7 @@ class PlaygroundSimulator:
         finally:
             if pool:
                 pool.close()
+
+
+def _flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip() == "1"
