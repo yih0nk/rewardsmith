@@ -6,9 +6,13 @@ so reset can move both every episode without recompiling. Free bodies come
 after the robot in the body tree, so the robot keeps qpos[:19] and qvel[:18].
 
 Collision groups follow the Go1 scene: the floor has contype=1/conaffinity=0
-and the feet contype=0/conaffinity=1. Fixed objects get contype=1/conaffinity=0
-(they touch feet and movable objects, not the floor); movable objects get 1/1
-(they touch everything); zones are painted on the floor and touch nothing.
+and the feet contype=0/conaffinity=1. Solid objects get contype=3 (bits 1 and 2):
+fixed ones conaffinity=0 (they touch feet, the bumper and movable objects, not
+the floor), movable ones conaffinity=1 (they also rest on the floor). Zones are
+painted on the floor and touch nothing. With solid objects the robot also gets
+a hidden "bumper" box on its trunk with conaffinity=2, so its body is blocked
+by objects (instead of walking through and climbing over them) but never
+touches the floor, which would change the stock locomotion.
 
 The rendered video uses this model, so objects are visible geoms (group 0).
 The scene also adds an "overview" camera that looks at the robot from high up,
@@ -27,6 +31,9 @@ from .scene import SceneObject, SceneSpec
 PREFIX = "obj_"  # body, geom and material names: obj_<name>, so they can't clash with the robot's
 ROUGH_BUMP = 0.05  # max height of Playground's rough heightfield, m
 OVERVIEW_CAMERA = "overview"
+ROBOT_FILE = "go1_mjx_feetonly.xml"
+BUMPER = "obj_bumper"
+BUMPER_HALF_SIZE = (0.26, 0.10, 0.06)  # m; trunk plus hips and head, from the trunk centre
 
 # Contact budget for the warp backend, which preallocates contacts and constraint rows.
 # Playground's flat Go1 uses 4 contacts per env (the feet) and 40 constraint rows.
@@ -47,19 +54,23 @@ def contact_budget(spec: SceneSpec) -> tuple[int, int]:
     for o in spec.objects:
         if o.kind == "zone":
             continue
-        extra += 4  # up to four feet touching it
+        extra += 4 + 2  # up to four feet and the bumper touching it
         if o.movable:
             extra += 4 if o.kind == "box" else 1  # resting on the floor
     return (contacts + extra) * ENVS_PER_BUDGET, rows + ROWS_PER_CONTACT * extra
 
 
-def compile_xml(spec: SceneSpec, base_xml: str, sensor_xml: str) -> str:
+def compile_xml(spec: SceneSpec, base_xml: str, sensor_xml: str, robot_xml: str | None = None) -> str:
     """Return the base Go1 scene with spec's objects added.
 
     base_xml is Playground's scene file (flat or rough) and sensor_xml its
     sensor_feet.xml, which is inlined so foot contact can count objects too.
+    robot_xml is the Go1 file the scene includes; with solid objects it is
+    inlined to give the trunk its bumper.
     """
     root = ET.fromstring(base_xml)
+    if robot_xml is not None and any(o.kind != "zone" for o in spec.objects):
+        _inline_robot_with_bumper(root, robot_xml)
     asset = _child(root, "asset")
     world = _child(root, "worldbody")
     lift = ROUGH_BUMP if spec.terrain == "rough" else 0.0
@@ -90,7 +101,9 @@ def write_scene_xml(spec: SceneSpec) -> Path:
 
     task = "rough_terrain" if spec.terrain == "rough" else "flat_terrain"
     base = consts.task_to_xml(task)
-    xml = compile_xml(spec, base.read_text(), (base.parent / "sensor_feet.xml").read_text())
+    xml = compile_xml(
+        spec, base.read_text(), (base.parent / "sensor_feet.xml").read_text(), (base.parent / ROBOT_FILE).read_text()
+    )
     out_dir = Path(os.environ.get("REWARDSMITH_SCENE_CACHE", Path(tempfile.gettempdir()) / "rewardsmith_scenes"))
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"scene_{hashlib.sha256(xml.encode()).hexdigest()[:16]}.xml"
@@ -139,12 +152,28 @@ def _body(o: SceneObject, pos: tuple[float, float, float]) -> ET.Element:
         geom.update(contype="0", conaffinity="0")
     elif o.movable:
         ET.SubElement(body, "freejoint", name=name)
-        geom.update(contype="1", conaffinity="1", condim="3", mass=_fmt(o.mass), friction="0.8 0.02 0.01")
+        geom.update(contype="3", conaffinity="1", condim="3", mass=_fmt(o.mass), friction="0.8 0.02 0.01")
     else:
         body.set("mocap", "true")
-        geom.update(contype="1", conaffinity="0", condim="3", friction="0.8 0.02 0.01")
+        geom.update(contype="3", conaffinity="0", condim="3", friction="0.8 0.02 0.01")
     ET.SubElement(body, "geom", geom)
     return body
+
+
+def _inline_robot_with_bumper(root: ET.Element, robot_xml: str) -> None:
+    """Replace <include file="go1_mjx_feetonly.xml"/> with the robot, plus a bumper on its trunk.
+    The trunk sets its inertia explicitly, so the extra geom doesn't change the robot's mass."""
+    robot = ET.fromstring(robot_xml)
+    trunk = next(b for b in robot.iter("body") if b.get("name") == "trunk")
+    ET.SubElement(trunk, "geom", name=BUMPER, type="box", size=_fmt(*BUMPER_HALF_SIZE), pos="0.03 0 0",
+                  group="3", contype="0", conaffinity="2", condim="3", friction="0.6 0.02 0.01")
+    for i, el in enumerate(list(root)):
+        if el.tag == "include" and el.get("file") == ROBOT_FILE:
+            root.remove(el)
+            for j, child in enumerate(robot):
+                root.insert(i + j, child)
+            return
+    raise ValueError(f"base scene does not include {ROBOT_FILE}")
 
 
 def _inline_sensors(root: ET.Element, sensor_xml: str, any_contact: bool) -> None:
