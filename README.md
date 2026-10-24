@@ -80,10 +80,12 @@ Warp training isn't bit-deterministic: the same code and seed can end 10% lower,
 collapse outright, in a single run. So each case trains 3 times side by side
 (`--repeats`), and it is judged on the median `episode_reward` and on the behavior
 check passing in at least 2 of the 3 runs. The output lists every run's reward.
+The walking cases repeat within 0.2 reward; spin's training reward ranges from about
+21 to 29 on unchanged code, so for spin the behavior check is the strong signal.
 
 To check that a branch (speed, robustness, ...) doesn't hurt quality, copy it to
 your own folder on the GPU pod and run the compare under the shared GPU lock
-(about 8 minutes). The copy has no `.git`, so pass your commit for the report:
+(about 13 minutes). The copy has no `.git`, so pass your commit for the report:
 
 ```sh
 rsync -a --exclude .venv --exclude .git --exclude node_modules --exclude .rewardsmith --exclude __pycache__ ./ pod:/workspace/<you>/
