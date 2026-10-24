@@ -106,7 +106,7 @@ export default function App() {
   }, [selected, hall]);
 
   useEffect(() => {
-    if (selected) location.hash = selected;
+    location.hash = selected;
   }, [selected]);
   useEffect(() => {
     const change = () => setSelected(location.hash.slice(1));
