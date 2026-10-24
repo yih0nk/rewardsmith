@@ -280,6 +280,7 @@ button.round:hover {
   margin-top: 16px;
 }
 .stage {
+  scroll-margin-top: 16px;
   display: flex;
   flex-direction: column;
   border-radius: 5px;
@@ -360,6 +361,10 @@ button.round:hover {
   bottom: 10px;
   border-left: 0;
   border-top: 0;
+}
+.well:has(video)::before,
+.well:has(video)::after {
+  display: none;
 }
 .well video {
   position: absolute;
