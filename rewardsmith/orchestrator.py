@@ -62,6 +62,7 @@ def run_request(
     k = halving[0] if halving else settings.candidates_per_round
     best: Best | None = None
     ranked: list[Best] = []  # every scored candidate so far, best first
+    scener, checker = _staged(scener, conn, rid, "scene"), _staged(checker, conn, rid, "check")
     scene = _make_scene(conn, req, scener)
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
@@ -78,10 +79,11 @@ def run_request(
                 warm_up(k)
 
             try:
-                if best is None:
-                    drafts = [(src, None) for src in writer.write(text, env_doc, k)]
-                else:
-                    drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
+                with db.stage(conn, rid, "writing", n):
+                    if best is None:
+                        drafts = [(src, None) for src in writer.write(text, env_doc, k)]
+                    else:
+                        drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
             except Exception as exc:
                 if best is None:  # nothing to show yet: let the worker fail the request
                     raise
@@ -98,7 +100,7 @@ def run_request(
             # part of its gates one at a time; PlaygroundSimulator does.)
             cids = [db.add_candidate(conn, round_id, idx, src, diff) for idx, (src, diff) in enumerate(drafts)]
             lock = threading.Lock()  # the threads share conn
-            with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
+            with db.stage(conn, rid, "compiling", n), ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
                 gated = list(pool.map(
                     lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim, scene),
                     range(len(drafts)),
@@ -113,17 +115,19 @@ def run_request(
             for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
                 db.set_candidate(conn, cid, status="training")
             jobs = [(src, out_dir) for _, src, out_dir in ready]
-            if halving and len(ready) > halving[-1]:
-                assert ranker is not None
-                cull = Halving(
-                    [out_dir for _, out_dir in jobs], halving[1:],
-                    rank=lambda snapshots: ranker.rank(text, snapshots),
-                    on_event=lambda msg: db.log_event(conn, rid, "halving", msg),
-                    labels=[out_dir.name for _, out_dir in jobs],
-                )
-                results = sim.run_many(jobs, scene, cull=cull)
-            else:
-                results = sim.run_many(jobs, scene) if jobs else []
+            # "training" covers each candidate's render too; progress.json has the per-candidate stage.
+            with db.stage(conn, rid, "training", n):
+                if halving and len(ready) > halving[-1]:
+                    assert ranker is not None
+                    cull = Halving(
+                        [out_dir for _, out_dir in jobs], halving[1:],
+                        rank=lambda snapshots: ranker.rank(text, snapshots),
+                        on_event=lambda msg: db.log_event(conn, rid, "halving", msg),
+                        labels=[out_dir.name for _, out_dir in jobs],
+                    )
+                    results = sim.run_many(jobs, scene, cull=cull)
+                else:
+                    results = sim.run_many(jobs, scene) if jobs else []
 
             trained = []
             for (cid, src, _), result in zip(ready, results):
@@ -141,7 +145,7 @@ def run_request(
                 trained.append((cid, src, result, check))
 
             # One Claude call per video, all at once; each takes tens of seconds.
-            with ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
+            with db.stage(conn, rid, "judging", n), ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
                 reviews = list(pool.map(lambda t: _safe_review(critic, critic_request, t[2], t[3]), trained))
 
             round_best: Best | None = None
@@ -209,6 +213,31 @@ def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | 
     db.set_request(conn, rid, scene=scene.to_dict())
     db.log_event(conn, rid, "scene", scene.summary())
     return scene
+
+
+class _Staged:
+    """Records a stage around every call on an agent (see db.stage).
+
+    Used for the scene writer and the checker, so their code here stays as it is.
+    """
+
+    def __init__(self, inner: Any, conn: sqlite3.Connection, rid: str, name: str):
+        self._inner, self._conn, self._rid, self._name = inner, conn, rid, name
+
+    def __getattr__(self, attr: str) -> Any:
+        fn = getattr(self._inner, attr)
+        if not callable(fn):
+            return fn
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            with db.stage(self._conn, self._rid, self._name):
+                return fn(*args, **kwargs)
+
+        return call
+
+
+def _staged(agent: Any, conn: sqlite3.Connection, rid: str, name: str) -> Any:
+    return None if agent is None else _Staged(agent, conn, rid, name)
 
 
 def _safe_review(critic: Critic, text: str, result: Any, check: dict[str, Any] | None):
