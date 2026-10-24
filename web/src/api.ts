@@ -1,3 +1,9 @@
+import { mockApi } from "./mockApi";
+
+// Set VITE_MOCK_API=0 to connect to the backend through the Vite proxy.
+export const MOCK_MODE =
+  (import.meta as ImportMeta & { env: Record<string, string> }).env
+    .VITE_MOCK_API !== "0";
 export type Status = "queued" | "running" | "done" | "failed";
 
 export interface Candidate {
@@ -39,13 +45,21 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const listRequests = () => fetch("/api/requests").then((r) => json<RequestSummary[]>(r));
+export const listRequests = (): Promise<RequestSummary[]> =>
+  MOCK_MODE
+    ? mockApi.list()
+    : fetch("/api/requests").then((r) => json<RequestSummary[]>(r));
 
-export const getRequest = (id: string) => fetch(`/api/requests/${id}`).then((r) => json<RequestDetail>(r));
+export const getRequest = (id: string): Promise<RequestDetail> =>
+  MOCK_MODE
+    ? mockApi.get(id)
+    : fetch(`/api/requests/${id}`).then((r) => json<RequestDetail>(r));
 
 export const createRequest = (text: string) =>
-  fetch("/api/requests", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  }).then((r) => json<{ id: string }>(r));
+  MOCK_MODE
+    ? mockApi.create(text)
+    : fetch("/api/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      }).then((r) => json<{ id: string }>(r));
