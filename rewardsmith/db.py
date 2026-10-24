@@ -7,8 +7,11 @@ claims requests inside an IMMEDIATE transaction.
 import json
 import math
 import sqlite3
+import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +43,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     reward_src   TEXT NOT NULL,
     diff         TEXT,
     status       TEXT NOT NULL DEFAULT 'written',  -- written | gate_failed | trained | scored | failed
+    status_at    REAL,   -- when status last changed (time.time())
     error        TEXT,
     metrics      TEXT,   -- JSON
     video_path   TEXT,   -- relative to the artifacts dir
@@ -56,6 +60,16 @@ CREATE TABLE IF NOT EXISTS events (
     kind        TEXT NOT NULL,
     message     TEXT NOT NULL,
     created_at  REAL NOT NULL
+);
+-- What the worker is doing for a request, with server-side start/end times, so the
+-- board can run a live timer. Stages can overlap (the editor revises two parents at once).
+CREATE TABLE IF NOT EXISTS stages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id  TEXT NOT NULL,
+    round_n     INTEGER,  -- NULL before round 1 (scene, check)
+    name        TEXT NOT NULL,  -- scene | check | writing | compiling | training | judging
+    started_at  REAL NOT NULL,
+    ended_at    REAL      -- NULL while it runs
 );
 """
 
@@ -77,7 +91,7 @@ def connect(path: Path) -> sqlite3.Connection:
 # existing table alone, so a db file from an older version gets them here.
 ADDED_COLUMNS = {
     "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER"},
-    "candidates": {"flagged_at": "REAL", "flag_note": "TEXT", "check_result": "TEXT"},
+    "candidates": {"flagged_at": "REAL", "flag_note": "TEXT", "check_result": "TEXT", "status_at": "REAL"},
 }
 JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
 
@@ -139,7 +153,13 @@ def create_request(conn: sqlite3.Connection, text: str, scene: dict[str, Any] | 
 
 def list_requests(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT * FROM requests ORDER BY created_at DESC").fetchall()
-    return [_row(r) for r in rows]
+    open_stages: dict[str, list[dict[str, Any]]] = {}
+    for st in conn.execute("SELECT * FROM stages WHERE ended_at IS NULL ORDER BY id").fetchall():
+        open_stages.setdefault(st["request_id"], []).append(dict(st))
+    out = [_row(r) for r in rows]
+    for req in out:
+        req["stage"] = current_stage(open_stages.get(req["id"], []))
+    return out
 
 
 def get_request(conn: sqlite3.Connection, rid: str) -> dict[str, Any] | None:
@@ -157,6 +177,8 @@ def get_request(conn: sqlite3.Connection, rid: str) -> dict[str, Any] | None:
     req["events"] = [_row(e) for e in conn.execute(
         "SELECT * FROM events WHERE request_id = ? ORDER BY id", (rid,)
     ).fetchall()]
+    req["stages"] = list_stages(conn, rid)
+    req["stage"] = current_stage(req["stages"])
     return req
 
 
@@ -204,14 +226,17 @@ def finish_round(conn: sqlite3.Connection, round_id: int, best_candidate_id: int
 def add_candidate(
     conn: sqlite3.Connection, round_id: int, idx: int, reward_src: str, diff: str | None = None
 ) -> int:
+    now = time.time()
     cur = conn.execute(
-        "INSERT INTO candidates (round_id, idx, reward_src, diff, created_at) VALUES (?, ?, ?, ?, ?)",
-        (round_id, idx, reward_src, diff, time.time()),
+        "INSERT INTO candidates (round_id, idx, reward_src, diff, created_at, status_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (round_id, idx, reward_src, diff, now, now),
     )
     return int(cur.lastrowid)
 
 
 def set_candidate(conn: sqlite3.Connection, cid: int, **fields: Any) -> None:
+    if "status" in fields:
+        fields.setdefault("status_at", time.time())
     if fields.get("check_result") is not None:
         fields["check_result"] = json.dumps(fields["check_result"])
     if "metrics" in fields and fields["metrics"] is not None:
@@ -224,6 +249,43 @@ def log_event(conn: sqlite3.Connection, rid: str, kind: str, message: str) -> No
         "INSERT INTO events (request_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
         (rid, kind, message, time.time()),
     )
+
+
+_stage_lock = threading.Lock()  # stages open and close from the orchestrator's thread pools
+
+
+def start_stage(conn: sqlite3.Connection, rid: str, name: str, round_n: int | None = None) -> int:
+    with _stage_lock:
+        cur = conn.execute(
+            "INSERT INTO stages (request_id, round_n, name, started_at) VALUES (?, ?, ?, ?)",
+            (rid, round_n, name, time.time()),
+        )
+        return int(cur.lastrowid)
+
+
+def end_stage(conn: sqlite3.Connection, stage_id: int) -> None:
+    with _stage_lock:
+        conn.execute("UPDATE stages SET ended_at = ? WHERE id = ? AND ended_at IS NULL", (time.time(), stage_id))
+
+
+@contextmanager
+def stage(conn: sqlite3.Connection, rid: str, name: str, round_n: int | None = None) -> Iterator[int]:
+    """Record a stage around a block: started_at now, ended_at when the block exits (even on error)."""
+    stage_id = start_stage(conn, rid, name, round_n)
+    try:
+        yield stage_id
+    finally:
+        end_stage(conn, stage_id)
+
+
+def list_stages(conn: sqlite3.Connection, rid: str) -> list[dict[str, Any]]:
+    return [dict(r) for r in conn.execute("SELECT * FROM stages WHERE request_id = ? ORDER BY id", (rid,)).fetchall()]
+
+
+def current_stage(stages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The most recently started stage that is still open, or None."""
+    open_ = [s for s in stages if s["ended_at"] is None]
+    return open_[-1] if open_ else None
 
 
 def fail_interrupted(conn: sqlite3.Connection) -> list[str]:
@@ -252,6 +314,7 @@ def fail_request(conn: sqlite3.Connection, rid: str, reason: str) -> None:
         ("Stopped: the run failed before this candidate finished.", *UNFINISHED, rid),
     )
     conn.execute("UPDATE rounds SET status = 'done' WHERE request_id = ? AND status = 'running'", (rid,))
+    conn.execute("UPDATE stages SET ended_at = ? WHERE request_id = ? AND ended_at IS NULL", (time.time(), rid))
     log_event(conn, rid, "error", reason)
 
 
