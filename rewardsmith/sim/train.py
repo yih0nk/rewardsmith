@@ -6,6 +6,8 @@ measured run time: it sets how many candidates and rounds fit in the weekend.
 """
 
 import functools
+import json
+import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -64,6 +66,7 @@ def ppo_kwargs(preset: str = "round", overrides: Mapping[str, Any] | None = None
     cfg = locomotion_params.brax_ppo_config(BASE_ENV)
     kwargs = {k: v for k, v in cfg.items() if k != "network_factory"}
     kwargs.update(PRESETS[preset])
+    kwargs.update(json.loads(os.environ.get("REWARDSMITH_PPO_OVERRIDES") or "{}"))  # for tuning runs
     kwargs.update(overrides or {})
     if (kwargs["batch_size"] * kwargs["num_minibatches"]) % kwargs["num_envs"]:
         raise ValueError("batch_size * num_minibatches must be a multiple of num_envs")
