@@ -3,6 +3,11 @@
 # Expose HTTP port 8000 on the pod; its proxy URL serves the board.
 set -euo pipefail
 
+if [ "$(uname -s)" = "Darwin" ]; then
+  echo "This sets up the Runpod GPU pod. Run it on the pod, not your Mac: it would replace .venv." >&2
+  exit 1
+fi
+
 apt-get update -y && apt-get install -y --no-install-recommends libegl1 libgl1 ffmpeg git
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
