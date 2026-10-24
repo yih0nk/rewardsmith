@@ -167,3 +167,36 @@ def test_gates_and_critic_calls_run_concurrently(tmp_path):
     cands = db.get_request(conn, rid)["rounds"][0]["candidates"]
     top = max(c["score"] for c in cands)
     assert best.candidate_id == min((c for c in cands if c["score"] == top), key=lambda c: c["idx"])["id"]
+
+
+def test_later_rounds_revise_the_top_two_candidates(tmp_path):
+    s = replace(_settings(tmp_path), candidates_per_round=4, max_rounds=2, min_rounds=2)
+    calls: list[tuple[str, int]] = []
+
+    class RecordingEditor(FakeEditor):
+        def revise(self, request, env_doc, best_source, critique, metrics, k):
+            calls.append((best_source, k))
+            return super().revise(request, env_doc, best_source, critique, metrics, k)
+
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), RecordingEditor(), FakeCritic(), FakeSimulator())
+
+    first = sorted(db.get_request(conn, rid)["rounds"][0]["candidates"], key=lambda c: (-c["score"], c["idx"]))
+    assert sorted(calls) == sorted([(first[0]["reward_src"], 2), (first[1]["reward_src"], 2)])
+    assert len(db.get_request(conn, rid)["rounds"][1]["candidates"]) == 4
+
+
+def test_carry_top_one_revises_only_the_best(tmp_path):
+    s = replace(_settings(tmp_path), candidates_per_round=3, max_rounds=2, min_rounds=2, carry_top=1)
+    calls: list[int] = []
+
+    class RecordingEditor(FakeEditor):
+        def revise(self, request, env_doc, best_source, critique, metrics, k):
+            calls.append(k)
+            return super().revise(request, env_doc, best_source, critique, metrics, k)
+
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), RecordingEditor(), FakeCritic(), FakeSimulator())
+    assert calls == [3]
