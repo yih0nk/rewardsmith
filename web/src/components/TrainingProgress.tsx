@@ -12,7 +12,7 @@ const clamp01 = (v: unknown) =>
 // What an unfinished candidate is doing right now, or null once it has a score or failed.
 export function liveState(c: Candidate): LiveState | null {
   if (c.score != null) return null;
-  if (c.status === "scored" || c.status === "failed" || c.status === "gate_failed")
+  if (c.status === "scored" || c.status === "failed" || c.status === "gate_failed" || c.status === "stopped")
     return null;
   // Trained means the video exists and Claude is scoring it, whatever the progress file says.
   if (c.status === "trained") return { label: "Judging", fraction: 1 };
