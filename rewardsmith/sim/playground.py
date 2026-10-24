@@ -2,7 +2,7 @@
 
 Settings (env vars):
   REWARDSMITH_PRESET  smoke | round | final   (default round; use smoke on a laptop)
-  REWARDSMITH_IMPL    jax | warp              (default jax; try warp on a CUDA GPU)
+  REWARDSMITH_IMPL    jax | warp              (default: warp on a CUDA GPU, jax elsewhere)
   REWARDSMITH_PARALLEL  candidates trained at once, one process each (default 4)
 """
 
@@ -22,7 +22,7 @@ class PlaygroundSimulator:
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
-        self.impl = impl or os.environ.get("REWARDSMITH_IMPL", "jax")
+        self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
 
     def describe(self) -> str:
