@@ -16,6 +16,7 @@ class Settings:
     fake_llm: bool
     min_rounds: int = 2  # always run at least this many, so the editor and its diffs get used
     carry_top: int = 2  # each later round revises this many of the best candidates so far
+    halving: tuple[int, ...] = ()  # e.g. (8, 4, 2): successive halving within a round; () = off
 
 
 def _flag(name: str, default: str) -> bool:
@@ -37,6 +38,12 @@ def load_dotenv(path: Path = Path(".env")) -> None:
             os.environ.setdefault(key, value)
 
 
+def _halving(text: str) -> tuple[int, ...]:
+    from .search import parse_halving
+
+    return parse_halving(text)
+
+
 def load() -> Settings:
     home = Path(os.environ.get("REWARDSMITH_HOME", ".rewardsmith"))
     return Settings(
@@ -51,4 +58,5 @@ def load() -> Settings:
         fake_llm=_flag("REWARDSMITH_FAKE_LLM", "1"),
         min_rounds=int(os.environ.get("REWARDSMITH_MIN_ROUNDS", "2")),
         carry_top=max(1, int(os.environ.get("REWARDSMITH_CARRY", "2"))),
+        halving=_halving(os.environ.get("REWARDSMITH_HALVING", "")),
     )

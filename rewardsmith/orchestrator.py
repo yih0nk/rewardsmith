@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from . import config, db
-from .agents.base import Critic, Editor, Writer
-from .sim.base import Simulator
+from .agents.base import Critic, Editor, Ranker, Writer
+from .search import Halving
+from .sim.base import Simulator, Stopped
 
 log = logging.getLogger("rewardsmith.worker")
 
@@ -39,8 +40,11 @@ def run_request(
     editor: Editor,
     critic: Critic,
     sim: Simulator,
+    ranker: Ranker | None = None,
 ) -> Best | None:
     rid, text = req["id"], req["text"]
+    halving = settings.halving if ranker is not None else ()
+    k = halving[0] if halving else settings.candidates_per_round
     best: Best | None = None
     ranked: list[Best] = []  # every scored candidate so far, best first
     env_doc = sim.describe()
@@ -50,12 +54,12 @@ def run_request(
         db.log_event(conn, rid, "round", f"Round {n} started")
         warm_up = getattr(sim, "warm_up", None)  # start the training processes while Claude writes
         if warm_up:
-            warm_up(settings.candidates_per_round)
+            warm_up(k)
 
         if best is None:
-            drafts = [(src, None) for src in writer.write(text, env_doc, settings.candidates_per_round)]
+            drafts = [(src, None) for src in writer.write(text, env_doc, k)]
         else:
-            drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], settings.candidates_per_round)
+            drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
 
         # Gate every draft first, then train the survivors together: on the GPU,
         # sim.run_many trains them side by side, which hides most of the JIT time.
@@ -78,12 +82,26 @@ def run_request(
             db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
         for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
             db.set_candidate(conn, cid, status="training")
-        results = sim.run_many([(src, out_dir) for _, src, out_dir in ready]) if ready else []
+        jobs = [(src, out_dir) for _, src, out_dir in ready]
+        if halving and len(ready) > halving[-1]:
+            assert ranker is not None
+            cull = Halving(
+                [out_dir for _, out_dir in jobs], halving[1:],
+                rank=lambda snapshots: ranker.rank(text, snapshots),
+                on_event=lambda msg: db.log_event(conn, rid, "halving", msg),
+                labels=[out_dir.name for _, out_dir in jobs],
+            )
+            results = sim.run_many(jobs, cull=cull)
+        else:
+            results = sim.run_many(jobs) if jobs else []
 
         trained = []
         for (cid, src, _), result in zip(ready, results):
             if isinstance(result, str):  # a crashed run shouldn't stop the round
                 db.set_candidate(conn, cid, status="failed", error=result)
+                continue
+            if isinstance(result, Stopped):  # halving cut it short; no video, so no critic
+                db.set_candidate(conn, cid, status="stopped", metrics=result.metrics, error=result.reason)
                 continue
             video = _relative(result.video_path, settings.artifacts_dir)
             db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video)
@@ -198,6 +216,21 @@ def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]
     return writer, editor, critic, sim
 
 
+def build_ranker(settings: config.Settings) -> Ranker | None:
+    """The mid-training ranker for successive halving, or None when halving is off."""
+    if not settings.halving:
+        return None
+    if settings.fake_llm:
+        from .agents.fake import FakeRanker
+
+        return FakeRanker()
+    import anthropic
+
+    from .agents.ranker import ClaudeRanker
+
+    return ClaudeRanker(anthropic.Anthropic(), settings.model)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     config.load_dotenv()
@@ -206,6 +239,7 @@ def main() -> None:
     for rid in db.fail_interrupted(conn):
         log.warning("request %s was cut off by a worker restart; marked failed", rid)
     writer, editor, critic, sim = build(settings)
+    ranker = build_ranker(settings)
     log.info("worker up (fake_sim=%s, fake_llm=%s)", settings.fake_sim, settings.fake_llm)
 
     while True:
@@ -215,7 +249,7 @@ def main() -> None:
             continue
         log.info("running %s: %s", req["id"], req["text"])
         try:
-            best = run_request(conn, settings, req, writer, editor, critic, sim)
+            best = run_request(conn, settings, req, writer, editor, critic, sim, ranker)
             db.set_request(conn, req["id"], status="done")
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")
         except Exception as exc:

@@ -16,7 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from rewardsmith import config, db
-from rewardsmith.orchestrator import build, run_request
+from rewardsmith.orchestrator import build, build_ranker, run_request
 from rewardsmith.sim.progress import read_progress
 
 T0 = time.monotonic()
@@ -77,6 +77,7 @@ def main() -> None:
     settings = replace(config.load(), max_rounds=args.rounds, min_rounds=args.rounds, success_score=99)
     conn = db.connect(settings.db_path)
     writer, editor, critic, sim = build(settings)
+    ranker = build_ranker(settings)
     rid = db.create_request(conn, args.request)
     req = db.claim_next_request(conn)
 
@@ -85,7 +86,8 @@ def main() -> None:
     poller.start()
     start = now()
     best = run_request(
-        conn, settings, req, Timed("writer", writer), Timed("editor", editor), Timed("critic", critic), Timed("sim", sim)
+        conn, settings, req, Timed("writer", writer), Timed("editor", editor), Timed("critic", critic), Timed("sim", sim),
+        Timed("ranker", ranker) if ranker else None,
     )
     end = now()
     stop.set()
