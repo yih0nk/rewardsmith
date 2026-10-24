@@ -20,12 +20,16 @@ from .progress import ProgressWriter  # noqa: E402
 
 
 class PlaygroundSimulator:
-    def __init__(self, env_name: str = go1.BASE_ENV, preset: str | None = None, impl: str | None = None):
+    def __init__(
+        self, env_name: str = go1.BASE_ENV, preset: str | None = None, impl: str | None = None,
+        behavior_metrics: bool = False,
+    ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
+        self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
         self._pool: parallel.WarmPool | None = None
         # The worker gates drafts in threads, but two warp rollouts at once in one
         # process crash: warp captures a CUDA graph on its first call, and any other
@@ -42,7 +46,7 @@ class PlaygroundSimulator:
     def run(self, source: str, out_dir: Path) -> RunResult:
         progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
         progress.stage("compiling")
-        env = go1.make_env(source, impl=self.impl)
+        env = go1.make_env(source, impl=self.impl, behavior_metrics=self.behavior_metrics)
         result = train.train(env, self.preset, on_progress=progress.point)
         progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
@@ -70,7 +74,8 @@ class PlaygroundSimulator:
         max_parallel = max(self.max_parallel, len(jobs)) if cull else self.max_parallel
         try:
             return parallel.run_in_processes(
-                jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, pool=pool, cull=cull
+                jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, pool=pool, cull=cull,
+                behavior_metrics=cull is not None,  # the cull ranks candidates by them
             )
         finally:
             if pool:

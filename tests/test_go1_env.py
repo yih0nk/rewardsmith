@@ -63,8 +63,11 @@ def test_bad_rewards_raise_reward_error(source, message):
         go1.make_env(source)
 
 
-def test_behavior_metrics_are_reported_at_reset_and_step():
-    env = go1.make_env(WALK_BACKWARDS, impl="jax")
+def test_behavior_metrics_are_reported_at_reset_and_step_only_when_asked():
+    plain = jax.jit(go1.make_env(WALK_BACKWARDS, impl="jax").reset)(jax.random.PRNGKey(0))
+    assert not any(k.startswith("behavior/") for k in plain.metrics)  # default training is unchanged
+
+    env = go1.make_env(WALK_BACKWARDS, impl="jax", behavior_metrics=True)
     state = jax.jit(env.reset)(jax.random.PRNGKey(0))
     names = {"forward_velocity", "lateral_velocity", "yaw_rate", "base_height", "upright"}
     assert {f"behavior/{n}" for n in names} <= set(state.metrics)

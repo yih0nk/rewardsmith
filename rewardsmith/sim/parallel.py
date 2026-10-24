@@ -66,6 +66,7 @@ def run_in_processes(
     timeout_s: float = 3600,
     pool: WarmPool | None = None,
     cull: Cull | None = None,
+    behavior_metrics: bool = False,
 ) -> list[RunResult | Stopped | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs.
 
@@ -86,9 +87,9 @@ def run_in_processes(
             i, (source, out_dir) = pending.pop(0)
             warm = pool.take() if pool else None
             if warm:
-                proc = _hand_over(warm, source, out_dir, preset, impl)
+                proc = _hand_over(warm, source, out_dir, preset, impl, behavior_metrics)
             else:
-                proc = _start(source, out_dir, preset, impl, fake, env)
+                proc = _start(source, out_dir, preset, impl, fake, env, behavior_metrics)
             running[i] = (proc, out_dir, time.monotonic())
         time.sleep(0.5)
         for i, (proc, out_dir, started) in list(running.items()):
@@ -129,24 +130,32 @@ def _prepare(source: str, out_dir: Path) -> Path:
 
 
 def _hand_over(
-    warm: tuple[subprocess.Popen, Path], source: str, out_dir: Path, preset: str, impl: str | None
+    warm: tuple[subprocess.Popen, Path], source: str, out_dir: Path, preset: str, impl: str | None,
+    behavior_metrics: bool = False,
 ) -> subprocess.Popen:
     proc, job = warm
     reward_file = _prepare(source, out_dir)
-    payload = {"reward": str(reward_file), "out_dir": str(out_dir), "preset": preset, "impl": impl}
+    payload = {
+        "reward": str(reward_file), "out_dir": str(out_dir), "preset": preset, "impl": impl,
+        "behavior_metrics": behavior_metrics,
+    }
     tmp = job.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload))
     os.replace(tmp, job)  # the child polls for job; it must never see half a file
     return proc
 
 
-def _start(source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict) -> subprocess.Popen:
+def _start(
+    source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict, behavior_metrics: bool = False
+) -> subprocess.Popen:
     reward_file = _prepare(source, out_dir)
     cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir), "--preset", preset]
     if impl:
         cmd += ["--impl", impl]
     if fake:
         cmd.append("--fake")
+    if behavior_metrics:
+        cmd.append("--behavior-metrics")
     log = open(out_dir / "train.log", "w")  # noqa: SIM115 (closed when the process exits)
     return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env)
 

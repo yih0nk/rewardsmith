@@ -90,3 +90,17 @@ def test_a_culled_job_is_killed_and_keeps_its_last_eval(tmp_path, monkeypatch):
     assert results[0].reason == "Stopped: test"
     assert results[0].metrics == {"steps": 50, "episode_reward": 2.0, "term_a": 1.0}
     assert procs[0].poll() is not None  # the sleeper was killed
+
+
+def test_behavior_metrics_reach_cold_and_warm_children(tmp_path):
+    from rewardsmith.sim import parallel
+
+    proc = parallel._start(SOURCE, tmp_path / "cold", "smoke", None, True, parallel._child_env(1), behavior_metrics=True)
+    proc.wait()
+    assert "--behavior-metrics" in proc.args
+
+    pool = parallel.WarmPool(1, fake=True)
+    warm = pool.take()
+    parallel._hand_over(warm, SOURCE, tmp_path / "warm", "smoke", None, behavior_metrics=True)
+    warm[0].wait()
+    assert json.loads(warm[1].read_text())["behavior_metrics"] is True
