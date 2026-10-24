@@ -63,6 +63,8 @@ def run_request(
                 ready.append((cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}"))
         if ready:
             db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
+        for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
+            db.set_candidate(conn, cid, status="training")
         results = sim.run_many([(src, out_dir) for _, src, out_dir in ready]) if ready else []
 
         round_best: Best | None = None
