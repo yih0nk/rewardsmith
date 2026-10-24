@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import jax_compat  # noqa: F401  (must come before brax's PPO trainer)
+import jax
+import jax.numpy as jnp
+import numpy as np
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from mujoco_playground import wrapper
@@ -76,6 +79,39 @@ def ppo_kwargs(preset: str = "round", overrides: Mapping[str, Any] | None = None
     return kwargs
 
 
+_BRAX_UNPMAP = ppo._unpmap
+
+
+class _PmapShardedJax:
+    """The jax module, except device_put_replicated returns what brax's training pmap would.
+
+    brax's PPO places its first training state with device_put_replicated, but every
+    later state comes out of the training pmap, with a different sharding (and with
+    weak types stripped), so the training epoch compiled twice. An identity pmap over
+    the same axis name gives the first state the same sharding and types.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(jax, name)
+
+    @staticmethod
+    def device_put_replicated(x: Any, devices: Any) -> Any:
+        placed = jax.device_put_replicated(x, devices)
+        return jax.pmap(ppo._strip_weak_type, axis_name=ppo._PMAP_AXIS_NAME)(placed)
+
+
+def _unpmap_plain(tree: Any) -> Any:
+    """brax's _unpmap, but the arrays come back on one device with no mesh sharding.
+
+    The evaluator is a jit whose cache key includes its inputs' shardings. Params
+    taken from the training pmap carry its mesh axis and the first ones did not, so
+    the 1000-step eval rollout compiled twice (11-14 s each on the 4090).
+    """
+    # A host round trip drops the sharding; device_put alone keeps it in the type.
+    # The params are about 1.6 MB, copied once per eval.
+    return jax.tree_util.tree_map(lambda x: jnp.asarray(np.asarray(x.addressable_shards[0].data.squeeze(0))), tree)
+
+
 def train(
     env: Go1Env,
     preset: str = "round",
@@ -103,13 +139,19 @@ def train(
         if on_progress:
             on_progress(point)
 
-    make_inference_fn, params, _ = ppo.train(
-        environment=env,
-        wrap_env_fn=wrapper.wrap_for_brax_training,
-        progress_fn=progress,
-        seed=seed,
-        **kwargs,
-    )
+    # Stop brax compiling the training epoch and the evaluator twice each (see above).
+    # ppo.train's only use of jax.device_put_replicated is placing the first state.
+    ppo.jax, ppo._unpmap = _PmapShardedJax(), _unpmap_plain
+    try:
+        make_inference_fn, params, _ = ppo.train(
+            environment=env,
+            wrap_env_fn=wrapper.wrap_for_brax_training,
+            progress_fn=progress,
+            seed=seed,
+            **kwargs,
+        )
+    finally:
+        ppo.jax, ppo._unpmap = jax, _BRAX_UNPMAP
     total = time.perf_counter() - start
     return TrainResult(
         make_inference_fn=make_inference_fn,
