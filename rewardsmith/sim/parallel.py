@@ -14,7 +14,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from .base import RunResult
+from .base import Cull, RunResult, Stopped
+from .progress import point_metrics, read_progress
 from .run_one import FRAMES_DIR, RESULT_FILE
 
 GPU_MEMORY_SHARE = 0.9  # split across processes; the rest stays free for the driver
@@ -64,17 +65,19 @@ def run_in_processes(
     fake: bool = False,
     timeout_s: float = 3600,
     pool: WarmPool | None = None,
-) -> list[RunResult | str]:
+    cull: Cull | None = None,
+) -> list[RunResult | Stopped | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs.
 
-    Jobs go to pool's warm processes first, then to newly started ones.
+    Jobs go to pool's warm processes first, then to newly started ones. cull, if
+    given, is asked every poll which running jobs to stop early.
     """
     if not jobs:
         return []
     slots = max(1, min(max_parallel, len(jobs)))
     env = _child_env(slots)
 
-    results: list[RunResult | str | None] = [None] * len(jobs)
+    results: list[RunResult | Stopped | str | None] = [None] * len(jobs)
     pending = list(enumerate(jobs))
     running: dict[int, tuple[subprocess.Popen, Path, float]] = {}
 
@@ -98,6 +101,13 @@ def run_in_processes(
                 continue
             results[i] = _collect(out_dir, proc.returncode)
             del running[i]
+        if cull and running:
+            for i, reason in cull(set(running)).items():
+                if i in running:
+                    proc, out_dir, _ = running.pop(i)
+                    proc.kill()
+                    proc.wait()
+                    results[i] = _stopped(out_dir, reason)
 
     return [r if r is not None else "Error: no result" for r in results]
 
@@ -152,6 +162,12 @@ def _collect(out_dir: Path, returncode: int) -> RunResult | str:
     frames = [(out_dir / FRAMES_DIR / name).read_bytes() for name in data.get("frames", [])]
     video = Path(data["video_path"]) if data.get("video_path") else None
     return RunResult(metrics=data["metrics"], frames=frames, video_path=video, reward_curve=data["reward_curve"])
+
+
+def _stopped(out_dir: Path, reason: str) -> Stopped:
+    curve = (read_progress(out_dir) or {}).get("curve") or []
+    metrics = point_metrics(curve[-1]) if curve else {}
+    return Stopped(reason=reason, metrics=metrics, reward_curve=[p.get("episode_reward") for p in curve])
 
 
 def _log_tail(out_dir: Path, lines: int = 15) -> str:

@@ -112,6 +112,14 @@ def read_progress(out_dir: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def point_metrics(point: dict[str, Any]) -> dict[str, Any]:
+    """A curve point from progress.json as flat metrics, named like a finished run's."""
+    out: dict[str, Any] = {"steps": point.get("steps"), "episode_reward": point.get("episode_reward")}
+    out.update({f"term_{k}": v for k, v in (point.get("terms") or {}).items()})
+    out.update(point.get("behavior") or {})
+    return out
+
+
 def _num(v: Any) -> float | None:
     """A JSON-safe float: a diverged run can report NaN, which JSON can't carry."""
     f = float(v)
