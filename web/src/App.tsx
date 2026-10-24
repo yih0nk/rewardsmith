@@ -210,54 +210,56 @@ export default function App() {
             />
           ) : (
             <>
-              <section className="masthead">
-                <div className="eyebrow">
-                  The reinforcement learning playground
-                </div>
-                <h1>
-                  A little prompt. A new <em>behavior.</em>
-                </h1>
-                <p>Describe a behavior. Watch your robot figure it out.</p>
-              </section>
-              <form className="composer" onSubmit={submit}>
-                <label htmlFor="behavior" className="label">
-                  What should the robot learn?
-                </label>
-                <div className="composer-row">
-                  <input
-                    id="behavior"
-                    value={text}
-                    onChange={(event) => setText(event.target.value)}
-                    maxLength={300}
-                    placeholder="Make the robot dog walk backwards…"
-                    required
-                    minLength={3}
-                  />
-                  <button
-                    className="primary"
-                    disabled={busy || text.trim().length < 3}
-                  >
-                    {busy ? "Starting…" : "Start experiment"}{" "}
-                    <span aria-hidden="true">→</span>
-                  </button>
-                </div>
-                <div className="suggestions">
-                  <span className="label">Try</span>
-                  {suggestions.map((suggestion) => (
+              <div className="hero">
+                <section className="masthead">
+                  <div className="eyebrow">
+                    The reinforcement learning playground
+                  </div>
+                  <h1>
+                    A little prompt. A new <em>behavior.</em>
+                  </h1>
+                  <p>Describe a behavior. Watch your robot figure it out.</p>
+                </section>
+                <form className="composer" onSubmit={submit}>
+                  <label htmlFor="behavior" className="label">
+                    What should the robot learn?
+                  </label>
+                  <div className="composer-row">
+                    <input
+                      id="behavior"
+                      value={text}
+                      onChange={(event) => setText(event.target.value)}
+                      maxLength={300}
+                      placeholder="Make the robot dog walk backwards…"
+                      required
+                      minLength={3}
+                    />
                     <button
-                      type="button"
-                      key={suggestion}
-                      onClick={() =>
-                        setText(
-                          `Make the robot dog ${suggestion.toLowerCase()}`,
-                        )
-                      }
+                      className="primary"
+                      disabled={busy || text.trim().length < 3}
                     >
-                      {suggestion}
+                      {busy ? "Starting…" : "Start experiment"}{" "}
+                      <span aria-hidden="true">→</span>
                     </button>
-                  ))}
-                </div>
-              </form>
+                  </div>
+                  <div className="suggestions">
+                    <span className="label">Try</span>
+                    {suggestions.map((suggestion) => (
+                      <button
+                        type="button"
+                        key={suggestion}
+                        onClick={() =>
+                          setText(
+                            `Make the robot dog ${suggestion.toLowerCase()}`,
+                          )
+                        }
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </form>
+              </div>
               {submitError && (
                 <div className="error" role="alert">
                   {submitError}
@@ -296,8 +298,14 @@ export default function App() {
                 !detailError && (
                   <section className="empty-state">
                     <svg viewBox="0 0 240 64" aria-hidden="true">
-                      <path className="grid" d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64" />
-                      <path className="trace" d="M0 40H96Q104 40 108 30T116 22T124 40H240" />
+                      <path
+                        className="grid"
+                        d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64"
+                      />
+                      <path
+                        className="trace"
+                        d="M0 40H96Q104 40 108 30T116 22T124 40H240"
+                      />
                     </svg>
                     {runs.length ? (
                       <>

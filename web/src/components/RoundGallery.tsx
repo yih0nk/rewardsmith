@@ -35,12 +35,11 @@ export default function RoundGallery({
               playsInline
             />
             <figcaption>
-              <button
-                className="link"
-                onClick={() => onPick(round.n, best.id)}
-              >
+              <button className="link" onClick={() => onPick(round.n, best.id)}>
                 Round {round.n}
-                <span className="num">{best.score?.toFixed(1) ?? "—"} / 10</span>
+                <span className="num">
+                  {best.score?.toFixed(1) ?? "—"} / 10
+                </span>
               </button>
             </figcaption>
           </figure>

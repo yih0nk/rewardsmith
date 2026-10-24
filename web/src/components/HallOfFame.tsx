@@ -62,7 +62,10 @@ export default function HallOfFame({
       ) : entries.length === 0 ? (
         <section className="empty-state">
           <svg viewBox="0 0 240 64" aria-hidden="true">
-            <path className="grid" d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64" />
+            <path
+              className="grid"
+              d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64"
+            />
             <path className="trace" d="M0 40H240" />
           </svg>
           <h2>Nothing flagged yet.</h2>

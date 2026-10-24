@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { RequestDetail as Detail, Health, artifactUrl } from "../api";
 import CandidateCard from "./CandidateCard";
 import DiffView from "./DiffView";
@@ -17,6 +17,22 @@ export default function RequestDetail({
 }) {
   const [round, setRound] = useState<number | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
+  // Rounds and candidates are picked below the stage; bring it back into view when it has scrolled away.
+  const stageRef = useRef<HTMLElement>(null);
+  const show = (n: number, id: number | null) => {
+    setRound(n);
+    setCandidateId(id);
+    const stage = stageRef.current;
+    if (stage && stage.getBoundingClientRect().top < 0) {
+      const still = window.matchMedia?.(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      stage.scrollIntoView({
+        behavior: still ? "auto" : "smooth",
+        block: "start",
+      });
+    }
+  };
   const bestRound =
     detail.status === "done" && detail.best_score != null
       ? detail.rounds.find((r) =>
@@ -114,7 +130,9 @@ export default function RequestDetail({
           <dd
             className={`num delta ${top && firstScore != null ? (top.score - firstScore > 0.05 ? "up" : "flat") : ""}`}
           >
-            {top && firstScore != null ? formatDelta(top.score - firstScore) : "—"}
+            {top && firstScore != null
+              ? formatDelta(top.score - firstScore)
+              : "—"}
           </dd>
           {top && firstScore != null && (
             <dd className="summary-note">
@@ -130,29 +148,14 @@ export default function RequestDetail({
         <div>
           <dt className="label">Rewards tried</dt>
           <dd className="num">{candidatesTotal}</dd>
-          <dd className="summary-note">{scoredAll.length} scored by the critic</dd>
+          <dd className="summary-note">
+            {scoredAll.length} scored by the critic
+          </dd>
         </div>
       </dl>
 
-      <div className="section-heading">
-        <h3>Learning, one round at a time</h3>
-        <span className="subtle">
-          {detail.rounds.length} rounds · select one to explore
-        </span>
-      </div>
-      <RoundTimeline
-        rounds={detail.rounds}
-        current={current?.n}
-        bestScore={top?.score ?? null}
-        pending={running ? stage : null}
-        onSelect={(n) => {
-          setRound(n);
-          setCandidateId(null);
-        }}
-      />
-
       <div className="result-grid">
-        <section className="stage" aria-label="Robot rollout">
+        <section className="stage" aria-label="Robot rollout" ref={stageRef}>
           <div className="stage-head">
             <span className="label">
               Round {current?.n ?? "—"}
@@ -245,21 +248,34 @@ export default function RequestDetail({
                   : "No critique was returned for this candidate.")}
             </blockquote>
           </figure>
-          {(candidate?.status === "trained" || candidate?.status === "scored") && (
+          {(candidate?.status === "trained" ||
+            candidate?.status === "scored") && (
             <FlagControl key={candidate.id} candidate={candidate} />
           )}
         </section>
       </div>
 
+      <div className="section-heading">
+        <h3>Learning, one round at a time</h3>
+        <span className="subtle">
+          {detail.rounds.length} rounds · select one to explore
+        </span>
+      </div>
+      <RoundTimeline
+        rounds={detail.rounds}
+        current={current?.n}
+        bestScore={top?.score ?? null}
+        pending={running ? stage : null}
+        onSelect={(n) => show(n, null)}
+      />
+
       {current && (
         <>
           <div className="section-heading">
-            <h3>
-              Candidates in round {current.n}
-            </h3>
+            <h3>Candidates in round {current.n}</h3>
             <span className="subtle">
               {current.candidates.length} reward functions · select one to load
-              it above
+              it on the stage
             </span>
           </div>
           <div className="candidate-list" aria-label="Candidates">
@@ -269,7 +285,7 @@ export default function RequestDetail({
                 c={c}
                 best={c.id === current.best_candidate_id}
                 selected={candidate?.id === c.id}
-                onSelect={() => setCandidateId(c.id)}
+                onSelect={() => show(current.n, c.id)}
               />
             ))}
           </div>
@@ -281,13 +297,7 @@ export default function RequestDetail({
         </pre>
       )}
       <RewardTerms metrics={candidate?.metrics ?? null} />
-      <RoundGallery
-        rounds={detail.rounds}
-        onPick={(n, id) => {
-          setRound(n);
-          setCandidateId(id);
-        }}
-      />
+      <RoundGallery rounds={detail.rounds} onPick={(n, id) => show(n, id)} />
       <div className="technical">
         {candidate && (
           <>

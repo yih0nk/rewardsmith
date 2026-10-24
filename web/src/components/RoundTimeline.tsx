@@ -57,7 +57,9 @@ export default function RoundTimeline({
             onClick={() => onSelect(r.n)}
           >
             <span className="round-head">
-              <span className="label">Round {String(r.n).padStart(2, "0")}</span>
+              <span className="label">
+                Round {String(r.n).padStart(2, "0")}
+              </span>
               {best && <span className="round-best">Best</span>}
             </span>
             <span className="round-score num">
@@ -77,7 +79,9 @@ export default function RoundTimeline({
                 <i
                   key={c.id}
                   className={c.id === r.best_candidate_id ? "winner" : ""}
-                  style={{ left: `${Math.min(10, Math.max(0, c.score)) * 10}%` }}
+                  style={{
+                    left: `${Math.min(10, Math.max(0, c.score)) * 10}%`,
+                  }}
                 />
               ))}
             </span>

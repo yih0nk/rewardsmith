@@ -229,6 +229,25 @@ main {
 .masthead + * {
   margin-top: 32px;
 }
+/* Wide screens set the headline and the composer side by side, so the stage starts higher. */
+@media (min-width: 1180px) {
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: end;
+    gap: 40px;
+    margin-bottom: 36px;
+  }
+  .hero .composer {
+    margin: 0;
+  }
+  .hero .composer input {
+    font-size: 19px;
+  }
+  .hero .masthead h1 {
+    font-size: clamp(34px, 3.3vw, 46px);
+  }
+}
 .composer {
   margin: 26px 0 40px;
   padding: 18px 18px 14px;
