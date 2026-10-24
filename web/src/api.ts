@@ -11,6 +11,15 @@ export interface Candidate {
   video_path: string | null;
   score: number | null;
   critique: string | null;
+  // Set when someone flags the candidate as reward hacking (the hall of fame).
+  flagged_at: number | null;
+  flag_note: string | null;
+}
+
+export interface HallEntry extends Candidate {
+  round_n: number;
+  request_id: string;
+  request_text: string;
 }
 
 export interface Round {
@@ -88,3 +97,18 @@ export const createRequest = (text: string) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
   }).then((r) => json<{ id: string }>(r));
+
+export const listHallOfFame = (): Promise<HallEntry[]> =>
+  fetch("/api/hall-of-fame").then((r) => json<HallEntry[]>(r));
+
+export const flagCandidate = (id: number, note: string) =>
+  fetch(`/api/candidates/${id}/flag`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+  }).then((r) => json<{ ok: boolean }>(r));
+
+export const unflagCandidate = (id: number) =>
+  fetch(`/api/candidates/${id}/flag`, { method: "DELETE" }).then((r) =>
+    json<{ ok: boolean }>(r),
+  );

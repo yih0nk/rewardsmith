@@ -54,7 +54,8 @@ with the fake simulator.
 1. Start a GPU pod with a CUDA 12 image and expose HTTP port 8000.
 2. Clone the repo, then `bash scripts/runpod_setup.sh`. It should print `jax backend: gpu`.
 3. Build the board once: `cd web && npm install && npm run build`. The server serves `web/dist`.
-4. `export REWARDSMITH_FAKE_SIM=0 REWARDSMITH_FAKE_LLM=0 ANTHROPIC_API_KEY=...`
+4. `export REWARDSMITH_FAKE_SIM=0 REWARDSMITH_FAKE_LLM=0 ANTHROPIC_API_KEY=...` (or put them in `.env`).
+   For demos, also set `REWARDSMITH_SUCCESS_SCORE=11` so every round runs instead of stopping at the first score of 8.
 5. Run `rewardsmith-server` and `rewardsmith-worker` (tmux keeps them alive).
 6. Open `https://<pod-id>-8000.proxy.runpod.net`.
 

@@ -938,3 +938,144 @@ footer span:last-child {
     margin-left: 0;
   }
 }
+/* Diffs, flags, the round gallery, the QR code and the hall of fame. */
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #4f6f45;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.diff span {
+  display: block;
+}
+.diff .diff-add {
+  background: #dfecd3;
+  color: #2f5a2a;
+}
+.diff .diff-del {
+  background: #f4e1da;
+  color: #8a3b2b;
+}
+.diff .diff-hunk,
+.diff .diff-file {
+  color: #8c987d;
+}
+.flag {
+  border-top: 1px solid #edf0e7;
+  margin-top: 16px;
+  padding-top: 14px;
+  font-size: 10px;
+}
+.flag > span {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: #9f6a55;
+}
+.flag p {
+  margin: 8px 0;
+  color: #6d5a50;
+}
+.flag form {
+  display: grid;
+  gap: 8px;
+}
+.flag label {
+  color: #6d805e;
+}
+.flag input {
+  border: 1px solid #dce3d5;
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-size: 11px;
+  background: #fcfdfb;
+  color: #334b39;
+}
+.flag-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.flag-actions a {
+  color: #4f6f45;
+  font-size: 11px;
+}
+.flag .primary {
+  padding: 9px 12px;
+}
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.gallery figure {
+  margin: 0;
+  border: 1px solid #e1e6da;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #fff;
+}
+.gallery figcaption {
+  padding: 10px 12px;
+}
+.heading-side {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.qr {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 190px;
+  font-size: 10px;
+  color: #7d8a72;
+}
+.hall {
+  display: grid;
+  gap: 18px;
+}
+.hall-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  border: 1px solid #dfe5d8;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.hall-body {
+  padding: 20px;
+}
+.hall-body h2 {
+  margin: 10px 0 6px;
+  font-size: 18px;
+  font-weight: 550;
+}
+.hall-note {
+  margin: 0;
+  color: #6d5a50;
+  font-size: 12px;
+}
+.hall-body .reward-terms {
+  margin: 14px 0;
+  padding: 0;
+  border: 0;
+}
+.hall-body .reward-terms h2 {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+@media (max-width: 940px) {
+  .hall-card {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 650px) {
+  .qr {
+    display: none;
+  }
+}

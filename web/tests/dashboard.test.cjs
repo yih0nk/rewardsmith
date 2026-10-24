@@ -226,3 +226,105 @@ test("API calls preserve the server request contract", async () => {
     global.fetch = originalFetch;
   }
 });
+
+const { HallCard } = require("../src/components/HallOfFame.tsx");
+const scoredRound = (id, n, c) => ({
+  id,
+  n,
+  status: "done",
+  best_candidate_id: c.id,
+  candidates: [c],
+});
+
+test("revision diffs color added, removed and hunk lines", () => {
+  const diff =
+    "--- reward.py (before)\n+++ reward.py (after)\n@@ -1 +1 @@\n-old = 1\n+new = 2\n";
+  const html = render({
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    rounds: [scoredRound(1, 1, { ...candidate, diff })],
+  });
+  assert.match(html, /class="diff-add">\+new = 2/);
+  assert.match(html, /class="diff-del">-old = 1/);
+  assert.match(html, /class="diff-hunk">@@/);
+  assert.match(html, /class="diff-file">\+\+\+ reward.py/);
+});
+
+test("scored candidates can be flagged; flagged ones show their note", () => {
+  const detail = (c) => ({
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    rounds: [scoredRound(1, 1, c)],
+  });
+  assert.match(render(detail(candidate)), /Flag as reward hacking/);
+  const flagged = render(
+    detail({ ...candidate, flagged_at: 5, flag_note: "Vibrates in place" }),
+  );
+  assert.match(flagged, /IN THE HALL OF FAME/);
+  assert.match(flagged, /Vibrates in place/);
+  assert.doesNotMatch(flagged, /Flag as reward hacking/);
+  const gateFailed = render(
+    detail({ ...candidate, status: "gate_failed", score: null }),
+  );
+  assert.doesNotMatch(gateFailed, /Flag as reward hacking/);
+});
+
+test("the round gallery shows each round's winning video once two exist", () => {
+  const withVideo = (id, n) =>
+    scoredRound(id, n, { ...candidate, id, video_path: `abc/r${n}c0/rollout.mp4` });
+  const one = render({ ...base, status: "done", best_score: 8.2, rounds: [withVideo(1, 1)] });
+  assert.doesNotMatch(one, /Every round, side by side/);
+  const two = render({
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    rounds: [withVideo(1, 1), withVideo(2, 2)],
+  });
+  assert.match(two, /Every round, side by side/);
+  assert.match(two, /src="\/artifacts\/abc\/r2c0\/rollout.mp4"/);
+});
+
+test("hall of fame entries show the run, the note, the video and the terms", () => {
+  const entry = {
+    ...candidate,
+    video_path: "abc/r2c1/rollout.mp4",
+    flagged_at: 5,
+    flag_note: "Scores by vibrating",
+    round_n: 2,
+    request_id: "abcd1234",
+    request_text: "Spin in place",
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(HallCard, { entry, onOpen: () => {} }),
+  );
+  assert.match(html, /Spin in place/);
+  assert.match(html, /ROUND 2 · CANDIDATE 1/);
+  assert.match(html, /Scores by vibrating/);
+  assert.match(html, /src="\/artifacts\/abc\/r2c1\/rollout.mp4"/);
+  assert.match(html, /Reward breakdown/);
+});
+
+test("hall of fame API calls match the server routes", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, method: options?.method ?? "GET", body: options?.body });
+    return new Response(JSON.stringify(url === "/api/hall-of-fame" ? [] : { ok: true }), {
+      status: 200,
+    });
+  };
+  try {
+    assert.deepEqual(await api.listHallOfFame(), []);
+    assert.deepEqual(await api.flagCandidate(7, "Games the velocity term"), { ok: true });
+    assert.deepEqual(await api.unflagCandidate(7), { ok: true });
+    assert.deepEqual(
+      calls.map((c) => `${c.method} ${c.url}`),
+      ["GET /api/hall-of-fame", "POST /api/candidates/7/flag", "DELETE /api/candidates/7/flag"],
+    );
+    assert.deepEqual(JSON.parse(calls[1].body), { note: "Games the velocity term" });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

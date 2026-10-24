@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { RequestDetail as Detail, Health, artifactUrl } from "../api";
 import CandidateCard from "./CandidateCard";
+import DiffView from "./DiffView";
+import FlagControl from "./FlagControl";
+import RewardTerms from "./RewardTerms";
+import RoundGallery from "./RoundGallery";
 
 export default function RequestDetail({
   detail,
@@ -34,7 +38,6 @@ export default function RequestDetail({
     (entry): entry is [string, number] =>
       typeof entry[1] === "number" && Number.isFinite(entry[1]),
   );
-  const terms = metrics.filter(([key]) => key.startsWith("term_"));
   return (
     <>
       <div className="experiment-title">
@@ -153,6 +156,9 @@ export default function RequestDetail({
                   : "No critique was returned for this candidate.")}
             </p>
           </div>
+          {(candidate?.status === "trained" || candidate?.status === "scored") && (
+            <FlagControl key={candidate.id} candidate={candidate} />
+          )}
         </section>
       </div>
       <div className="section-heading">
@@ -219,31 +225,14 @@ export default function RequestDetail({
           {candidate.error}
         </pre>
       )}
-      {terms.length > 0 && (
-        <section className="reward-terms">
-          <h2>Reward breakdown</h2>
-          {terms.map(([key, value]) => (
-            <div className="metric" key={key}>
-              <div>
-                <span>{key.slice(5).replaceAll("_", " ")}</span>
-                <strong>{Number(value.toFixed(4))}</strong>
-              </div>
-              <div className="meter">
-                <i
-                  style={{
-                    width: `${(Math.abs(value) / Math.max(...terms.map(([, v]) => Math.abs(v)), 0.001)) * 100}%`,
-                    background: value < 0 ? "#b17c67" : undefined,
-                  }}
-                />
-              </div>
-            </div>
-          ))}
-          <p className="subtle">
-            Bar lengths show relative magnitude within this candidate; negative
-            terms are shown in brown.
-          </p>
-        </section>
-      )}
+      <RewardTerms metrics={candidate?.metrics ?? null} />
+      <RoundGallery
+        rounds={detail.rounds}
+        onPick={(n, id) => {
+          setRound(n);
+          setCandidateId(id);
+        }}
+      />
       <div className="technical">
         {candidate && (
           <>
@@ -258,7 +247,7 @@ export default function RequestDetail({
                 <summary>
                   What changed <span>Revision diff ↗</span>
                 </summary>
-                <pre>{candidate.diff}</pre>
+                <DiffView diff={candidate.diff} />
               </details>
             )}
           </>

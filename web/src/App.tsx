@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   RequestDetail as Detail,
   RequestSummary,
@@ -9,6 +9,8 @@ import {
   listRequests,
   getHealth,
 } from "./api";
+import HallOfFame from "./components/HallOfFame";
+import QrPanel from "./components/QrPanel";
 import RequestDetail from "./components/RequestDetail";
 import RequestList from "./components/RequestList";
 
@@ -30,6 +32,8 @@ export default function App() {
   const [detailError, setDetailError] = useState("");
   const [submitError, setSubmitError] = useState("");
   const hall = selected === "hall";
+  // Open the newest run on first load only; afterwards the logo goes home and stays there.
+  const firstLoad = useRef(true);
 
   useEffect(() => {
     let active = true;
@@ -39,7 +43,10 @@ export default function App() {
         if (active) {
           setRuns(data);
           setListError("");
-          if (!selected && data[0]) setSelected(data[0].id);
+          if (firstLoad.current) {
+            firstLoad.current = false;
+            if (!location.hash.slice(1) && data[0]) setSelected(data[0].id);
+          }
         }
       } catch (error) {
         if (active) setListError(`Cannot load experiments: ${String(error)}`);
@@ -53,7 +60,7 @@ export default function App() {
       active = false;
       clearInterval(timer);
     };
-  }, [selected]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -190,20 +197,10 @@ export default function App() {
             ))}
           </select>
           {hall ? (
-            <section className="empty-state">
-              <div className="eyebrow">HALL OF FAME</div>
-              <h1>The best is yet to come.</h1>
-              <p>
-                This route is reserved for the upcoming hall of fame. The
-                backend does not support flagged candidates yet.
-              </p>
-              <button
-                className="primary"
-                onClick={() => setSelected(runs[0]?.id ?? "")}
-              >
-                Back to experiments
-              </button>
-            </section>
+            <HallOfFame
+              onOpen={setSelected}
+              onBack={() => setSelected(runs[0]?.id ?? "")}
+            />
           ) : (
             <>
               <div className="page-heading">
@@ -214,7 +211,10 @@ export default function App() {
                   <h1>A little prompt. A new behavior.</h1>
                   <p>Describe a behavior. Watch your robot figure it out.</p>
                 </div>
-                <span className="version">DRAFT 01</span>
+                <div className="heading-side">
+                  <QrPanel />
+                  <span className="version">DRAFT 01</span>
+                </div>
               </div>
               <form className="prompt-card" onSubmit={submit}>
                 <label htmlFor="behavior">What should the robot learn?</label>
@@ -284,11 +284,23 @@ export default function App() {
               ) : (
                 !detailError && (
                   <section className="empty-state">
-                    <h2>Your first experiment starts here.</h2>
-                    <p>
-                      Describe a behavior above to queue a request. Run the
-                      worker to train and evaluate candidates.
-                    </p>
+                    {runs.length ? (
+                      <>
+                        <h2>Pick up where you left off.</h2>
+                        <p>
+                          Choose an experiment from the sidebar, or describe a
+                          new behavior above.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h2>Your first experiment starts here.</h2>
+                        <p>
+                          Describe a behavior above to queue a request. Run the
+                          worker to train and evaluate candidates.
+                        </p>
+                      </>
+                    )}
                   </section>
                 )
               )}
