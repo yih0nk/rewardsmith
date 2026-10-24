@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import config, db
+from .sim import progress
 
 config.load_dotenv()  # here, not in main(): the console script imports this module first
 settings = config.load()
@@ -51,6 +52,11 @@ def get_request(rid: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     req = db.get_request(conn, rid)
     if req is None:
         raise HTTPException(status_code=404, detail="No request with that id")
+    # Live training progress, written by the training process (null until it starts).
+    for rnd in req["rounds"]:
+        for cand in rnd["candidates"]:
+            out_dir = progress.candidate_dir(settings.artifacts_dir, rid, rnd["n"], cand["idx"])
+            cand["progress"] = progress.read_progress(out_dir)
     return req
 
 
