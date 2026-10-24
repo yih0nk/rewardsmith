@@ -141,7 +141,7 @@ export default function App() {
       : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
   const goHome = () => setSelected(runs[0]?.id ?? "");
   return (
-    <div className="term">
+    <div className="terminal">
       <header className="session-bar">
         <a className="wordmark" href="#" onClick={() => setSelected("")}>
           rewardsmith

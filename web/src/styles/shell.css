@@ -1,5 +1,5 @@
 /* Session bar, the numbered command sections, the opening and the run list. */
-.term {
+.terminal {
   max-width: 1360px;
   margin: 0 auto;
   padding: 0 var(--dp-spacing-gutter);
