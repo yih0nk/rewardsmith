@@ -182,7 +182,10 @@ export default function App() {
           </span>
           <span className={`mode label ${health ? "" : "down"}`}>
             <span className={`lamp ${health ? "done" : "failed"}`} />
-            {mode}
+            <span className="mode-long">{mode}</span>
+            <span className="mode-short">
+              {!health ? "API down" : health.fake_sim ? "Fake sim" : "Real sim"}
+            </span>
           </span>
         </header>
         <div className="content">
