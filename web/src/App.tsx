@@ -139,45 +139,49 @@ export default function App() {
     : health.fake_sim
       ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
       : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
+  const brand = (
+    <a className="brand" href="#" onClick={() => setSelected("")}>
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="4" />
+        <path d="M5 22 Q11 22 13 15 T21 9 T27 8" />
+      </svg>
+      Rewardsmith
+    </a>
+  );
   return (
     <div className="shell">
       <aside className="sidebar">
-        <a className="brand" href="#" onClick={() => setSelected("")}>
-          <span className="brand-icon">⌘</span> rewardsmith
-          <span className="brand-dot">.</span>
-        </a>
-        <div className="workspace-label">WORKSPACE</div>
-        <button
-          className="nav-item"
-          onClick={() => setSelected(runs[0]?.id ?? "")}
-        >
-          <span>▦</span> Experiments{" "}
-          <span className="count">{runs.length}</span>
-        </button>
-        <a className="hall-link" href="#hall">
-          ↗ Hall of fame
-        </a>
-        <div className="sidebar-heading">RECENT RUNS</div>
+        {brand}
+        <nav className="nav" aria-label="Board">
+          <button
+            className={`nav-item ${hall ? "" : "active"}`}
+            onClick={() => setSelected(runs[0]?.id ?? "")}
+          >
+            Experiments <span className="count num">{runs.length}</span>
+          </button>
+          <a className={`nav-item ${hall ? "active" : ""}`} href="#hall">
+            Hall of fame <span aria-hidden="true">⚑</span>
+          </a>
+        </nav>
+        <div className="sidebar-heading label">Logbook</div>
         <RequestList
           requests={runs}
           selected={selected}
           onSelect={setSelected}
         />
         <div className="sidebar-footer">
-          <span className="tiny-logo">R</span>
-          <div>
-            Cal Hacks 13.0<small>Built to learn. Built to iterate.</small>
-          </div>
+          <QrPanel />
         </div>
       </aside>
       <main>
         <header className="topbar">
-          <span>
-            Workspace <span className="slash">/</span>{" "}
+          <span className="mobile-brand">{brand}</span>
+          <span className="crumb label">
+            Workspace <span aria-hidden="true">/</span>{" "}
             <strong>{hall ? "Hall of fame" : "Experiments"}</strong>
           </span>
-          <span className="mode">
-            <span className="status-dot" />
+          <span className={`mode label ${health ? "" : "down"}`}>
+            <span className={`lamp ${health ? "done" : "failed"}`} />
             {mode}
           </span>
         </header>
@@ -203,23 +207,20 @@ export default function App() {
             />
           ) : (
             <>
-              <div className="page-heading">
-                <div>
-                  <div className="eyebrow">
-                    THE REINFORCEMENT LEARNING PLAYGROUND
-                  </div>
-                  <h1>A little prompt. A new behavior.</h1>
-                  <p>Describe a behavior. Watch your robot figure it out.</p>
+              <section className="masthead">
+                <div className="eyebrow">
+                  The reinforcement learning playground
                 </div>
-                <div className="heading-side">
-                  <QrPanel />
-                  <span className="version">DRAFT 01</span>
-                </div>
-              </div>
-              <form className="prompt-card" onSubmit={submit}>
-                <label htmlFor="behavior">What should the robot learn?</label>
-                <div className="prompt-row">
-                  <span className="spark">✧</span>
+                <h1>
+                  A little prompt. A new <em>behavior.</em>
+                </h1>
+                <p>Describe a behavior. Watch your robot figure it out.</p>
+              </section>
+              <form className="composer" onSubmit={submit}>
+                <label htmlFor="behavior" className="label">
+                  What should the robot learn?
+                </label>
+                <div className="composer-row">
                   <input
                     id="behavior"
                     value={text}
@@ -233,11 +234,12 @@ export default function App() {
                     className="primary"
                     disabled={busy || text.trim().length < 3}
                   >
-                    {busy ? "Starting…" : "Start experiment"} <span>↗</span>
+                    {busy ? "Starting…" : "Start experiment"}{" "}
+                    <span aria-hidden="true">→</span>
                   </button>
                 </div>
                 <div className="suggestions">
-                  <span>Try a behavior</span>
+                  <span className="label">Try</span>
                   {suggestions.map((suggestion) => (
                     <button
                       type="button"
@@ -248,7 +250,7 @@ export default function App() {
                         )
                       }
                     >
-                      {suggestion} ↗
+                      {suggestion}
                     </button>
                   ))}
                 </div>
@@ -266,7 +268,10 @@ export default function App() {
               {detailError && (
                 <div className="error" role="alert">
                   {detailError}{" "}
-                  <button onClick={() => setSelected(runs[0]?.id ?? "")}>
+                  <button
+                    className="link"
+                    onClick={() => setSelected(runs[0]?.id ?? "")}
+                  >
                     Back to experiments
                   </button>
                 </div>
@@ -279,16 +284,23 @@ export default function App() {
                 />
               ) : detailLoading || listLoading ? (
                 <div className="loading" role="status">
-                  Loading experiment…
+                  <span className="label">Loading experiment…</span>
+                  <i />
+                  <i />
+                  <i />
                 </div>
               ) : (
                 !detailError && (
                   <section className="empty-state">
+                    <svg viewBox="0 0 240 64" aria-hidden="true">
+                      <path className="grid" d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64" />
+                      <path className="trace" d="M0 40H96Q104 40 108 30T116 22T124 40H240" />
+                    </svg>
                     {runs.length ? (
                       <>
                         <h2>Pick up where you left off.</h2>
                         <p>
-                          Choose an experiment from the sidebar, or describe a
+                          Choose an experiment from the logbook, or describe a
                           new behavior above.
                         </p>
                       </>
@@ -307,8 +319,9 @@ export default function App() {
             </>
           )}
           <footer>
-            REWARDSMITH <span>Language → reward → motion.</span>
-            <span>Made at Cal Hacks 13.0</span>
+            <span className="label">Rewardsmith</span>
+            <span>Language → reward → motion.</span>
+            <span className="label">Made at Cal Hacks 13.0</span>
           </footer>
         </div>
       </main>
