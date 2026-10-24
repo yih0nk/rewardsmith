@@ -16,26 +16,25 @@ export default function RewardTerms({
   const largest = Math.max(...terms.map(([, v]) => Math.abs(v)), 0.001);
   return (
     <section className="reward-terms">
-      <h2>Reward breakdown</h2>
+      <h3>Reward breakdown</h3>
       {terms.map(([key, value]) => (
-        <div className="metric" key={key}>
-          <div>
-            <span>{key.slice(5).replaceAll("_", " ")}</span>
-            <strong>{Number(value.toFixed(4))}</strong>
-          </div>
-          <div className="meter">
+        <div className={`term ${value < 0 ? "negative" : ""}`} key={key}>
+          <span className="term-name">{key.slice(5).replaceAll("_", " ")}</span>
+          {/* Diverging from zero: positive terms grow right, negative ones left. */}
+          <span className="term-bar" aria-hidden="true">
             <i
               style={{
-                width: `${(Math.abs(value) / largest) * 100}%`,
-                background: value < 0 ? "#b17c67" : undefined,
+                width: `${(Math.abs(value) / largest) * 50}%`,
+                [value < 0 ? "right" : "left"]: "50%",
               }}
             />
-          </div>
+          </span>
+          <strong className="num">{Number(value.toFixed(4))}</strong>
         </div>
       ))}
       <p className="subtle">
-        Bar lengths show relative magnitude within this candidate; negative
-        terms are shown in brown.
+        Bars are scaled to the largest term in this candidate. Positive terms
+        extend right of zero, negative terms extend left.
       </p>
     </section>
   );
