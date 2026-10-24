@@ -8,6 +8,7 @@ Settings (env vars):
                         same learning within a round, and spin in place falls less)
   REWARDSMITH_PUSH      1 = train with random pushes (default 0)
   REWARDSMITH_ROBUSTNESS  1 = score the policy on unseen robots, seeds and pushes (default 1)
+  REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
 """
 
 import os
@@ -17,6 +18,12 @@ from pathlib import Path
 # The worker gates rewards on the GPU itself, so it must not grab 75% of GPU memory
 # before the training processes start. Has to be set before jax initializes.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+# XLA's GPU autotuner times candidate kernels for every matmul while compiling.
+# With four training processes compiling on one GPU that cost about a minute a
+# round, and switching it off left steps/s and rewards unchanged on the 4090.
+# The training processes inherit this. Set REWARDSMITH_XLA_AUTOTUNE=1 to keep it.
+if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
+    os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
 from . import gate, go1, go1_spec, parallel, render, robustness, train  # noqa: E402
 from .base import Cull, RunResult, Stopped  # noqa: E402
