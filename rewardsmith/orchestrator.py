@@ -62,6 +62,9 @@ def run_request(
     k = halving[0] if halving else settings.candidates_per_round
     best: Best | None = None
     ranked: list[Best] = []  # every scored candidate so far, best first
+    warm_up = getattr(sim, "warm_up", None)
+    if warm_up:  # round 1's training processes warm up during the scene and check calls too
+        warm_up(k)
     scene = _make_scene(conn, req, scener)
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
