@@ -518,3 +518,47 @@ def test_droid_editor_with_no_edits_fails(tmp_path):
 
     with pytest.raises(RuntimeError, match="changed no candidate files"):
         LazyDroid(tmp_path / "droid").revise("spin", "", "def reward(s, a, p):\n    return {}\n", "", {}, 2)
+
+
+def test_stages_record_server_side_start_and_end_times(tmp_path):
+    from rewardsmith.agents.fake import FakeChecker, FakeScener
+
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+    before = time.time()
+
+    run_request(
+        conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(),
+        checker=FakeChecker(), scener=FakeScener(),
+    )
+
+    detail = db.get_request(conn, rid)
+    names = [(st["name"], st["round_n"]) for st in detail["stages"]]
+    assert names == [
+        ("scene", None), ("check", None),
+        ("writing", 1), ("compiling", 1), ("training", 1), ("judging", 1),
+        ("writing", 2), ("compiling", 2), ("training", 2), ("judging", 2),
+    ]
+    for st in detail["stages"]:
+        assert before <= st["started_at"] <= st["ended_at"] <= time.time()
+    assert detail["stage"] is None  # nothing open once the request is done
+    for cand in detail["rounds"][0]["candidates"]:
+        assert cand["status"] == "scored" and cand["status_at"] >= cand["created_at"]
+
+
+def test_current_stage_is_the_latest_open_one(tmp_path):
+    conn = db.connect(tmp_path / "t.db")
+    rid = db.create_request(conn, "walk backwards")
+    with db.stage(conn, rid, "writing", 1):
+        with db.stage(conn, rid, "compiling", 1) as sid:
+            assert db.get_request(conn, rid)["stage"]["id"] == sid
+            assert db.list_requests(conn)[0]["stage"]["name"] == "compiling"
+        assert db.get_request(conn, rid)["stage"]["name"] == "writing"
+    assert db.get_request(conn, rid)["stage"] is None
+    assert db.list_requests(conn)[0]["stage"] is None
+
+    db.start_stage(conn, rid, "training", 1)
+    db.fail_request(conn, rid, "boom")  # a failed run must not leave a timer running
+    assert db.get_request(conn, rid)["stage"] is None

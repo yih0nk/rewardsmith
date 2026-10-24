@@ -6,6 +6,7 @@ On Runpod, expose port 8000; the pod's proxy URL is the board link judges open.
 from collections.abc import Iterator
 from pathlib import Path
 import sqlite3
+import time
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -61,6 +62,8 @@ def get_request(rid: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     req = db.get_request(conn, rid)
     if req is None:
         raise HTTPException(status_code=404, detail="No request with that id")
+    # The board times live stages against this clock, not the viewer's.
+    req["server_time"] = time.time()
     # Live training progress, written by the training process (null until it starts).
     for rnd in req["rounds"]:
         for cand in rnd["candidates"]:
