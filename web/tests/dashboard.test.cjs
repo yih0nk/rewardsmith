@@ -526,6 +526,8 @@ test("mid-round, the stage shows the candidate furthest into training", () => {
           training({ id: 1, idx: 0, progress: live("training", 0.3) }),
           training({ id: 2, idx: 1, progress: live("training", 0.6) }),
           training({ id: 3, idx: 2, status: "written" }),
+          // Judging is further along, but a candidate still training is more to watch.
+          training({ id: 4, idx: 3, status: "trained", progress: live("done", 1) }),
         ],
       },
     ],

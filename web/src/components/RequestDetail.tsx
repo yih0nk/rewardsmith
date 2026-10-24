@@ -46,10 +46,14 @@ export default function RequestDetail({
   const candidate =
     current?.candidates.find((c) => c.id === candidateId) ??
     current?.candidates.find((c) => c.id === current.best_candidate_id) ??
-    // Mid-round, show the candidate furthest into training so the stage has something moving.
+    // Mid-round, show a candidate still training (the furthest along) so the stage has something moving.
     current?.candidates
       .filter((c) => liveState(c)?.fraction != null)
-      .sort((a, b) => liveState(b)!.fraction! - liveState(a)!.fraction!)[0] ??
+      .sort(
+        (a, b) =>
+          Number(b.status === "training") - Number(a.status === "training") ||
+          liveState(b)!.fraction! - liveState(a)!.fraction!,
+      )[0] ??
     current?.candidates.at(-1);
   const running = detail.status === "running" || detail.status === "queued";
   const live = candidate ? liveState(candidate) : null;
