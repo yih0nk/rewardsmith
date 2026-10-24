@@ -555,3 +555,19 @@ button.round:hover .label {
 .technical details > p {
   color: var(--dp-color-ink-muted);
 }
+
+/* Success check results from the backend's checker. */
+.success-check {
+  padding: var(--dp-spacing-inset) 0;
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.success-check.pass {
+  color: var(--dp-color-emphasis);
+}
+.check-result {
+  margin-top: var(--dp-spacing-inset);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}

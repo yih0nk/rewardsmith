@@ -5,6 +5,7 @@ claims requests inside an IMMEDIATE transaction.
 """
 
 import json
+import math
 import sqlite3
 import time
 import uuid
@@ -17,7 +18,12 @@ CREATE TABLE IF NOT EXISTS requests (
     text        TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | failed
     best_score  REAL,
-    created_at  REAL NOT NULL
+    best_candidate_id INTEGER,
+    created_at  REAL NOT NULL,
+    scene        TEXT,     -- JSON scene spec; NULL until the scene writer has run
+    success_spec TEXT,     -- JSON: the pass/fail check, written once before training (agents/checker.py)
+    success_check_error TEXT, -- non-null when no trustworthy success spec could be written
+    succeeded    INTEGER   -- 1 if the best candidate passed both the critic and the check
 );
 CREATE TABLE IF NOT EXISTS rounds (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +47,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     critique     TEXT,
     created_at   REAL NOT NULL,
     flagged_at   REAL,   -- set when someone flags it as reward hacking (hall of fame)
-    flag_note    TEXT
+    flag_note    TEXT,
+    check_result TEXT    -- JSON: the success check on this run, {"pass": bool, "clauses": [...]}
 );
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +75,11 @@ def connect(path: Path) -> sqlite3.Connection:
 
 # Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
 # existing table alone, so a db file from an older version gets them here.
-ADDED_COLUMNS = {"candidates": {"flagged_at": "REAL", "flag_note": "TEXT"}}
+ADDED_COLUMNS = {
+    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER"},
+    "candidates": {"flagged_at": "REAL", "flag_note": "TEXT", "check_result": "TEXT"},
+}
+JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -84,20 +95,44 @@ def _migrate(conn: sqlite3.Connection) -> None:
                     raise
 
 
+def finite_or_none(value: Any) -> Any:
+    """Replace NaN and infinities with None, inside dicts and lists too.
+
+    json.dumps writes them as NaN/Infinity, which is not JSON: strict parsers
+    (JSON.parse, jq, SQLite's json functions, starlette's JSONResponse) reject the row.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: finite_or_none(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_or_none(v) for v in value]
+    return value
+
+
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
-    out = dict(row)
+    out = _decode(dict(row))
     if out.get("metrics"):
-        out["metrics"] = json.loads(out["metrics"])
+        # Rows saved before set_candidate cleaned metrics can hold NaN: read it as null.
+        out["metrics"] = json.loads(out["metrics"], parse_constant=lambda _: None)
     return out
 
 
-def create_request(conn: sqlite3.Connection, text: str) -> str:
+def _decode(out: dict[str, Any]) -> dict[str, Any]:
+    for key in JSON_COLUMNS:
+        if out.get(key):
+            out[key] = json.loads(out[key])
+    return out
+
+
+def create_request(conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None) -> str:
+    """scene: a validated scene spec to use as is; None lets the scene writer decide."""
     rid = uuid.uuid4().hex[:8]
     conn.execute(
-        "INSERT INTO requests (id, text, created_at) VALUES (?, ?, ?)",
-        (rid, text, time.time()),
+        "INSERT INTO requests (id, text, created_at, scene) VALUES (?, ?, ?, ?)",
+        (rid, text, time.time(), json.dumps(scene) if scene is not None else None),
     )
     return rid
 
@@ -141,7 +176,18 @@ def claim_next_request(conn: sqlite3.Connection) -> dict[str, Any] | None:
 
 
 def set_request(conn: sqlite3.Connection, rid: str, **fields: Any) -> None:
+    if fields.get("scene") is not None:
+        fields["scene"] = json.dumps(fields["scene"])
     _update(conn, "requests", "id", rid, fields)
+
+
+def set_success_spec(conn: sqlite3.Connection, rid: str, spec: list[dict[str, Any]]) -> bool:
+    """Store the request's success check. Only once: False if it already has one,
+    so the target can't move after results come in."""
+    cur = conn.execute(
+        "UPDATE requests SET success_spec = ? WHERE id = ? AND success_spec IS NULL", (json.dumps(spec), rid)
+    )
+    return cur.rowcount > 0
 
 
 def add_round(conn: sqlite3.Connection, rid: str, n: int) -> int:
@@ -166,8 +212,10 @@ def add_candidate(
 
 
 def set_candidate(conn: sqlite3.Connection, cid: int, **fields: Any) -> None:
+    if fields.get("check_result") is not None:
+        fields["check_result"] = json.dumps(fields["check_result"])
     if "metrics" in fields and fields["metrics"] is not None:
-        fields["metrics"] = json.dumps(fields["metrics"])
+        fields["metrics"] = json.dumps(finite_or_none(fields["metrics"]), allow_nan=False)
     _update(conn, "candidates", "id", cid, fields)
 
 
@@ -185,9 +233,26 @@ def fail_interrupted(conn: sqlite3.Connection) -> list[str]:
     """
     ids = [r["id"] for r in conn.execute("SELECT id FROM requests WHERE status = 'running'").fetchall()]
     for rid in ids:
-        set_request(conn, rid, status="failed")
-        log_event(conn, rid, "error", "The worker restarted mid-run. Submit the behavior again to retry.")
+        fail_request(conn, rid, "The worker restarted mid-run. Submit the behavior again to retry.")
     return ids
+
+
+# Candidate statuses that mean "still in progress". A failed request must not leave any
+# behind, or the board keeps showing them as training or being judged.
+UNFINISHED = ("written", "training", "trained")
+
+
+def fail_request(conn: sqlite3.Connection, rid: str, reason: str) -> None:
+    """Mark a request failed, with its unfinished rounds closed and unfinished candidates failed."""
+    set_request(conn, rid, status="failed")
+    conn.execute(
+        f"""UPDATE candidates SET status = 'failed', error = COALESCE(error, ?)
+            WHERE status IN ({",".join("?" * len(UNFINISHED))})
+              AND round_id IN (SELECT id FROM rounds WHERE request_id = ?)""",
+        ("Stopped: the run failed before this candidate finished.", *UNFINISHED, rid),
+    )
+    conn.execute("UPDATE rounds SET status = 'done' WHERE request_id = ? AND status = 'running'", (rid,))
+    log_event(conn, rid, "error", reason)
 
 
 def flag_candidate(conn: sqlite3.Connection, cid: int, note: str) -> bool:

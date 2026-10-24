@@ -45,7 +45,11 @@ export default function CandidateCard({
         )}
         {c.error && (
           <span className="candidate-error">
-            {c.status === "gate_failed" ? "Validation failed" : "Training failed"}
+            {c.status === "gate_failed"
+              ? "Validation failed"
+              : c.status === "stopped"
+                ? "Stopped early"
+                : "Failed"}
           </span>
         )}
       </button>

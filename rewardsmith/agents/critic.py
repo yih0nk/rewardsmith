@@ -1,10 +1,12 @@
 import base64
 import json
+from typing import Any
 
 import anthropic
 
 from ..sim.base import RunResult
 from .base import Review
+from .checker import describe
 from .claude import ask_json
 
 SYSTEM = """You are a strict judge of robot learning results. You see frames from a
@@ -22,7 +24,7 @@ Be calibrated, not generous. Scores must spread out so better attempts are visib
 A first attempt that merely works is a 6 or 7. Give 8 or more only if you can name what
 makes it better than merely working.
 
-Hard limits (they are also enforced in code):
+Hard limits (the first two are also enforced in code):
 - If the robot fell (metric "fell" is 1), the score is at most 3.
 - If you flag reward hacking, the score is at most 3.
 - If the measured motion contradicts the request (wrong direction, or near zero speed for a
@@ -32,9 +34,18 @@ Metrics: forward_velocity and lateral_velocity are mean m/s in the robot's own f
 (negative forward means backwards, positive lateral means left); yaw_rate is mean rad/s;
 base_height is mean metres (about 0.28 standing); upright is the mean up-axis z (1 = level);
 fell is 1 if it flipped; term_* are per-term episode rewards from the reward function.
+When the scene has a target object, target_* metrics come from 32 fresh episodes:
+target_reached is the fraction that got within reach of it, target_start_dist, target_min_dist
+and target_final_dist are mean distances in metres, target_time_to_reach is mean seconds to reach
+it (-1 if never). Trust these over a single video for whether it got there.
 
 Reward hacking means the robot collects reward without doing the behavior, for example
 vibrating in place, sliding, or exploiting one term. Check the frames against the numbers.
+
+You may also get the success check: pass/fail clauses over these metrics, written from the
+request before any training. The request only counts as done if the check passes AND your
+score clears the bar. If a clause failed, say which one and what the reward should change
+to fix it. Judge the motion yourself too: the check can pass while the behavior looks wrong.
 
 Start the critique with the 2-3 numbers your score rests on. Then say exactly what the next
 reward writer should change."""
@@ -57,7 +68,7 @@ class ClaudeCritic:
     def __init__(self, client: anthropic.Anthropic, model: str):
         self.client, self.model = client, model
 
-    def review(self, request: str, result: RunResult) -> Review:
+    def review(self, request: str, result: RunResult, check: dict[str, Any] | None = None) -> Review:
         content: list[dict] = []
         for png in result.frames[:MAX_FRAMES]:
             content.append({
@@ -72,6 +83,7 @@ class ClaudeCritic:
                 f"Frames above are in time order.\n"
                 f"Metrics: {json.dumps(result.metrics)}\n"
                 f"Episode reward over training (last 20 evals): {curve}"
+                + (f"\n\nSuccess check (written before training):\n{describe(check)}" if check else "")
             ),
         })
         out = ask_json(self.client, self.model, SYSTEM, content, SCHEMA)

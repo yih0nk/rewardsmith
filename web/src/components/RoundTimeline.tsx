@@ -49,12 +49,14 @@ export default function RoundTimeline({
   rounds,
   current,
   bestScore,
+  bestRound,
   pending,
   onSelect,
 }: {
   rounds: Round[];
   current: number | undefined;
   bestScore: number | null;
+  bestRound?: number;
   pending: string | null;
   onSelect: (n: number) => void;
 }) {
@@ -62,7 +64,7 @@ export default function RoundTimeline({
     <div className="rounds">
       {roundDeltas(rounds).map(({ round: r, score, delta }) => {
         const active = current === r.n;
-        const best = score != null && score === bestScore;
+        const best = bestRound != null ? r.n === bestRound : score != null && score === bestScore;
         return (
           <button
             key={r.id}
