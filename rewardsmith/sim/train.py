@@ -32,8 +32,11 @@ PRESETS: dict[str, dict[str, Any]] = {
         num_updates_per_batch=2, episode_length=200, num_evals=3, num_eval_envs=16, num_resets_per_eval=0,
     ),
     # On the 4090 the walk-backwards reward was at 94% of its final score by 6.5M steps.
-    # brax rounds the step count up to whole eval blocks.
-    "round": dict(num_timesteps=10_000_000, num_evals=5, num_eval_envs=128),
+    # brax rounds the step count up to whole eval blocks, and Playground's
+    # num_resets_per_eval=10 (tuned for 100M+ steps) made those blocks 6.55M, so
+    # 10M became 13.1M, and every robot was reset after just 40 steps. With one
+    # reset per eval it is 10.5M steps and the same final reward (scripts/bench_train.py).
+    "round": dict(num_timesteps=10_000_000, num_evals=5, num_eval_envs=128, num_resets_per_eval=1),
     "final": dict(num_timesteps=100_000_000, num_evals=10),
 }
 
