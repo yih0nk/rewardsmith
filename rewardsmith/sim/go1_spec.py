@@ -51,6 +51,16 @@ OBJECT_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
 MOVABLE_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
     ("vel", (3,), "object velocity in the world, m/s: [x, y, z]"),
 )
+# With a goal (move the target to it): where the goal is, seen from the target object.
+GOAL_FEATURES: tuple[Feature, ...] = (
+    Feature("target_to_goal_rel", (3,), "goal centre minus target centre, m, in the robot's heading frame: "
+                                        "[forward, left, up]; the direction the target must travel"),
+    Feature("target_to_goal_dist", (), "horizontal distance from the target object's centre to the goal's centre, m; "
+                                       "the number to drive to zero"),
+    Feature("target_to_goal_speed", (), "how fast the target object closes on the goal, m/s (minus the rate of change of "
+                                        "target_to_goal_dist): positive while it moves toward the goal, negative away. "
+                                        "Rewarding it is the potential-based progress term"),
+)
 
 
 def object_features(obj: SceneObject, alias: str | None = None) -> tuple[Feature, ...]:
@@ -66,6 +76,8 @@ def scene_features(scene: SceneSpec) -> tuple[Feature, ...]:
         out += object_features(obj)
     if scene.target_object is not None:
         out += object_features(scene.target_object, alias="target")
+    if scene.goal_object is not None:
+        out += GOAL_FEATURES
     return tuple(out)
 
 
@@ -102,9 +114,15 @@ def describe(scene: SceneSpec = EMPTY) -> str:
                          f"refer to the target object, {target.name}")
         lines.append(f"Objects present: {', '.join(o.name for o in scene.objects)}. "
                      "Use only these names; any other key raises a KeyError.")
+        if scene.goal_object is not None:
+            for f in GOAL_FEATURES:
+                lines.append(f"- state[\"{f.name}\"] ({'scalar' if not f.shape else f'shape {f.shape}'}): {f.meaning}")
         if target is not None:
             lines.append(f"The base is within reach of {target.name} when {target.name}_dist < "
                          f"{target.reach_radius:.2f} m.")
+        if scene.goal_object is not None:
+            lines.append(f"The task is done when {target.name} is in {scene.goal}: target_to_goal_dist < "
+                         f"{scene.goal_radius:.2f} m. Success is measured on the object, not on the robot.")
     lines += [
         "",
         "How the reward is used:",

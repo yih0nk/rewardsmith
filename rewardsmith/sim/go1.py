@@ -128,7 +128,8 @@ class Go1Env(joystick.Joystick):
         return jnp.arctan2(forward[1], forward[0])
 
     def scene_features(self, data: mjx.Data) -> dict[str, jax.Array]:
-        """Per-object features (see go1_spec.OBJECT_FEATURES), plus target_* aliases."""
+        """Per-object features (see go1_spec.OBJECT_FEATURES), plus target_* aliases and,
+        with a goal, where the target sits relative to it (go1_spec.GOAL_FEATURES)."""
         base = data.qpos[0:3]
         yaw = self._yaw(data)
         c, s = jnp.cos(yaw), jnp.sin(yaw)
@@ -149,6 +150,14 @@ class Go1Env(joystick.Joystick):
                 out[f"{p.obj.name}_{suffix}"] = value
                 if p.obj.name == self._scene.target:
                     out[f"target_{suffix}"] = value
+        goal = self._scene.goal
+        if goal is not None:
+            d = out[f"{goal}_pos"] - out["target_pos"]
+            out["target_to_goal_rel"] = jnp.stack([c * d[0] + s * d[1], -s * d[0] + c * d[1], d[2]])
+            out["target_to_goal_dist"] = jnp.sqrt(jnp.square(d[0]) + jnp.square(d[1]))
+            # How fast the gap closes: minus d/dt of target_to_goal_dist (the goal never moves).
+            out["target_to_goal_speed"] = jnp.dot(out["target_vel"][:2], d[:2]) / jnp.maximum(
+                out["target_to_goal_dist"], 1e-3)
         return out
 
     def _scene_obs(self, data: mjx.Data) -> jax.Array:
@@ -296,13 +305,19 @@ class Go1Env(joystick.Joystick):
         can be compared mid-training (successive halving). Off by default: they change
         the compiled program, so default training stays exactly as it was."""
         lin = self.get_local_linvel(data)
-        return {
+        out = {
             "behavior/forward_velocity": lin[0],
             "behavior/lateral_velocity": lin[1],
             "behavior/yaw_rate": self.get_gyro(data)[2],
             "behavior/base_height": data.qpos[2],
             "behavior/upright": self.get_upvector(data)[2],
         }
+        if self._scene.target is not None:  # how the task is going, for ranking scene runs mid-training
+            feats = self.scene_features(data)
+            out["behavior/target_dist"] = feats["target_dist"]
+            if self._scene.goal is not None:
+                out["behavior/target_to_goal_dist"] = feats["target_to_goal_dist"]
+        return out
 
     def _get_reward(self, data, action, info, metrics, done, first_contact, contact):
         del metrics, done, first_contact
@@ -320,6 +335,10 @@ def dummy_state(scene: SceneSpec = EMPTY) -> dict[str, jax.Array]:
         state[f"{name}_rel_pos"] = jnp.array([1.0, 0.0, 0.0])
         state[f"{name}_pos"] = jnp.array([1.0, 0.0, 0.0])
         state[f"{name}_dist"] = jnp.float32(1.0)
+    if scene.goal is not None:
+        state["target_to_goal_rel"] = jnp.array([1.0, 0.0, 0.0])
+        state["target_to_goal_dist"] = jnp.float32(1.0)
+        state["target_to_goal_speed"] = jnp.float32(0.0)
     return state
 
 
