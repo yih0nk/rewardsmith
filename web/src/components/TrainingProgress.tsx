@@ -170,9 +170,10 @@ export default function TrainingProgress({
       )}
       {large && p && p.total_steps > 0 && (
         <span className="subtle">
+          {/* No seconds here: wall_s stands still while JAX compiles. The run
+              status above has the ticking timer. */}
           {Math.min(p.steps, p.total_steps).toLocaleString("en-US")} /{" "}
-          {p.total_steps.toLocaleString("en-US")} steps ·{" "}
-          {Math.round(p.wall_s)} s
+          {p.total_steps.toLocaleString("en-US")} training steps
         </span>
       )}
       {!large && <Sparkline curve={p?.curve} width={90} height={28} />}
