@@ -9,8 +9,9 @@ After training, the final policy is rolled out, all at once in one batch, on:
 Each rollout gets the same metrics as the nominal rollout in render.py (forward_velocity,
 yaw_rate, fell, ...) and passes if `check(metrics, nominal)` holds. The default check is a
 behavior proxy that needs no spec: no fall, and the main motion metric keeps the nominal
-rollout's sign and at least half its magnitude. To use an up-front pass/fail spec instead,
-pass any function of the rollout metrics, e.g. `check=lambda m, _: spec_passes(spec, m)`.
+rollout's sign and at least half its magnitude. To use the request's up-front success spec
+instead (agents/checker.py, same metric names), pass
+`check=lambda m, _: checker.evaluate(spec, m)["pass"]`.
 """
 
 import dataclasses
