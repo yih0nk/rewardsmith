@@ -1,6 +1,7 @@
 import json
 from types import SimpleNamespace
 
+from rewardsmith import db
 from rewardsmith.agents import claude, writer
 from rewardsmith.agents.stream import IdeaStream
 
@@ -70,3 +71,27 @@ def test_ask_json_survives_a_broken_text_listener():
     out = claude.ask_json(_client(REPLY), "m", "sys", [], {}, on_text=broken)
     assert len(out["candidates"]) == 2
 
+
+def test_the_loop_logs_ideas_for_writer_and_editor_rounds(tmp_path):
+    from dataclasses import replace
+
+    from rewardsmith.agents.fake import FakeCritic, FakeEditor, FakeWriter
+    from rewardsmith.orchestrator import run_request
+    from rewardsmith.sim.fake import FakeSimulator
+    from tests.test_loop import _settings
+
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator())
+
+    events = db.get_request(conn, rid)["events"]
+    ideas = [e["message"] for e in events if e["kind"] == "idea"]
+    assert ideas[:3] == [f"Candidate {i + 1}: fake draft {i}: task term weighted {1.0 + i * 0.25:g}" for i in range(3)]
+    # round 2 revises the top two: 2 + 1 drafts, numbered across both parents
+    assert sorted(ideas[3:]) == ["Candidate 1: fake revision 0", "Candidate 2: fake revision 1", "Candidate 3: fake revision 0"]
+    first_idea = next(e for e in events if e["kind"] == "idea")
+    first_train = next(e for e in events if e["kind"] == "train")
+    assert first_idea["id"] < first_train["id"]

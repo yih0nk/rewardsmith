@@ -82,10 +82,12 @@ def run_request(
                 warm_up(k)
 
             try:
+                on_idea = _idea_events(conn, rid)  # each idea goes on the board while Claude still writes
                 if best is None:
-                    drafts = [_as_draft(d) for d in writer.write(text, env_doc, k)]
+                    ideas = {"on_idea": on_idea} if _accepts(writer.write, "on_idea") else {}
+                    drafts = [_as_draft(d) for d in writer.write(text, env_doc, k, **ideas)]
                 else:
-                    drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k, history)
+                    drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k, history, on_idea)
             except Exception as exc:
                 if best is None:  # nothing to show yet: let the worker fail the request
                     raise
@@ -279,7 +281,13 @@ def _as_draft(item: Draft | str | tuple[str, str | None]) -> Draft:
 
 
 def _revise(
-    editor: Editor, text: str, env_doc: str, parents: list[Best], k: int, history: Sequence[Attempt] = ()
+    editor: Editor,
+    text: str,
+    env_doc: str,
+    parents: list[Best],
+    k: int,
+    history: Sequence[Attempt] = (),
+    on_idea: Any = None,
 ) -> list[Draft]:
     """Revise each parent into its share of the k drafts, all editor calls at once.
 
@@ -291,13 +299,31 @@ def _revise(
     # Older editors take no history; pass it only to those that accept it.
     extra = {"history": list(history)} if history and _accepts(editor.revise, "history") else {}
 
-    def revise(job: tuple[Best, int]) -> list[Draft]:
-        parent, n = job
-        drafts = editor.revise(text, env_doc, parent.source, parent.critique, parent.metrics, n, **extra)
+    # Draft numbers run across parents, so parent j's ideas start at the drafts before it.
+    offsets = [sum(n for _, n in jobs[:j]) for j in range(len(jobs))]
+    streams = on_idea is not None and _accepts(editor.revise, "on_idea")
+
+    def revise(j: int) -> list[Draft]:
+        parent, n = jobs[j]
+        more = dict(extra)
+        if streams:
+            more["on_idea"] = lambda i, idea: on_idea(offsets[j] + i, idea)
+        drafts = editor.revise(text, env_doc, parent.source, parent.critique, parent.metrics, n, **more)
         return [replace(_as_draft(d), parent=parent.source) for d in drafts]
 
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-        return [draft for drafts in pool.map(revise, jobs) for draft in drafts]
+        return [draft for drafts in pool.map(revise, range(len(jobs))) for draft in drafts]
+
+
+def _idea_events(conn: sqlite3.Connection, rid: str):
+    """on_idea for writers and editors: log each streamed idea as an "idea" event."""
+    lock = threading.Lock()  # the editor streams from its thread pool
+
+    def on_idea(i: int, idea: str) -> None:
+        with lock:
+            db.log_event(conn, rid, "idea", f"Candidate {i + 1}: {idea}")
+
+    return on_idea
 
 
 def _accepts(fn: Any, name: str) -> bool:
