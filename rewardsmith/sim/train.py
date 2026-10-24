@@ -14,7 +14,7 @@ from typing import Any
 from . import jax_compat  # noqa: F401  (must come before brax's PPO trainer)
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
-from mujoco_playground import wrapper
+from mujoco_playground import registry, wrapper
 from mujoco_playground.config import locomotion_params
 
 from .go1 import BASE_ENV, Go1Env
@@ -49,6 +49,7 @@ class TrainResult:
     compile_s: float = 0.0  # start to first eval, mostly JIT
     train_s: float = 0.0  # total wall time
     num_timesteps: int = 0
+    randomized: bool = False  # trained on domain-randomized robots
 
     @property
     def steps_per_s(self) -> float:
@@ -73,13 +74,29 @@ def ppo_kwargs(preset: str = "round", overrides: Mapping[str, Any] | None = None
     return kwargs
 
 
+def randomizer() -> Callable[..., Any]:
+    """Playground's Go1 domain randomizer, one robot per env.
+
+    Per robot: floor friction U(0.4, 1.0), joint friction loss x U(0.9, 1.1), joint armature
+    x U(1.0, 1.05), every link mass x U(0.9, 1.1), torso payload +U(-1, 1) kg, torso center
+    of mass +U(-5, 5) cm, joint zero offsets (qpos0) +U(-0.05, 0.05) rad.
+    Called as randomizer()(mjx_model, rngs) -> (batched model, in_axes).
+    """
+    return registry.get_domain_randomizer(BASE_ENV)
+
+
 def train(
     env: Go1Env,
     preset: str = "round",
     overrides: Mapping[str, Any] | None = None,
     seed: int = 0,
     on_progress: Callable[[CurvePoint], None] | None = None,
+    randomize: bool = False,
 ) -> TrainResult:
+    """Train a policy. randomize=True gives every env its own randomized robot.
+
+    brax also randomizes its eval envs then, so the curve is measured on randomized robots.
+    """
     kwargs = ppo_kwargs(preset, overrides)
     start = time.perf_counter()
     curve: list[CurvePoint] = []
@@ -103,6 +120,7 @@ def train(
     make_inference_fn, params, _ = ppo.train(
         environment=env,
         wrap_env_fn=wrapper.wrap_for_brax_training,
+        randomization_fn=randomizer() if randomize else None,
         progress_fn=progress,
         seed=seed,
         **kwargs,
@@ -115,4 +133,5 @@ def train(
         compile_s=curve[0].wall_s if curve else 0.0,
         train_s=total,
         num_timesteps=int(kwargs["num_timesteps"]),
+        randomized=randomize,
     )
