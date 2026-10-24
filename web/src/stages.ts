@@ -1,4 +1,5 @@
 import { Candidate, RequestDetail, Round } from "./api";
+import { QueuePlace } from "./thread";
 
 // Where a run is, in words a first-time viewer can follow, and since when.
 // Times are server seconds (time.time()); the board ticks them on the client clock.
@@ -75,9 +76,32 @@ export function isScored(c: Candidate) {
   return finite(c.score);
 }
 
+// "Queued, starts when “walk backwards” finishes": who it is waiting for, from the
+// request list. Without a place in the queue, a generic line.
+function queuedLabel(queue: QueuePlace | null | undefined) {
+  if (!queue)
+    return {
+      label: "Waiting in line for the GPU worker",
+      hint: "Runs train one at a time. This one starts when the worker is free.",
+    };
+  const hint = "One GPU, so tasks train one at a time.";
+  const [next, ...rest] = queue.ahead;
+  if (queue.running && !next)
+    return { label: `Queued, starts when “${queue.running}” finishes`, hint };
+  if (next)
+    return {
+      label: `Queued behind ${plural(queue.ahead.length + (queue.running ? 1 : 0), "task")}`,
+      hint: `${queue.running ? `“${queue.running}” is running, then ` : ""}“${next}”${
+        rest.length ? ` and ${plural(rest.length, "more task")}` : ""
+      } go first. ${hint}`,
+    };
+  return { label: "Queued, starting in a few seconds", hint };
+}
+
 export function runStage(
   detail: RequestDetail,
   candidatesPerRound?: number | null,
+  queue?: QueuePlace | null,
 ): RunStage {
   const rounds = detail.rounds;
   const last = rounds.at(-1);
@@ -87,8 +111,7 @@ export function runStage(
   if (detail.status === "queued")
     return {
       key: "queued",
-      label: "Waiting in line for the GPU worker",
-      hint: "Runs train one at a time. This one starts when the worker is free.",
+      ...queuedLabel(queue),
       round: null,
       startedAt: detail.created_at,
     };
