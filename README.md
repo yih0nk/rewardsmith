@@ -65,6 +65,38 @@ with the fake simulator.
 .venv/bin/python -m pytest -q
 ```
 
+## Quality regression suite
+
+`scripts/regression.py` trains three fixed rewards (walk backwards, walk forward,
+spin in place, all in `examples/rewards/`) with the `round` preset and seed 0,
+through the same `PlaygroundSimulator.run_many` path the worker uses, one at a time.
+For each it records the final `episode_reward`, a behavior check from the rollout
+metrics (e.g. `forward_velocity < -0.3` and `fell < 0.5`), `compile_s`, `train_s`
+and wall time. A compare FAILs a case if its behavior check fails or its
+`episode_reward` is more than 5% below `regression/baseline.json`. Timings are
+printed with their change from the baseline but never fail the run.
+
+To check that a branch (speed, robustness, ...) doesn't hurt quality, copy it to
+your own folder on the GPU pod and run the compare under the shared GPU lock
+(about 12 minutes):
+
+```sh
+rsync -a --exclude .venv --exclude node_modules --exclude .rewardsmith --exclude __pycache__ ./ pod:/workspace/<you>/
+cd /workspace/<you>
+flock /workspace/gpu.lock env MUJOCO_GL=egl /workspace/rewardsmith/.venv/bin/python scripts/regression.py --compare
+```
+
+It exits 1 and prints `REGRESSION FAIL` with the reasons if any case regressed.
+`--only walk_forward` runs a subset. Videos, logs and `last_run.json` go to
+`.rewardsmith/regression/`. The script puts its own checkout first on the import
+path, for itself and the training subprocesses, so it tests your branch's code even
+though the shared venv has `/workspace/rewardsmith` installed.
+
+Re-record the baseline (`--record`, then commit `regression/baseline.json`) only
+when a change is meant to move the numbers, such as a new preset or new
+observations, and say so in the PR. `--record` refuses to write a baseline whose
+behavior checks fail.
+
 ## Reward contract
 
 Every generated reward is a module defining:
