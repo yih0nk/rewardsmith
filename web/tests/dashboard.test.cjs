@@ -69,7 +69,9 @@ test("queued requests and running rounds with no candidates render safely", () =
   });
   assert.match(html, /Claude is writing reward functions/);
   assert.match(html, /0 rewards in 1 round/);
-  assert.match(html, /No robot has trained yet/);
+  // Nothing to show yet: the status takes the whole width, with no empty video box.
+  assert.match(html, /class="run-grid status-only"/);
+  assert.doesNotMatch(html, /aria-label="Robot rollout"/);
   assert.doesNotMatch(html, /NaN/);
 });
 
@@ -427,7 +429,9 @@ test("a training candidate shows its stage, an accessible bar and the reward cur
   assert.match(html, /aria-valuetext="Training 42%"/);
   assert.match(html, /<polyline points="/);
   assert.match(html, /latest 12.35/);
-  assert.match(html, /420 \/ 1,000 steps/);
+  assert.match(html, /420 \/ 1,000 training steps/);
+  // The training process's own clock stands still while it compiles: not shown.
+  assert.doesNotMatch(html, /steps · \d+ s/);
   assert.doesNotMatch(html, /NaN|undefined/);
 
   const finishing = render(detail(training({ progress: live("done", 1, curve) })));
@@ -776,4 +780,114 @@ test("the success check reads as a sentence and jargon comes with an explanation
   for (const term of ["critic", "successCheck", "candidate"])
     assert.ok(html.includes(explain.GLOSSARY[term].replaceAll("'", "&#x27;")), term);
   assert.match(html, /role="tooltip"/);
+});
+
+const thread = require("../src/thread.ts");
+
+test("each request is one conversation, newest first, with one turn", () => {
+  const reqs = [
+    { id: "a", text: "walk backwards", status: "done", best_score: 6.8, created_at: 10 },
+    { id: "b", text: "spin in place", status: "running", best_score: null, created_at: 20 },
+  ];
+  const convos = thread.conversationsFromRequests(reqs);
+  assert.deepEqual(convos.map((c) => c.id), ["b", "a"]);
+  assert.deepEqual(convos[1].turns, [{ requestId: "a", text: "walk backwards", createdAt: 10 }]);
+  assert.equal(convos[1].bestScore, 6.8);
+  assert.equal(convos[0].bestScore, null);
+});
+
+test("a queued task says which task it waits for", () => {
+  const reqs = [
+    { id: "r", text: "push the ball into the blue zone", status: "running", created_at: 1 },
+    { id: "q1", text: "spin in place", status: "queued", created_at: 2 },
+    { id: "q2", text: "walk backwards", status: "queued", created_at: 3 },
+    { id: "d", text: "old", status: "done", created_at: 0 },
+  ];
+  const first = thread.queuePlace(reqs, "q1");
+  assert.deepEqual(first, { running: "push the ball into the blue zone", ahead: [] });
+  assert.deepEqual(thread.queuePlace(reqs, "q2").ahead, ["spin in place"]);
+  assert.equal(thread.queuePlace(reqs, "r"), null);
+
+  const queued = { ...base, status: "queued", created_at: T0 };
+  assert.equal(
+    stages.runStage(queued, null, first).label,
+    "Queued, starts when “push the ball into the blue zone” finishes",
+  );
+  const second = stages.runStage(queued, null, thread.queuePlace(reqs, "q2"));
+  assert.equal(second.label, "Queued behind 2 tasks");
+  assert.match(second.hint, /“push the ball into the blue zone” is running, then “spin in place” go first/);
+  assert.equal(
+    stages.runStage(queued, null, { running: null, ahead: [] }).label,
+    "Queued, starting in a few seconds",
+  );
+  // The turn shows it, so a waiting task never looks stuck.
+  const html = renderToStaticMarkup(
+    React.createElement(Detail, { detail: queued, health, queue: first }),
+  );
+  assert.match(html, /role="status">Queued, starts when “push the ball into the blue zone” finishes</);
+});
+
+test("runs and candidates have stable anchors, and reply slots stay empty until wired", () => {
+  const detail = {
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    rounds: [scoredRound(1, 1, { ...candidate, id: 7 })],
+  };
+  const plain = render(detail);
+  assert.match(plain, /<article class="cmd turn" id="run-abcd1234"/);
+  assert.match(plain, /id="candidate-7" data-round="1" data-candidate-id="7"/);
+  assert.match(plain, /aria-label="Robot rollout" data-candidate-id="7"/);
+  assert.doesNotMatch(plain, /reply-slot/);
+
+  const targets = [];
+  const wired = renderToStaticMarkup(
+    React.createElement(Detail, {
+      detail,
+      health,
+      renderReply: (target) => {
+        targets.push(target);
+        return React.createElement("span", null, "reply");
+      },
+    }),
+  );
+  assert.equal((wired.match(/class="reply-slot"/g) ?? []).length, 3);
+  assert.deepEqual(targets, [
+    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0 },
+    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0 },
+    { kind: "run", requestId: "abcd1234" },
+  ]);
+});
+
+test("the task list shows status and best score, and marks the open task", () => {
+  const List = require("../src/components/ConversationList.tsx").default;
+  const convos = thread.conversationsFromRequests([
+    { id: "a", text: "walk backwards", status: "done", best_score: 6.8, created_at: 1 },
+    { id: "b", text: "kick the ball", status: "done", best_score: null, created_at: 2 },
+    { id: "c", text: "spin", status: "queued", best_score: null, created_at: 3 },
+  ]);
+  const html = renderToStaticMarkup(
+    React.createElement(List, { conversations: convos, selected: "a", loading: false, onSelect: () => {} }),
+  );
+  assert.match(html, /aria-current="page"[^>]*>[\s\S]*?walk backwards[\s\S]*?best 6\.8/);
+  assert.match(html, /kick the ball[\s\S]*?no result/);
+  assert.match(html, /spin[\s\S]*?queued/);
+  const empty = (loading) =>
+    renderToStaticMarkup(React.createElement(List, { conversations: [], selected: null, loading, onSelect: () => {} }));
+  assert.match(empty(true), /Loading tasks…/);
+  assert.match(empty(false), /No tasks yet/);
+});
+
+test("the composer has no option controls until they are passed in", () => {
+  const Composer = require("../src/components/Composer.tsx").default;
+  const props = { label: "What should the robot learn?", inputRef: { current: null }, busy: false, error: "", text: "", onText: () => {}, onSubmit: () => {} };
+  const html = renderToStaticMarkup(React.createElement(Composer, props));
+  assert.match(html, /<label for="behavior"[^>]*>What should the robot learn\?/);
+  assert.match(html, /Start training/);
+  assert.match(html, /Walk to the red ball/);
+  assert.doesNotMatch(html, /composer-controls/);
+  const withControls = renderToStaticMarkup(
+    React.createElement(Composer, { ...props, controls: React.createElement("span", null, "Model") }),
+  );
+  assert.match(withControls, /class="composer-controls"><span>Model/);
 });
