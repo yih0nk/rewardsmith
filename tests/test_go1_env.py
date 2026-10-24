@@ -61,3 +61,12 @@ def test_describe_lists_every_feature():
 def test_bad_rewards_raise_reward_error(source, message):
     with pytest.raises(go1.RewardError, match=message):
         go1.make_env(source)
+
+
+def test_behavior_metrics_are_reported_at_reset_and_step():
+    env = go1.make_env(WALK_BACKWARDS, impl="jax")
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    names = {"forward_velocity", "lateral_velocity", "yaw_rate", "base_height", "upright"}
+    assert {f"behavior/{n}" for n in names} <= set(state.metrics)
+    state = jax.jit(env.step)(state, jnp.zeros(env.action_size))
+    assert float(state.metrics["behavior/upright"]) > 0.9  # standing at the start

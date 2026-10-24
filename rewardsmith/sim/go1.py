@@ -55,6 +55,28 @@ class Go1Env(joystick.Joystick):
             "torques": data.actuator_force,
         }
 
+    def reset(self, rng: jax.Array) -> mjx_env.State:
+        state = super().reset(rng)
+        state.metrics.update(self.behavior(state.data))
+        return state
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        state = super().step(state, action)
+        state.metrics.update(self.behavior(state.data))
+        return state
+
+    def behavior(self, data: mjx.Data) -> dict[str, jax.Array]:
+        """What the robot is doing, reward aside. Every eval reports these, summed over
+        the episode, so candidates with different rewards can be compared mid-training."""
+        lin = self.get_local_linvel(data)
+        return {
+            "behavior/forward_velocity": lin[0],
+            "behavior/lateral_velocity": lin[1],
+            "behavior/yaw_rate": self.get_gyro(data)[2],
+            "behavior/base_height": data.qpos[2],
+            "behavior/upright": self.get_upvector(data)[2],
+        }
+
     def _get_reward(self, data, action, info, metrics, done, first_contact, contact):
         del metrics, done, first_contact
         terms = self._reward_fn(self.features(data, info, contact), action, info["last_act"])
