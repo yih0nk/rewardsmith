@@ -42,3 +42,11 @@ class Editor(Protocol):
 
 class Critic(Protocol):
     def review(self, request: str, result: RunResult) -> Review: ...
+
+
+class Scener(Protocol):
+    """Turns a request into a scene spec dict (see sim/scene.py), before any reward is written."""
+
+    def make(self, request: str) -> dict[str, Any]: ...
+
+    def fix(self, request: str, spec: dict[str, Any], error: str) -> dict[str, Any]: ...
