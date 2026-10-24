@@ -4,7 +4,7 @@ import ast
 import hashlib
 from pathlib import Path
 
-from .base import RunResult
+from .base import RunResult, run_sequentially
 from .go1_spec import describe
 
 
@@ -32,3 +32,6 @@ class FakeSimulator:
             metrics={"fake_quality": quality, "forward_velocity": round((h % 200 - 100) / 100, 2)},
             reward_curve=curve,
         )
+
+    def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
+        return run_sequentially(self, jobs)
