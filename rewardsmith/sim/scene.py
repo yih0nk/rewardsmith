@@ -61,7 +61,7 @@ MASS = (0.05, 20.0)  # kg, movable objects only
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,15}$")
 # Object names become feature names (ball_dist, ...); these would clash with robot features.
-RESERVED_NAMES = frozenset({"base", "target", "joint", "joints", "foot", "feet", "gravity", "up", "torques", "time"})
+RESERVED_NAMES = frozenset({"base", "target", "joint", "joints", "foot", "feet", "gravity", "up", "torques", "time", "bumper"})
 
 OBJECT_KEYS = ("name", "kind", "color", "size", "distance", "bearing", "yaw", "movable", "mass")
 SCENE_KEYS = ("terrain", "objects", "target")
@@ -226,14 +226,14 @@ def _parse_object(i: int, raw: Any) -> tuple[SceneObject | None, list[str]]:
         errors.append(f"{where}: name must be lowercase letters, digits or _, starting with a letter, "
                       f"at most 16 characters (e.g. \"red_ball\"), got {name!r}")
     elif name in RESERVED_NAMES:
-        errors.append(f"{where}: name {name!r} is reserved for robot features; pick another")
+        errors.append(f"{where}: name {name!r} is reserved for robot features or internal geometry; pick another")
 
     kind = raw.get("kind")
     if kind not in KINDS:
         errors.append(f"{where}: kind must be one of {', '.join(KINDS)}, got {kind!r}")
 
     color = raw.get("color", "gray")
-    if color not in COLORS:
+    if not isinstance(color, str) or color not in COLORS:
         errors.append(f"{where}: color must be one of {', '.join(COLORS)}, got {color!r}")
 
     movable = raw.get("movable", False)

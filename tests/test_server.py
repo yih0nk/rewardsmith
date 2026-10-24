@@ -238,3 +238,11 @@ def test_request_detail_reports_robustness(tmp_path, monkeypatch):
     db.set_candidate(conn, cid, metrics=metrics)
     [cand] = client.get(f"/api/requests/{rid}").json()["rounds"][0]["candidates"]
     assert cand["robustness"] == {"robots": {"passed": 8, "total": 10}, "pushes": {"passed": 3, "total": 4}}
+
+
+def test_malformed_scene_color_returns_validation_error(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    response = client.post("/api/requests", json={"text": "walk to the ball", "scene": {
+        "objects": [{"name": "ball", "kind": "ball", "size": [0.15], "distance": 2, "color": []}]}})
+    assert response.status_code == 422
+    assert "color must be" in response.json()["detail"]

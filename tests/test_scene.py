@@ -186,3 +186,16 @@ def test_ball_meets_the_bumper_face_not_its_belly():
     mujoco.mj_forward(m, d)
     (normal,) = [c.frame[:3] for c in d.contact[:d.ncon] if "obj_bumper" in (m.geom(c.geom1).name, m.geom(c.geom2).name)]
     assert abs(normal[0]) > 0.9  # pushes the body straight back, not up
+
+
+@pytest.mark.parametrize("color", [[], {}, 3, None, True])
+def test_malformed_color_is_a_scene_error(color):
+    from rewardsmith.sim.scene import SceneError, parse
+    with pytest.raises(SceneError, match="color must be"):
+        parse({"objects": [{"name": "ball", "kind": "ball", "size": [0.15], "distance": 2, "color": color}]})
+
+
+def test_internal_bumper_name_is_reserved():
+    from rewardsmith.sim.scene import SceneError, parse
+    with pytest.raises(SceneError, match="reserved"):
+        parse({"objects": [{"name": "bumper", "kind": "ball", "size": [0.15], "distance": 2}]})
