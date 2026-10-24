@@ -25,6 +25,7 @@ class PlaygroundSimulator:
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
+        self._pool: parallel.WarmPool | None = None
 
     def describe(self) -> str:
         return go1_spec.describe()
@@ -52,5 +53,17 @@ class PlaygroundSimulator:
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
 
+    def warm_up(self, n: int) -> None:
+        """Start n training processes now, so their imports overlap the writer's Claude call."""
+        if self._pool is None:
+            self._pool = parallel.WarmPool(min(n, self.max_parallel))
+
     def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
-        return parallel.run_in_processes(jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel)
+        pool, self._pool = self._pool, None
+        try:
+            return parallel.run_in_processes(
+                jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel, pool=pool
+            )
+        finally:
+            if pool:
+                pool.close()
