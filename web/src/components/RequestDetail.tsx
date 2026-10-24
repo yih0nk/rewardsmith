@@ -193,6 +193,12 @@ export default function RequestDetail({
               {name && !nothingWorked && (
                 <span className="result-who">
                   <span className="stage-title">{name}</span>
+                  {candidate?.score != null && (
+                    <span className="who-score num">
+                      {candidate.score.toFixed(1)}
+                      <small> / 10</small>
+                    </span>
+                  )}
                   {viewingBest && (
                     <span className="winner-tag">Best overall</span>
                   )}

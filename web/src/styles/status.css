@@ -166,6 +166,16 @@
 .result .result-who {
   font-size: var(--dp-typography-body);
 }
+/* The score in the header too, so it is visible without scrolling past the video. */
+.who-score {
+  color: var(--dp-color-emphasis);
+  font-weight: 500;
+}
+.who-score small {
+  font-size: var(--dp-typography-label);
+  font-weight: 400;
+  color: var(--dp-color-ink-muted);
+}
 @media (min-width: 1101px) {
   .run-grid {
     grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
