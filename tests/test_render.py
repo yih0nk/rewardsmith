@@ -3,8 +3,9 @@ import json
 import subprocess
 from pathlib import Path
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 pytest.importorskip("mujoco_playground")
 
@@ -103,3 +104,27 @@ def test_unknown_camera_is_refused(tmp_path):
     with pytest.raises(ValueError, match="unknown camera"):
         render.render_videos(env.mj_model, np.zeros((2, env.mj_model.nq)), env.dt, [(tmp_path / "x.mp4", "nope")],
                              np.array([0]), 72, 128)
+
+
+def test_scene_render_restores_reset_mocap_transforms(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from rewardsmith.sim.scene import parse
+
+    scene = parse({"objects": [{"name": "ball", "kind": "ball", "size": [0.15], "distance": 2}]})
+    env = go1.make_env(WALK_BACKWARDS, scene=scene, impl="jax")
+    qpos, _, pos, quat = render._rollout(env, _stand(env), steps=2, seed=7)
+    assert not np.allclose(pos, env.mj_model.body_pos[env.mj_model.body_mocapid >= 0])
+    seen = []
+    renderer = SimpleNamespace(
+        update_scene=lambda data, camera: seen.append((data.mocap_pos.copy(), data.mocap_quat.copy())),
+        render=lambda: np.zeros((8, 8, 3), dtype=np.uint8),
+    )
+    monkeypatch.setattr(render.mujoco, "Renderer", lambda *a, **k: nullcontext(renderer))
+    monkeypatch.setattr(render.mediapy, "VideoWriter", lambda *a, **k: nullcontext(SimpleNamespace(add_image=lambda f: None)))
+    render.render_videos(env.mj_model, qpos, env.dt, [(tmp_path / "x.mp4", "chase")], np.array([0]), 8, 8,
+                         mocap_pos=pos, mocap_quat=quat)
+    assert len(seen) == len(qpos)
+    for actual_pos, actual_quat in seen:
+        np.testing.assert_allclose(actual_pos, pos)
+        np.testing.assert_allclose(actual_quat, quat)

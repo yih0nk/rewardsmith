@@ -72,12 +72,15 @@ def rollout_and_render(
     with side_video_path(mp4 path).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    qpos, summary = rollout(env, result, steps, seed)
+    qpos, summary, mocap_pos, mocap_quat = _rollout(env, result, steps, seed)
 
     video = out_dir / VIDEO_FILE
     views = [(video, camera)] + ([(side_video_path(video), "side")] if side_view else [])
     picks = np.linspace(0, len(qpos) - 1, num=min(n_frames, len(qpos))).round().astype(int)
-    stills = render_videos(env.mj_model, qpos, env.dt, views, picks, height, width)
+    stills = render_videos(
+        env.mj_model, qpos, env.dt, views, picks, height, width,
+        mocap_pos=mocap_pos, mocap_quat=mocap_quat,
+    )
     pngs = [_png(f, critic_width, critic_height) for f in stills]
     return video, pngs, summary
 
@@ -92,6 +95,12 @@ def rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0) -> tupl
     The whole rollout is one compiled scan: far cheaper than a Python loop that
     dispatches and syncs every step, especially with four candidates sharing the GPU.
     """
+    qpos, summary, _, _ = _rollout(env, result, steps, seed)
+    return qpos, summary
+
+
+def _rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0):
+    """Keep reset mocap transforms too: fixed objects live outside qpos."""
     policy = result.make_inference_fn(result.params, deterministic=False)
 
     def body(carry, _):
@@ -107,9 +116,9 @@ def rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0) -> tupl
     def run(rng):
         state = env.reset(rng)
         _, outs = jax.lax.scan(body, (state, rng), length=steps)
-        return state.data.qpos, outs
+        return state.data.qpos, state.data.mocap_pos, state.data.mocap_quat, outs
 
-    qpos0, outs = jax.device_get(run(jax.random.PRNGKey(seed)))
+    qpos0, mocap_pos, mocap_quat, outs = jax.device_get(run(jax.random.PRNGKey(seed)))
     qpos, lin, yaw, up, done = (np.asarray(x) for x in outs)
     fell = bool(done.any())
     n = int(np.argmax(done)) + 1 if fell else steps  # keep the step that fell, drop the ones after
@@ -122,7 +131,7 @@ def rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0) -> tupl
         "fell": float(fell),
         "rollout_steps": float(n),
     }
-    return np.concatenate([qpos0[None], qpos[:n]]), summary
+    return np.concatenate([qpos0[None], qpos[:n]]), summary, mocap_pos, mocap_quat
 
 
 def side_video_path(video: Path) -> Path:
@@ -138,10 +147,17 @@ def render_videos(
     picks: np.ndarray,
     height: int,
     width: int,
+    *,
+    mocap_pos: np.ndarray | None = None,
+    mocap_quat: np.ndarray | None = None,
 ) -> list[np.ndarray]:
     """Write one mp4 per (path, camera) view, a frame per qpos row. Return the first view's frames at `picks`."""
     model = render_model(mj_model, height, width)
     data = mujoco.MjData(model)
+    if mocap_pos is not None:
+        data.mocap_pos[:] = mocap_pos
+    if mocap_quat is not None:
+        data.mocap_quat[:] = mocap_quat
     tracks = [_camera(model, name, qpos, dt) for _, name in views]
     picked = set(picks.tolist())
     stills = []
