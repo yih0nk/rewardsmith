@@ -1,13 +1,19 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Candidate, RequestDetail, RequestSummary, createRequest, getRequest, listRequests } from "./api";
+import { RequestDetail as Detail, RequestSummary, createRequest, getRequest, listRequests } from "./api";
+import RequestDetail from "./components/RequestDetail";
+import RequestList from "./components/RequestList";
 
 const POLL_MS = 2000;
+const HALL = "hall";
+
+const fromHash = () => location.hash.slice(1) || null;
 
 // The board. A request id in the URL hash (#abc123) opens that request: that's the phone link.
+// #hall is the hall of fame.
 export default function App() {
   const [requests, setRequests] = useState<RequestSummary[]>([]);
-  const [selected, setSelected] = useState<string | null>(() => location.hash.slice(1) || null);
-  const [detail, setDetail] = useState<RequestDetail | null>(null);
+  const [selected, setSelected] = useState<string | null>(fromHash);
+  const [detail, setDetail] = useState<Detail | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -19,8 +25,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const onHash = () => setSelected(fromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
     if (!selected) return setDetail(null);
     location.hash = selected;
+    if (selected === HALL) return setDetail(null);
     const tick = () => getRequest(selected).then(setDetail).catch((e) => setError(String(e)));
     tick();
     const t = setInterval(tick, POLL_MS);
@@ -64,68 +77,19 @@ export default function App() {
 
       <div className="layout">
         <section aria-label="Requests">
-          <h2 className="label">Requests</h2>
-          {requests.length === 0 && <p className="muted">Nothing yet. Type a behavior above to start.</p>}
-          <ul className="requests">
-            {requests.map((r) => (
-              <li key={r.id}>
-                <button className={r.id === selected ? "req active" : "req"} onClick={() => setSelected(r.id)}>
-                  <span>{r.text}</span>
-                  <span className="muted">
-                    {r.status}
-                    {r.best_score != null && ` · ${r.best_score.toFixed(1)}`}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <RequestList requests={requests} selected={selected} onSelect={setSelected} />
         </section>
 
-        <section aria-label="Rounds">{detail ? <Detail detail={detail} /> : <p className="muted">Pick a request.</p>}</section>
+        <section aria-label="Rounds">
+          {selected === HALL ? (
+            <p className="muted">Hall of fame: nothing flagged yet.</p>
+          ) : detail ? (
+            <RequestDetail detail={detail} />
+          ) : (
+            <p className="muted">Pick a request.</p>
+          )}
+        </section>
       </div>
     </main>
-  );
-}
-
-function Detail({ detail }: { detail: RequestDetail }) {
-  return (
-    <div>
-      <h2>{detail.text}</h2>
-      <p className="muted">
-        {detail.status} · best score {detail.best_score?.toFixed(1) ?? "n/a"} · link: {location.origin}/#{detail.id}
-      </p>
-      {detail.rounds.map((round) => (
-        <div key={round.id} className="round">
-          <h3 className="label">Round {round.n}</h3>
-          <div className="grid">
-            {round.candidates.map((c) => (
-              <CandidateView key={c.id} c={c} best={c.id === round.best_candidate_id} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function CandidateView({ c, best }: { c: Candidate; best: boolean }) {
-  return (
-    <article className={best ? "cand best" : "cand"}>
-      <div className="cand-head">
-        <span>#{c.idx}</span>
-        <span>{c.score != null ? c.score.toFixed(1) : c.status}</span>
-      </div>
-      {c.video_path ? (
-        <video src={`/artifacts/${c.video_path}`} controls muted loop playsInline />
-      ) : (
-        <div className="novideo muted">{c.status === "gate_failed" ? "Didn't compile" : "No video yet"}</div>
-      )}
-      {c.critique && <p className="critique">{c.critique}</p>}
-      {c.error && <pre className="err">{c.error}</pre>}
-      <details>
-        <summary>{c.diff ? "Diff" : "Reward"}</summary>
-        <pre>{c.diff || c.reward_src}</pre>
-      </details>
-    </article>
   );
 }
