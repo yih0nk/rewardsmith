@@ -172,6 +172,7 @@ def test_spec_is_stored_before_training_and_every_candidate_is_checked(tmp_path)
     assert cands and all(c["check_result"]["pass"] for c in cands)
     assert critic_.checks == [c["check_result"] for c in cands]
     assert detail["succeeded"] == 1
+    assert detail["best_candidate_id"] == best.candidate_id
 
 
 def test_a_failed_check_means_no_success_however_high_the_score(tmp_path):

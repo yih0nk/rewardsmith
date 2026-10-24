@@ -160,7 +160,7 @@ def run_request(
         db.finish_round(conn, round_id, round_best.candidate_id if round_best else None)
         if round_best and (best is None or round_best.rank() > best.rank()):
             best = round_best
-            db.set_request(conn, rid, best_score=best.score)
+            db.set_request(conn, rid, best_score=best.score, best_candidate_id=best.candidate_id)
         db.log_event(conn, rid, "round", f"Round {n} done, best score {best.score if best else 'n/a'}")
 
         if best and n >= settings.min_rounds and _succeeded(best, settings):

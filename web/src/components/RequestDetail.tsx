@@ -33,12 +33,19 @@ export default function RequestDetail({
       });
     }
   };
-  const bestRound =
-    detail.status === "done" && detail.best_score != null
-      ? detail.rounds.find((r) =>
-          r.candidates.some((c) => c.score === detail.best_score),
-        )
-      : undefined;
+  const scoredAll = detail.rounds.flatMap((r) =>
+    r.candidates
+      .filter((c) => typeof c.score === "number" && Number.isFinite(c.score))
+      .map((c) => ({ round: r, c, score: c.score as number })),
+  );
+  const top = scoredAll.find(({ c }) => c.id === detail.best_candidate_id) ??
+    scoredAll.reduce<(typeof scoredAll)[number] | null>((a, b) => {
+      if (!a) return b;
+      const aPass = a.c.check_result?.pass !== false;
+      const bPass = b.c.check_result?.pass !== false;
+      return bPass !== aPass ? (bPass ? b : a) : (b.score > a.score ? b : a);
+    }, null);
+  const bestRound = detail.status === "done" ? top?.round : undefined;
   const current =
     detail.rounds.find((r) => r.n === round) ??
     bestRound ??
@@ -61,16 +68,6 @@ export default function RequestDetail({
     detail.status === "queued"
       ? "Queued · waiting for worker"
       : (detail.events.at(-1)?.message ?? "Waiting for worker updates");
-  // The best scored candidate anywhere in the run, for the summary and the round markers.
-  const scoredAll = detail.rounds.flatMap((r) =>
-    r.candidates
-      .filter((c) => typeof c.score === "number" && Number.isFinite(c.score))
-      .map((c) => ({ round: r, c, score: c.score as number })),
-  );
-  const top = scoredAll.reduce<(typeof scoredAll)[number] | null>(
-    (a, b) => (a && a.score >= b.score ? a : b),
-    null,
-  );
   const firstScore =
     detail.rounds.map(roundScore).find((s): s is number => s != null) ?? null;
   const roundsDone = detail.rounds.filter((r) => r.status === "done").length;
@@ -116,6 +113,11 @@ export default function RequestDetail({
           {roundsDone} {roundsDone === 1 ? "round" : "rounds"} completed
         </span>
       </div>
+      {detail.success_check_error ? (
+        <p role="status">Success could not be verified: the checker failed.</p>
+      ) : detail.status === "done" && detail.succeeded != null ? (
+        <p role="status">{detail.succeeded ? "Success verified" : "Success criteria not met"}</p>
+      ) : null}
       <dl className="summary">
         <div className="summary-best">
           <dt className="label">Best score</dt>
@@ -232,6 +234,9 @@ export default function RequestDetail({
             <span className="score-of num">/ 10</span>
           </div>
           <span className="score-label label">Critic score</span>
+          {candidate?.check_result && (
+            <p>Success check: {candidate.check_result.verified === false ? "unavailable" : candidate.check_result.pass ? "passed" : "failed"}</p>
+          )}
           <dl className="metrics">
             {metrics
               .filter(([key]) => !key.startsWith("term_"))
@@ -271,6 +276,7 @@ export default function RequestDetail({
         rounds={detail.rounds}
         current={current?.n}
         bestScore={top?.score ?? null}
+        bestRound={top?.round.n}
         pending={running ? stage : null}
         onSelect={(n) => show(n, null)}
       />

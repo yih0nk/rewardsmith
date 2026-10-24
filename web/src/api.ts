@@ -32,7 +32,15 @@ export type CandidateStatus =
   | "stopped"
   | "failed";
 
+export interface CheckResult {
+  pass: boolean;
+  verified?: boolean;
+  error?: string;
+  clauses: { metric: string; op: string; value: number; actual: number | null; pass: boolean }[];
+}
+
 export interface Candidate {
+  check_result?: CheckResult | null;
   id: number;
   idx: number;
   reward_src: string;
@@ -69,6 +77,9 @@ export interface RequestSummary {
   text: string;
   status: Status;
   best_score: number | null;
+  best_candidate_id?: number | null;
+  succeeded?: number | null;
+  success_check_error?: string | null;
   created_at: number;
 }
 

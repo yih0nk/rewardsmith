@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS requests (
     text        TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | failed
     best_score  REAL,
+    best_candidate_id INTEGER,
     created_at  REAL NOT NULL,
     scene        TEXT,     -- JSON scene spec; NULL until the scene writer has run
     success_spec TEXT,     -- JSON: the pass/fail check, written once before training (agents/checker.py)
@@ -75,7 +76,7 @@ def connect(path: Path) -> sqlite3.Connection:
 # Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
 # existing table alone, so a db file from an older version gets them here.
 ADDED_COLUMNS = {
-    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT"},
+    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER"},
     "candidates": {"flagged_at": "REAL", "flag_note": "TEXT", "check_result": "TEXT"},
 }
 JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
