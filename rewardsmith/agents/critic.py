@@ -49,6 +49,20 @@ class ClaudeCritic:
             ),
         })
         out = ask_json(self.client, self.model, SYSTEM, content, SCHEMA)
-        score = max(0.0, min(10.0, float(out["score"])))
-        prefix = "Reward hacking suspected. " if out["reward_hacking"] else ""
-        return Review(score=score, critique=prefix + out["critique"])
+        return apply_limits(float(out["score"]), bool(out["reward_hacking"]), out["critique"], result.metrics)
+
+
+FELL_OR_HACKED_MAX = 3.0
+
+
+def apply_limits(score: float, reward_hacking: bool, critique: str, metrics: dict) -> Review:
+    """Clamp to 0-10 and enforce the hard limits from the prompt, whatever Claude returned."""
+    score = max(0.0, min(10.0, score))
+    notes = []
+    if float(metrics.get("fell", 0) or 0) >= 1 and score > FELL_OR_HACKED_MAX:
+        score = FELL_OR_HACKED_MAX
+        notes.append("Capped at 3: the robot fell.")
+    if reward_hacking:
+        notes.append("Reward hacking suspected.")
+        score = min(score, FELL_OR_HACKED_MAX)
+    return Review(score=score, critique=" ".join(notes + [critique]))
