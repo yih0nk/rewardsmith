@@ -13,9 +13,10 @@ from pathlib import Path
 # before the training processes start. Has to be set before jax initializes.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
+from . import gate, go1, go1_spec, parallel, render, scene_eval, train  # noqa: E402
 from .base import RunResult  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
+from .scene import EMPTY, SceneSpec  # noqa: E402
 
 
 class PlaygroundSimulator:
@@ -26,19 +27,20 @@ class PlaygroundSimulator:
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
 
-    def describe(self) -> str:
-        return go1_spec.describe()
+    def describe(self, scene: SceneSpec | None = None) -> str:
+        return go1_spec.describe(scene or EMPTY)
 
-    def gate(self, source: str) -> str | None:
-        return gate.check_reward(source, impl=self.impl)
+    def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
+        return gate.check_reward(source, impl=self.impl, scene=scene)
 
-    def run(self, source: str, out_dir: Path) -> RunResult:
+    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None) -> RunResult:
         progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
         progress.stage("compiling")
-        env = go1.make_env(source, impl=self.impl)
+        env = go1.make_env(source, impl=self.impl, scene=scene)
         result = train.train(env, self.preset, on_progress=progress.point)
         progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
+        rollout.update(scene_eval.target_metrics(env, result.make_inference_fn, result.params))
         (out_dir / "reward.py").write_text(source)
 
         last = result.curve[-1]
@@ -52,5 +54,7 @@ class PlaygroundSimulator:
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
 
-    def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
-        return parallel.run_in_processes(jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel)
+    def run_many(self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None) -> list[RunResult | str]:
+        return parallel.run_in_processes(
+            jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel, scene=scene
+        )

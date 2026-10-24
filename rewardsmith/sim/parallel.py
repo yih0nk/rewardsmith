@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .base import RunResult
 from .run_one import FRAMES_DIR, RESULT_FILE
+from .scene import SceneSpec
 
 GPU_MEMORY_SHARE = 0.9  # split across processes; the rest stays free for the driver
 
@@ -27,6 +28,7 @@ def run_in_processes(
     max_parallel: int = 4,
     fake: bool = False,
     timeout_s: float = 3600,
+    scene: SceneSpec | None = None,
 ) -> list[RunResult | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs."""
     if not jobs:
@@ -45,7 +47,7 @@ def run_in_processes(
     while pending or running:
         while pending and len(running) < slots:
             i, (source, out_dir) = pending.pop(0)
-            running[i] = (_start(source, out_dir, preset, impl, fake, env), out_dir, time.monotonic())
+            running[i] = (_start(source, out_dir, preset, impl, fake, env, scene), out_dir, time.monotonic())
         time.sleep(0.5)
         for i, (proc, out_dir, started) in list(running.items()):
             if proc.poll() is None:
@@ -61,7 +63,9 @@ def run_in_processes(
     return [r if r is not None else "Error: no result" for r in results]
 
 
-def _start(source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict) -> subprocess.Popen:
+def _start(
+    source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict, scene: SceneSpec | None
+) -> subprocess.Popen:
     out_dir.mkdir(parents=True, exist_ok=True)
     reward_file = out_dir / "reward.py"
     reward_file.write_text(source)
@@ -69,6 +73,10 @@ def _start(source: str, out_dir: Path, preset: str, impl: str | None, fake: bool
     cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir), "--preset", preset]
     if impl:
         cmd += ["--impl", impl]
+    if scene is not None and not scene.is_empty:
+        scene_file = out_dir / "scene.json"
+        scene_file.write_text(scene.to_json())
+        cmd += ["--scene", str(scene_file)]
     if fake:
         cmd.append("--fake")
     log = open(out_dir / "train.log", "w")  # noqa: SIM115 (closed when the process exits)

@@ -1,6 +1,6 @@
 """Train one reward in its own process. parallel.py starts one of these per candidate.
 
-    python -m rewardsmith.sim.run_one <reward.py> <out_dir> [--preset round] [--impl jax] [--fake]
+    python -m rewardsmith.sim.run_one <reward.py> <out_dir> [--preset round] [--impl jax] [--scene scene.json] [--fake]
 
 Writes <out_dir>/result.json, plus frames/NN.png for the critic. On failure,
 result.json holds {"error": "..."} and the exit code is 1.
@@ -39,11 +39,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("out_dir", type=Path)
     ap.add_argument("--preset", default="round")
     ap.add_argument("--impl", default=None, help="jax or warp (default: warp on a GPU)")
+    ap.add_argument("--scene", type=Path, default=None, help="scene spec JSON (default: plain flat floor)")
     ap.add_argument("--fake", action="store_true", help="use the no-GPU fake simulator (tests)")
     args = ap.parse_args(argv)
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        from .scene import parse
+
+        scene = parse(args.scene.read_text()) if args.scene else None
         if args.fake:
             from .fake import FakeSimulator
 
@@ -52,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
             from .playground import PlaygroundSimulator
 
             sim = PlaygroundSimulator(preset=args.preset, impl=args.impl)
-        result = sim.run(args.reward.read_text(), args.out_dir)
+        result = sim.run(args.reward.read_text(), args.out_dir, scene)
     except Exception as exc:
         (args.out_dir / RESULT_FILE).write_text(
             json.dumps({"error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()})
