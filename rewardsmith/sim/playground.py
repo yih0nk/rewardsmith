@@ -3,13 +3,18 @@
 Settings (env vars):
   REWARDSMITH_PRESET  smoke | round | final   (default round; use smoke on a laptop)
   REWARDSMITH_IMPL    jax | warp              (default jax; try warp on a CUDA GPU)
+  REWARDSMITH_PARALLEL  candidates trained at once, one process each (default 4)
 """
 
 import os
 from pathlib import Path
 
-from . import gate, go1, go1_spec, render, train
-from .base import RunResult
+# The worker gates rewards on the GPU itself, so it must not grab 75% of GPU memory
+# before the training processes start. Has to be set before jax initializes.
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
+from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
+from .base import RunResult  # noqa: E402
 
 
 class PlaygroundSimulator:
@@ -18,6 +23,7 @@ class PlaygroundSimulator:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or os.environ.get("REWARDSMITH_IMPL", "jax")
+        self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
 
     def describe(self) -> str:
         return go1_spec.describe()
@@ -40,3 +46,6 @@ class PlaygroundSimulator:
             "compile_s": round(result.compile_s, 1),
         }
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
+
+    def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
+        return parallel.run_in_processes(jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel)
