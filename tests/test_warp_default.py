@@ -10,10 +10,11 @@ from mujoco.mjx.warp import mujoco_warp  # noqa: E402
 from rewardsmith.sim import go1, warp_quiet  # noqa: E402
 
 
-def test_quiet_clears_only_the_solver_iterations_warning():
+def test_quiet_clears_only_the_solver_iteration_warnings():
     put_model = warp_quiet.quiet(lambda: SimpleNamespace(opt=SimpleNamespace(warn_overflow=int(OverflowType.ALL))))
     flags = put_model().opt.warn_overflow
     assert not flags & OverflowType.ITERATIONS
+    assert not flags & OverflowType.LS_ITERATIONS
     assert flags & OverflowType.NEFC  # real overflows still warn
 
 
