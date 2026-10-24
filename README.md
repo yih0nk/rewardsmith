@@ -9,12 +9,14 @@ Built from scratch at Cal Hacks 13.0 (Oct 23–25, 2026).
 ## How it works
 
 ```
-request ──► writer (Claude)       round 1: K candidate rewards
+request ──► checker (Claude)      pass/fail success check over rollout metrics, fixed before training
+        ──► writer (Claude)       round 1: K candidate rewards
             editor (Droid/Claude)  round 2+: revise the best reward, with a diff
         ──► gate                   compile + short rollout, errors go back to the writer
         ──► train                  PPO in MuJoCo Playground on the GPU
         ──► render + measure       mp4 for the board, frames + metrics for the critic
-        ──► critic (Claude)        watches frames, scores 0–10, writes what to change
+        ──► check + critic (Claude) run the success check; critic watches frames, scores 0–10
+                                   a request succeeds only if the check passes AND the score clears the bar
         ──► best candidate seeds the next round
 ```
 
