@@ -6,7 +6,9 @@ Round 2+: the editor revises the best reward so far, using the critic's notes.
 
 import logging
 import sqlite3
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,12 +57,20 @@ def run_request(
 
         # Gate every draft first, then train the survivors together: on the GPU,
         # sim.run_many trains them side by side, which hides most of the JIT time.
-        ready: list[tuple[int, str, Path]] = []
-        for idx, (src, diff) in enumerate(drafts):
-            cid = db.add_candidate(conn, round_id, idx, src, diff)
-            src = _pass_gate(conn, rid, idx, cid, src, writer, env_doc, sim)
-            if src is not None:
-                ready.append((cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}"))
+        # The gates (and any writer fixes) run at once, in threads: each one is
+        # mostly XLA compile or a Claude call, and both release the GIL.
+        cids = [db.add_candidate(conn, round_id, idx, src, diff) for idx, (src, diff) in enumerate(drafts)]
+        lock = threading.Lock()  # the threads share conn
+        with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
+            gated = list(pool.map(
+                lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim),
+                range(len(drafts)),
+            ))
+        ready: list[tuple[int, str, Path]] = [
+            (cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}")
+            for idx, (cid, src) in enumerate(zip(cids, gated))
+            if src is not None
+        ]
         if ready:
             db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
         for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
@@ -95,6 +105,7 @@ def run_request(
 
 def _pass_gate(
     conn: sqlite3.Connection,
+    lock: threading.Lock,
     rid: str,
     idx: int,
     cid: int,
@@ -111,15 +122,18 @@ def _pass_gate(
     for attempt in range(GATE_RETRIES + 1):
         error = sim.gate(src)
         if error is not None:
-            db.log_event(conn, rid, "gate", f"Candidate {idx}, attempt {attempt + 1} failed: {error}")
+            with lock:
+                db.log_event(conn, rid, "gate", f"Candidate {idx}, attempt {attempt + 1} failed: {error}")
         if error is None:
             if attempt:
-                db.set_candidate(conn, cid, reward_src=src)
+                with lock:
+                    db.set_candidate(conn, cid, reward_src=src)
             return src
         if attempt == GATE_RETRIES:
             break
         src = writer.fix(src, error, env_doc)
-    db.set_candidate(conn, cid, status="gate_failed", error=error)
+    with lock:
+        db.set_candidate(conn, cid, status="gate_failed", error=error)
     return None
 
 
