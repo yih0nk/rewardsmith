@@ -40,7 +40,7 @@ def evaluate(
     robust: bool = True,
     steps: int = ROLLOUT_STEPS,
 ) -> tuple[Path, list[bytes], dict[str, float], dict[str, float]]:
-    """Return (mp4 path, critic PNGs, rollout + target metrics, robust_* metrics or {})."""
+    """Return (mp4 path, critic PNGs, rollout + target metrics + eval_s, robust_* metrics or {})."""
     start = time.perf_counter()
     target_obj = env.scene.target_object
     n_target = TARGET_ENVS if target_obj is not None else 0
@@ -63,6 +63,13 @@ def evaluate(
     reset, outs = robustness.run_batch(env, result, models, in_axes, keys, push_dirs, steps)
 
     summary, n = render.rollout_summary(*(outs[k][video] for k in ("qpos", "lin", "yaw", "up", "done")))
+    robust_metrics: dict[str, float] = {}
+    if robust:  # robust_s: the shared batch, which is what robustness costs on its own
+        rows = [robustness.summarize(outs, i) for i in robust_rows]
+        # Every row past the robots is the nominal robot, so robustness.json's physics
+        # for plan position i can be read from batch row i.
+        robust_metrics = robustness.report(plan, rows, models, summary, out_dir=out_dir, start=start)
+
     qpos = np.concatenate([reset["qpos"][video][None], outs["qpos"][video][:n]])
     video_path, frames = render.render_rollout(
         env, qpos, out_dir, mocap_pos=reset["mocap_pos"][video], mocap_quat=reset["mocap_quat"][video]
@@ -73,11 +80,5 @@ def evaluate(
             reset["target_dist"][target], outs["target_dist"][target].T, outs["done"][target].T,
             target_obj.reach_radius, env.dt,
         ))
-
-    robust_metrics: dict[str, float] = {}
-    if robust:
-        rows = [robustness.summarize(outs, i) for i in robust_rows]
-        # Every row past the robots is the nominal robot, so robustness.json's physics
-        # for plan position i can be read from batch row i.
-        robust_metrics = robustness.report(plan, rows, models, summary, out_dir=out_dir, start=start)
+    metrics["eval_s"] = round(time.perf_counter() - start, 1)  # the batch plus rendering the video
     return video_path, frames, metrics, robust_metrics
