@@ -119,7 +119,7 @@ def describe(scene: SceneSpec = EMPTY) -> str:
         lines += [
             "- Objects are placed fresh each episode (ranges above), and the policy observes each object's "
             "relative position, so reward the skill (e.g. distance or heading to the object), not a fixed spot.",
-            "- Only the feet collide with objects; the body and legs pass through them.",
+            "- The feet and the body (trunk) collide with solid objects; the thighs and calves pass through them.",
             "- The foot_contact feature counts touching an object as contact.",
         ]
         if any(o.kind == "zone" for o in scene.objects):
