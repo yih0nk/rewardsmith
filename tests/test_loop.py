@@ -429,3 +429,52 @@ def test_older_dbs_get_the_idea_and_reward_hacking_columns(tmp_path):
 
     cols = {r["name"] for r in db.connect(path).execute("PRAGMA table_info(candidates)")}
     assert {"idea", "reward_hacking"} <= cols
+
+
+def test_editors_that_take_history_see_every_earlier_attempt(tmp_path):
+    class RecordingEditor(FakeEditor):
+        def __init__(self):
+            self.histories = []
+
+        def revise(self, request, env_doc, best_source, critique, metrics, k, history=()):
+            self.histories.append(list(history))
+            return super().revise(request, env_doc, best_source, critique, metrics, k)
+
+    s = replace(_settings(tmp_path), carry_top=1)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+    editor = RecordingEditor()
+
+    run_request(conn, s, req, FakeWriter(), editor, FakeCritic(), FakeSimulator())
+
+    # Round 2 sees round 1's 3 scored candidates; round 3 sees rounds 1 and 2.
+    assert [len(h) for h in editor.histories] == [3, 6]
+    assert [a.round for a in editor.histories[1]] == [1, 1, 1, 2, 2, 2]
+    assert sorted(a.idx for a in editor.histories[0]) == [0, 1, 2]
+
+
+def test_a_revision_fixed_by_the_gate_gets_a_fresh_diff(tmp_path):
+    class BreakingEditor(FakeEditor):
+        def revise(self, request, env_doc, best_source, critique, metrics, k):
+            new = best_source + "BROKEN\n"
+            return [(new, "stale diff")] * k
+
+    class FixingWriter(FakeWriter):
+        def fix(self, source, error, env_doc):
+            return source.replace("BROKEN\n", "# fixed\n")
+
+    class PickySim(FakeSimulator):
+        def gate(self, source, scene=None):
+            return "BROKEN is not python" if "BROKEN" in source else super().gate(source, scene)
+
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, FixingWriter(), BreakingEditor(), FakeCritic(), PickySim())
+
+    revised = db.get_request(conn, req["id"])["rounds"][1]["candidates"][0]
+    assert revised["status"] == "scored"
+    assert "+# fixed" in revised["diff"] and "BROKEN" not in revised["diff"]

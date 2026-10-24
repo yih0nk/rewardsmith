@@ -7,11 +7,11 @@ ClaudeEditor is the fallback so the loop works before Droid is wired in.
 
 import difflib
 import json
-from typing import Any
+from typing import Any, Sequence
 
 import anthropic
 
-from .base import Draft
+from .base import Attempt, Draft
 from .claude import ask_json
 from .writer import SYSTEM, WRITE_SCHEMA
 
@@ -22,6 +22,18 @@ def unified_diff(old: str, new: str) -> str:
             old.splitlines(keepends=True), new.splitlines(keepends=True), "reward.py (before)", "reward.py (after)"
         )
     )
+
+
+MAX_HISTORY = 12
+MAX_CRITIQUE = 500
+
+
+def format_history(history: Sequence[Attempt]) -> str:
+    lines = []
+    for a in list(history)[-MAX_HISTORY:]:
+        critique = a.critique if len(a.critique) <= MAX_CRITIQUE else a.critique[:MAX_CRITIQUE] + "..."
+        lines.append(f"- Round {a.round}, candidate {a.idx}, score {a.score:.1f}: {critique}")
+    return "\n".join(lines)
 
 
 class ClaudeEditor:
@@ -36,13 +48,20 @@ class ClaudeEditor:
         critique: str,
         metrics: dict[str, Any],
         k: int,
+        history: Sequence[Attempt] = (),
     ) -> list[Draft]:
+        earlier = (
+            f"Earlier attempts and what the critic said (don't repeat what failed):\n{format_history(history)}\n\n"
+            if history
+            else ""
+        )
         prompt = (
             f"Environment notes:\n{env_doc}\n\n"
             f"Behavior the user wants: {request}\n\n"
             f"Best reward so far:\n```python\n{best_source}\n```\n\n"
             f"Metrics from its rollout:\n{json.dumps(metrics, indent=2)}\n\n"
             f"Critic's notes after watching the video:\n{critique}\n\n"
+            f"{earlier}"
             f"Write {k} revised reward modules that fix what the critic saw. "
             "Each idea should say what you changed and why."
         )

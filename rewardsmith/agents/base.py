@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol, Sequence
 
 from ..sim.base import RunResult
 
@@ -22,6 +22,17 @@ class Draft:
     source: str
     diff: str | None = None  # against the reward it revises; None for first drafts
     idea: str | None = None  # what this candidate tries, in the agent's words, for the board
+    parent: str | None = field(default=None, repr=False)  # the source it revises; set by the orchestrator
+
+
+@dataclass
+class Attempt:
+    """A scored candidate from an earlier round, so revisions don't repeat old mistakes."""
+
+    round: int
+    idx: int
+    score: float
+    critique: str
 
 
 @dataclass
@@ -46,6 +57,7 @@ class Editor(Protocol):
         critique: str,
         metrics: dict[str, Any],
         k: int,
+        history: Sequence[Attempt] = (),
     ) -> list[Draft] | list[tuple[str, str]]:
         """Return k revisions, each with its diff against best_source."""
         ...
