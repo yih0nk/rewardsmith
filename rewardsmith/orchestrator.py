@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from . import config, db
-from .agents.base import Critic, Editor, Writer
+from .agents import checker as check_spec
+from .agents.base import Checker, Critic, Editor, Writer
 from .sim.base import Simulator
 
 log = logging.getLogger("rewardsmith.worker")
@@ -27,6 +28,11 @@ class Best:
     score: float
     critique: str
     metrics: dict[str, Any]
+    passed: bool = True  # the success check held (True when there is no check)
+
+    def rank(self) -> tuple[bool, float]:
+        """A run that passes the check beats any that doesn't; then the higher score wins."""
+        return (self.passed, self.score)
 
 
 def run_request(
@@ -37,10 +43,12 @@ def run_request(
     editor: Editor,
     critic: Critic,
     sim: Simulator,
+    checker: Checker | None = None,
 ) -> Best | None:
     rid, text = req["id"], req["text"]
     best: Best | None = None
     env_doc = sim.describe()
+    spec = _success_spec(conn, req, checker)
 
     for n in range(1, settings.max_rounds + 1):
         round_id = db.add_round(conn, rid, n)
@@ -73,24 +81,50 @@ def run_request(
                 db.set_candidate(conn, cid, status="failed", error=result)
                 continue
             video = _relative(result.video_path, settings.artifacts_dir)
-            db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video)
+            check = check_spec.evaluate(spec, result.metrics) if spec else None
+            db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
 
-            review = critic.review(text, result)
+            review = critic.review(text, result, check)
             db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
 
-            if round_best is None or review.score > round_best.score:
-                round_best = Best(cid, src, review.score, review.critique, result.metrics)
+            cand = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
+            if round_best is None or cand.rank() > round_best.rank():
+                round_best = cand
 
         db.finish_round(conn, round_id, round_best.candidate_id if round_best else None)
-        if round_best and (best is None or round_best.score > best.score):
+        if round_best and (best is None or round_best.rank() > best.rank()):
             best = round_best
             db.set_request(conn, rid, best_score=best.score)
         db.log_event(conn, rid, "round", f"Round {n} done, best score {best.score if best else 'n/a'}")
 
-        if best and n >= settings.min_rounds and best.score >= settings.success_score:
+        if best and n >= settings.min_rounds and _succeeded(best, settings):
             break
 
+    db.set_request(conn, rid, succeeded=int(best is not None and _succeeded(best, settings)))
     return best
+
+
+def _succeeded(best: Best, settings: config.Settings) -> bool:
+    return best.passed and best.score >= settings.success_score
+
+
+def _success_spec(
+    conn: sqlite3.Connection, req: dict[str, Any], checker: Checker | None
+) -> list[dict[str, Any]] | None:
+    """The request's success check, written now, before any candidate trains, and stored
+    for good. Falls back to "don't fall over" if the checker fails."""
+    if req.get("success_spec") or checker is None:
+        return req.get("success_spec")
+    rid = req["id"]
+    try:
+        spec = checker.write_spec(req["text"])
+    except Exception as exc:
+        log.exception("success check for %s failed", rid)
+        db.log_event(conn, rid, "check", f"Could not write the success check ({type(exc).__name__}); using: don't fall")
+        spec = [check_spec.NO_FALL]
+    db.set_success_spec(conn, rid, spec)
+    db.log_event(conn, rid, "check", "Success check: " + ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in spec))
+    return spec
 
 
 def _pass_gate(
@@ -160,6 +194,18 @@ def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]
     return writer, editor, critic, sim
 
 
+def build_checker(settings: config.Settings) -> Checker:
+    if settings.fake_llm:
+        from .agents.fake import FakeChecker
+
+        return FakeChecker()
+    import anthropic
+
+    from .agents.checker import ClaudeChecker
+
+    return ClaudeChecker(anthropic.Anthropic(), settings.model)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     config.load_dotenv()
@@ -168,6 +214,7 @@ def main() -> None:
     for rid in db.fail_interrupted(conn):
         log.warning("request %s was cut off by a worker restart; marked failed", rid)
     writer, editor, critic, sim = build(settings)
+    checker = build_checker(settings)
     log.info("worker up (fake_sim=%s, fake_llm=%s)", settings.fake_sim, settings.fake_llm)
 
     while True:
@@ -177,7 +224,7 @@ def main() -> None:
             continue
         log.info("running %s: %s", req["id"], req["text"])
         try:
-            best = run_request(conn, settings, req, writer, editor, critic, sim)
+            best = run_request(conn, settings, req, writer, editor, critic, sim, checker)
             db.set_request(conn, req["id"], status="done")
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")
         except Exception as exc:
