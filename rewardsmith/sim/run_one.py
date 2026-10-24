@@ -6,9 +6,13 @@
 Writes <out_dir>/result.json, plus frames/NN.png for the critic. On failure,
 result.json holds {"error": "..."} and the exit code is 1.
 
---serve starts a warm process: it does the slow imports first, then waits for
-parallel.py to write job.json ({"reward", "out_dir", "preset", "impl"}) and runs
-that job. The imports take ~15 s on the pod, so they overlap the writer's call.
+--serve starts a warm process: it does the slow imports and a throwaway gate
+first (~30 s on the pod, overlapping the writer's Claude call), then answers
+parallel.py's messages in job.json:
+  {"kind": "gate", "seq", "source", "scene", "impl"}  gate the source and write
+      {"seq", "error"} (or {"seq", "crash"} for a non-reward failure) to job.gate.json;
+      then wait for the next message. The orchestrator's fix-retry loop reuses this.
+  {"kind": "train", "reward", "out_dir", "preset", "impl", ...}  run that job and exit.
 """
 
 import argparse
@@ -60,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.serve:
         _warm_up(args.fake)
-        job = _wait_for_job(args.serve, args.parent_pid or os.getppid())
+        job = _serve_gates(args.serve, args.parent_pid or os.getppid(), args.fake)
         if job is None:
             return 0
         args.reward, args.out_dir = Path(job["reward"]), Path(job["out_dir"])
@@ -103,26 +107,78 @@ def _simulator(
     return PlaygroundSimulator(preset=preset, impl=impl, behavior_metrics=behavior_metrics, **(sim_options or {}))
 
 
+# A reward every scene can run: the warm-up gates it to pay for first-use costs early.
+WARM_UP_REWARD = """import jax.numpy as jnp
+
+
+def reward(state, action, prev_action):
+    return {"still": -jnp.sum(jnp.square(action))}
+"""
+
+
 def _warm_up(fake: bool) -> None:
-    """Pay for the imports and the GPU client before the job arrives."""
+    """Pay for the imports, the GPU client and first-use costs before the job arrives.
+
+    Gating a throwaway reward loads the Go1 model and warp's kernels and runs XLA's
+    first compile, about 5 s that the first real gate would otherwise pay.
+    """
     if fake:
         from . import fake  # noqa: F401
         return
     import jax
 
-    from . import playground  # noqa: F401
+    from . import gate, playground  # noqa: F401
 
     jax.devices()
+    try:
+        error = gate.check_reward(WARM_UP_REWARD)
+    except Exception:  # a warm-up is an optimisation; the real gate reports real problems
+        traceback.print_exc()
+    else:
+        if error:
+            print(f"warm-up gate failed: {error}", flush=True)
+
+
+def _serve_gates(path: Path, parent: int, fake: bool) -> dict | None:
+    """Answer gate messages until the train job arrives; return it (None: none came)."""
+    while True:
+        job = _wait_for_job(path, parent)
+        if job is None or job.get("kind", "train") == "train":
+            return job
+        answer: dict = {"seq": job["seq"]}
+        try:
+            answer["error"] = _gate(job, fake)
+        except Exception:
+            answer["crash"] = traceback.format_exc()[-3000:]
+        tmp = path.with_name(path.stem + ".gate.tmp")
+        tmp.write_text(json.dumps(answer))
+        os.replace(tmp, path.with_name(path.stem + ".gate.json"))
+
+
+def _gate(job: dict, fake: bool) -> str | None:
+    from .scene import parse
+
+    scene = parse(job["scene"]) if job.get("scene") else None
+    if fake:
+        from .fake import FakeSimulator
+
+        return FakeSimulator().gate(job["source"], scene)
+    from . import gate
+
+    return gate.check_reward(job["source"], impl=job.get("impl"), scene=scene)
 
 
 def _wait_for_job(path: Path, parent: int) -> dict | None:
-    """The job, once parallel.py writes it; None if the parent went away or never sent one."""
+    """The next message, once parallel.py writes it (taken off the file, so the next one
+    can follow); None if the parent went away or never sent one."""
     start = time.monotonic()
     while not path.exists():
         if not _alive(parent) or time.monotonic() - start > SERVE_MAX_WAIT_S:
             return None
         time.sleep(SERVE_POLL_S)
-    return json.loads(path.read_text())
+    job = json.loads(path.read_text())
+    path.unlink()
+    return job
 
 
 def _alive(pid: int) -> bool:
