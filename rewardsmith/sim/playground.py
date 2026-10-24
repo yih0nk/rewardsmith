@@ -15,7 +15,7 @@ from pathlib import Path
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
-from .base import RunResult  # noqa: E402
+from .base import Cull, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 
 
@@ -62,13 +62,15 @@ class PlaygroundSimulator:
     def warm_up(self, n: int) -> None:
         """Start n training processes now, so their imports overlap the writer's Claude call."""
         if self._pool is None:
-            self._pool = parallel.WarmPool(min(n, self.max_parallel))
+            self._pool = parallel.WarmPool(n)
 
-    def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
+    def run_many(self, jobs: list[tuple[str, Path]], cull: Cull | None = None) -> list[RunResult | Stopped | str]:
         pool, self._pool = self._pool, None
+        # Halving compares candidates at the same eval, so they all train at once.
+        max_parallel = max(self.max_parallel, len(jobs)) if cull else self.max_parallel
         try:
             return parallel.run_in_processes(
-                jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel, pool=pool
+                jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, pool=pool, cull=cull
             )
         finally:
             if pool:
