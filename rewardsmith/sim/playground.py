@@ -4,6 +4,7 @@ Settings (env vars):
   REWARDSMITH_PRESET  smoke | round | final   (default round; use smoke on a laptop)
   REWARDSMITH_IMPL    jax | warp              (default: warp on a CUDA GPU, jax elsewhere)
   REWARDSMITH_PARALLEL  candidates trained at once, one process each (default 4)
+  REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
 """
 
 import os
@@ -12,6 +13,12 @@ from pathlib import Path
 # The worker gates rewards on the GPU itself, so it must not grab 75% of GPU memory
 # before the training processes start. Has to be set before jax initializes.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+# XLA's GPU autotuner times candidate kernels for every matmul while compiling.
+# With four training processes compiling on one GPU that cost about a minute a
+# round, and switching it off left steps/s and rewards unchanged on the 4090.
+# The training processes inherit this. Set REWARDSMITH_XLA_AUTOTUNE=1 to keep it.
+if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
+    os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
 from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
 from .base import RunResult  # noqa: E402
