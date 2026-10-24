@@ -20,9 +20,12 @@ class StubSim:
         self.metrics_by_source = metrics_by_source
 
     def run_many(self, jobs):
+        """A list of metrics for a source gives one entry per repeat, in job order."""
         out = []
-        for source, _ in jobs:
+        for i, (source, _) in enumerate(jobs):
             m = self.metrics_by_source[source]
+            if isinstance(m, list):
+                m = m[i]
             out.append(m if isinstance(m, str) else RunResult(metrics=m))
         return out
 
@@ -104,7 +107,7 @@ def test_record_then_compare_from_the_command_line(tmp_path, capsys):
     args = ["--baseline", str(tmp_path / "baseline.json"), "--out", str(tmp_path / "out")]
     assert regression.main(["--record", *args], sim=_good_sim()) == 0
     baseline = json.loads((tmp_path / "baseline.json").read_text())
-    assert baseline["preset"] == "round"
+    assert baseline["preset"] == "round" and baseline["repeats"] == 3
     assert set(baseline["cases"]) == {"walk_backwards", "walk_forward", "spin_in_place"}
     assert baseline["cases"]["walk_backwards"]["compile_s"] == 40.0
 
@@ -130,3 +133,38 @@ def test_compare_refuses_a_different_preset(tmp_path):
     regression.main(["--record", *args], sim=_good_sim())
     with pytest.raises(SystemExit):
         regression.main(["--compare", "--preset", "smoke", *args], sim=_good_sim())
+
+
+def test_one_collapsed_run_of_three_is_outvoted(tmp_path):
+    baseline = _run(_good_sim(), tmp_path)
+    sim = _good_sim()
+    spin = _source(regression.CASES[2])
+    sim.metrics_by_source[spin] = [_metrics(reward=1.9, fwd=0.1, yaw=0.3, fell=1.0),  # training collapsed
+                                   _metrics(reward=29.5, fwd=0.0, yaw=1.4), _metrics(reward=30.4, fwd=0.0, yaw=1.5)]
+    run = _run(sim, tmp_path)
+    spin_run = run["cases"]["spin_in_place"]
+    assert spin_run["episode_reward"] == 29.5  # the median, not the mean
+    assert spin_run["behavior_passed"] == "2/3" and spin_run["behavior_pass"]
+    assert [r["status"] for r in regression.compare(run, baseline)] == ["PASS"] * 3
+    assert "[runs 1.9, 29.5, 30.4]" in regression.format_rows(regression.compare(run, baseline))
+
+
+def test_two_bad_runs_of_three_fail(tmp_path):
+    baseline = _run(_good_sim(), tmp_path)
+    sim = _good_sim()
+    walk = _source(regression.CASES[0])
+    sim.metrics_by_source[walk] = [_metrics(fwd=-0.6), "RuntimeError: out of memory", _metrics(fwd=-0.1)]
+    rows = regression.compare(_run(sim, tmp_path), baseline)
+    assert rows[0]["status"] == "FAIL"
+    assert "passed 1/3" in rows[0]["reasons"][0]
+
+
+def test_clauses_that_fail_in_different_runs_fail_the_behavior(tmp_path):
+    baseline = _run(_good_sim(), tmp_path)
+    sim = _good_sim()
+    spin = _source(regression.CASES[2])
+    sim.metrics_by_source[spin] = [_metrics(fwd=0.0, yaw=0.5), _metrics(fwd=0.0, yaw=1.4, fell=1.0),
+                                   _metrics(fwd=0.0, yaw=1.4)]
+    rows = regression.compare(_run(sim, tmp_path), baseline)
+    assert rows[2]["status"] == "FAIL"
+    assert rows[2]["reasons"] == ["behavior check passed in only 1/3 runs"]
