@@ -15,6 +15,7 @@ class Settings:
     fake_sim: bool
     fake_llm: bool
     min_rounds: int = 2  # always run at least this many, so the editor and its diffs get used
+    carry_top: int = 2  # each later round revises this many of the best candidates so far
 
 
 def _flag(name: str, default: str) -> bool:
@@ -49,4 +50,5 @@ def load() -> Settings:
         fake_sim=_flag("REWARDSMITH_FAKE_SIM", "1"),
         fake_llm=_flag("REWARDSMITH_FAKE_LLM", "1"),
         min_rounds=int(os.environ.get("REWARDSMITH_MIN_ROUNDS", "2")),
+        carry_top=max(1, int(os.environ.get("REWARDSMITH_CARRY", "2"))),
     )

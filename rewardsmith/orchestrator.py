@@ -42,6 +42,7 @@ def run_request(
 ) -> Best | None:
     rid, text = req["id"], req["text"]
     best: Best | None = None
+    ranked: list[Best] = []  # every scored candidate so far, best first
     env_doc = sim.describe()
 
     for n in range(1, settings.max_rounds + 1):
@@ -54,9 +55,7 @@ def run_request(
         if best is None:
             drafts = [(src, None) for src in writer.write(text, env_doc, settings.candidates_per_round)]
         else:
-            drafts = editor.revise(
-                text, env_doc, best.source, best.critique, best.metrics, settings.candidates_per_round
-            )
+            drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], settings.candidates_per_round)
 
         # Gate every draft first, then train the survivors together: on the GPU,
         # sim.run_many trains them side by side, which hides most of the JIT time.
@@ -97,8 +96,11 @@ def run_request(
         round_best: Best | None = None
         for (cid, src, result), review in zip(trained, reviews):
             db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
+            scored = Best(cid, src, review.score, review.critique, result.metrics)
+            ranked.append(scored)
             if round_best is None or review.score > round_best.score:
-                round_best = Best(cid, src, review.score, review.critique, result.metrics)
+                round_best = scored
+        ranked.sort(key=lambda b: -b.score)  # stable: on a tie the earlier candidate stays ahead
 
         db.finish_round(conn, round_id, round_best.candidate_id if round_best else None)
         if round_best and (best is None or round_best.score > best.score):
@@ -110,6 +112,19 @@ def run_request(
             break
 
     return best
+
+
+def _revise(editor: Editor, text: str, env_doc: str, parents: list[Best], k: int) -> list[tuple[str, str]]:
+    """Revise each parent into its share of the k drafts, all editor calls at once.
+
+    Revising the top two, not just the best, keeps a runner-up with a different
+    idea alive: one lucky critic score shouldn't decide the whole search.
+    """
+    shares = [k // len(parents) + (i < k % len(parents)) for i in range(len(parents))]
+    jobs = [(p, n) for p, n in zip(parents, shares) if n]
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        out = pool.map(lambda j: editor.revise(text, env_doc, j[0].source, j[0].critique, j[0].metrics, j[1]), jobs)
+        return [draft for drafts in out for draft in drafts]
 
 
 def _pass_gate(
