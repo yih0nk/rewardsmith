@@ -72,17 +72,18 @@ def test_rollout_writes_browser_ready_videos_and_small_critic_frames(tmp_path):
 
 
 def _stand(env) -> TrainResult:
-    return TrainResult(
-        make_inference_fn=lambda params, deterministic: lambda obs, key: (0.3 * obs["state"][:12], {}),
-        params=None,
-    )
+    def make(params, deterministic):
+        assert not deterministic  # the trained gait is the sampled one
+        return lambda obs, key: (0.3 * obs["state"][:12] + 0.05 * jax.random.normal(key, (12,)), {})
+
+    return TrainResult(make_inference_fn=make, params=None)
 
 
 def test_scanned_rollout_matches_a_step_by_step_loop():
     env = go1.make_env(WALK_BACKWARDS)
     qpos, summary = render.rollout(env, _stand(env), steps=30)
 
-    policy = _stand(env).make_inference_fn(None, deterministic=True)
+    policy = _stand(env).make_inference_fn(None, deterministic=False)
     reset, step = jax.jit(env.reset), jax.jit(env.step)
     rng = jax.random.PRNGKey(0)
     state = reset(rng)

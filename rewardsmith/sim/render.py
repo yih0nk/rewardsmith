@@ -83,13 +83,16 @@ def rollout_and_render(
 
 
 def rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0) -> tuple[np.ndarray, dict[str, float]]:
-    """Run the deterministic policy for up to `steps` control steps, stopping at the first fall.
+    """Run the policy for up to `steps` control steps, stopping at the first fall.
+
+    The policy samples its actions (seeded, so reruns match), as in brax's PPO eval.
+    The mean action alone is not what was trained: spin policies fall over with it.
 
     Returns qpos for the reset state and every step taken, and the rollout summary.
     The whole rollout is one compiled scan: far cheaper than a Python loop that
     dispatches and syncs every step, especially with four candidates sharing the GPU.
     """
-    policy = result.make_inference_fn(result.params, deterministic=True)
+    policy = result.make_inference_fn(result.params, deterministic=False)
 
     def body(carry, _):
         state, rng = carry
