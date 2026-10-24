@@ -25,6 +25,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .base import ROLLOUT_STEPS
 from .go1 import Go1Env
 from .train import TrainResult, randomizer
 
@@ -33,7 +34,7 @@ N_SEEDS = 3
 PUSH_DIRS = {"front": (1.0, 0.0), "back": (-1.0, 0.0), "left": (0.0, 1.0), "right": (0.0, -1.0)}
 PUSH_DV = 0.75  # m/s the shove adds to the whole robot; training pushes reach about 1 m/s
 PUSH_AT_S, PUSH_FOR_S = 2.0, 0.1
-STEPS = 300  # same length as the nominal rollout
+STEPS = ROLLOUT_STEPS  # same length as the nominal rollout
 SEED = 10_007  # far from training's seeds, so the robots are new
 
 # Below these the robot isn't really moving that way, and there is no motion to keep.
@@ -132,7 +133,7 @@ def _is_batched(axis: Any, value: Any) -> bool:
 
 
 def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., dict[str, jax.Array]]:
-    policy = result.make_inference_fn(result.params, deterministic=True)
+    policy = result.make_inference_fn(result.params, deterministic=False)
     torso = env._torso_body_id
     push_from = round(PUSH_AT_S / env.dt)
     push_to = push_from + max(1, round(PUSH_FOR_S / env.dt))
@@ -145,14 +146,15 @@ def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., d
             state = env.reset(rng)
 
             def step(carry, t):
-                state, alive = carry
+                state, alive, rng = carry
+                rng, key = jax.random.split(rng)
                 # The shove is along the robot's own heading axes, flattened to the ground.
                 heading = state.data.xmat[torso] @ jnp.array([push_dir[0], push_dir[1], 0.0])
                 heading = heading.at[2].set(0.0)
                 heading = heading / (jnp.linalg.norm(heading) + 1e-6) * jnp.linalg.norm(push_dir)
                 on = (t >= push_from) & (t < push_to)
                 xfrc = jnp.zeros_like(state.data.xfrc_applied).at[torso, :3].set(on * push_force * heading)
-                action, _ = policy(state.obs, rng)
+                action, _ = policy(state.obs, key)
                 state = env.step(state.replace(data=state.data.replace(xfrc_applied=xfrc)), action)
                 sample = {
                     "lin": env.get_local_linvel(state.data),
@@ -161,9 +163,9 @@ def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., d
                     "up": env.get_upvector(state.data)[2],
                     "alive": alive,
                 }
-                return (state, alive & (state.done < 0.5)), sample
+                return (state, alive & (state.done < 0.5), rng), sample
 
-            (_, alive), s = jax.lax.scan(step, (state, jnp.bool_(True)), jnp.arange(steps))
+            (_, alive, _), s = jax.lax.scan(step, (state, jnp.bool_(True), rng), jnp.arange(steps))
         finally:
             env._mjx_model = nominal
 

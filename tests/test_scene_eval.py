@@ -13,6 +13,7 @@ ROOT = Path(__file__).parent.parent / "examples"
 
 
 def standing_policy(params, deterministic=True):
+    assert deterministic is False
     return lambda obs, key: (jnp.zeros(obs["state"].shape[:-1] + (12,)), {})
 
 

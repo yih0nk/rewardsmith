@@ -1,6 +1,6 @@
 """Did the trained policy reach the target? Measured over many episodes, not one video.
 
-Runs the deterministic policy in a batch of fresh episodes (objects placed
+Runs the seeded, sampled policy in a batch of fresh episodes (objects placed
 afresh in each) and reports distances to the target object. The critic reads
 these alongside the frames, and they are the headline number for goal tasks.
 """
@@ -12,7 +12,8 @@ import jax
 import numpy as np
 
 from .go1 import Go1Env
-from .go1_spec import CTRL_DT, EPISODE_STEPS
+from .base import ROLLOUT_STEPS
+from .go1_spec import CTRL_DT
 
 
 def target_metrics(
@@ -20,7 +21,7 @@ def target_metrics(
     make_policy: Callable[..., Any],
     params: Any,
     num_envs: int = 32,
-    steps: int = EPISODE_STEPS,
+    steps: int = ROLLOUT_STEPS,
     seed: int = 1,
 ) -> dict[str, float]:
     """Metrics about the scene's target object, or {} if the scene has none.
@@ -35,7 +36,7 @@ def target_metrics(
     target = env.scene.target_object
     if target is None:
         return {}
-    policy = make_policy(params, deterministic=True)
+    policy = make_policy(params, deterministic=False)
 
     def dist(data):
         return env.scene_features(data)["target_dist"]

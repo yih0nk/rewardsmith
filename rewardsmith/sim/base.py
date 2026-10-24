@@ -5,6 +5,9 @@ from typing import Any, Callable, Protocol
 from .scene import SceneSpec
 
 
+ROLLOUT_STEPS = 500  # 10 seconds at the Go1 control rate; shared by video and evaluations.
+
+
 @dataclass
 class RunResult:
     metrics: dict[str, Any]

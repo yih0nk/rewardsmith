@@ -20,6 +20,7 @@ import mujoco
 import numpy as np
 from PIL import Image
 
+from .base import ROLLOUT_STEPS
 from .go1 import Go1Env
 from .train import TrainResult
 
@@ -54,7 +55,7 @@ def rollout_and_render(
     env: Go1Env,
     result: TrainResult,
     out_dir: Path,
-    steps: int = 500,
+    steps: int = ROLLOUT_STEPS,
     n_frames: int = 10,
     height: int = 720,
     width: int = 1280,

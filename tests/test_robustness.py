@@ -47,6 +47,7 @@ def env():
 
 def _zero_policy(env):
     def make_inference_fn(params, deterministic=True):
+        assert deterministic is False
         return lambda obs, key: (jnp.zeros(env.action_size), {})
 
     return TrainResult(make_inference_fn=make_inference_fn, params=None)
@@ -80,3 +81,28 @@ def test_simulator_scores_robustness_unless_turned_off(monkeypatch):
     assert PlaygroundSimulator(preset="smoke").robustness is True
     monkeypatch.setenv("REWARDSMITH_ROBUSTNESS", "0")
     assert PlaygroundSimulator(preset="smoke").robustness is False
+
+
+def test_auxiliary_evaluation_uses_fresh_seeded_actions(env):
+    import jax
+    import numpy as np
+
+    keys = []
+    def make(params, deterministic):
+        assert deterministic is False
+        def policy(obs, key):
+            jax.debug.callback(lambda k: keys.append(np.array(k)), key)
+            return jnp.zeros(env.action_size), {}
+        return policy
+
+    result = TrainResult(make_inference_fn=make, params=None)
+    run = jax.jit(robustness._rollout_fn(env, result, steps=4))
+    first = run(env.mjx_model, jax.random.PRNGKey(9), jnp.zeros(2))
+    jax.block_until_ready(first)
+    assert len(keys) == 4
+    assert len({k.tobytes() for k in keys}) == 4
+    keys.clear()
+    second = run(env.mjx_model, jax.random.PRNGKey(9), jnp.zeros(2))
+    jax.block_until_ready(second)
+    for name in first:
+        np.testing.assert_allclose(first[name], second[name])
