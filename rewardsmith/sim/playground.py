@@ -25,9 +25,10 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
-from . import gate, go1, go1_spec, parallel, render, robustness, train  # noqa: E402
+from . import gate, go1, go1_spec, parallel, render, robustness, scene_eval, train  # noqa: E402
 from .base import Cull, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
+from .scene import EMPTY, SceneSpec  # noqa: E402
 
 
 class PlaygroundSimulator:
@@ -56,27 +57,30 @@ class PlaygroundSimulator:
         # GPU work during the capture fails it (CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED).
         self._gate_lock = threading.Lock()
 
-    def describe(self) -> str:
-        return go1_spec.describe()
+    def describe(self, scene: SceneSpec | None = None) -> str:
+        return go1_spec.describe(scene or EMPTY)
 
-    def gate(self, source: str) -> str | None:
+    def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
         with self._gate_lock:
-            return gate.check_reward(source, impl=self.impl)
+            return gate.check_reward(source, impl=self.impl, scene=scene)
 
-    def run(self, source: str, out_dir: Path) -> RunResult:
+    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None) -> RunResult:
         progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
         progress.stage("compiling")
-        env = go1.make_env(source, impl=self.impl, behavior_metrics=self.behavior_metrics)
+        env = go1.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics)
         # Pushes are a training condition only: the video and metrics come from a push-free env.
         # The training env keeps the behavior metrics too: halving ranks on the training curve.
         train_env = (
-            go1.make_env(source, impl=self.impl, overrides=go1.PUSH_OVERRIDES, behavior_metrics=self.behavior_metrics)
+            go1.make_env(
+                source, impl=self.impl, overrides=go1.PUSH_OVERRIDES, scene=scene, behavior_metrics=self.behavior_metrics
+            )
             if self.push
             else env
         )
         result = train.train(train_env, self.preset, on_progress=progress.point, randomize=self.randomize)
         progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
+        rollout.update(scene_eval.target_metrics(env, result.make_inference_fn, result.params))
         robust = robustness.evaluate(env, result, rollout, out_dir) if self.robustness else {}
         (out_dir / "reward.py").write_text(source)
 
@@ -99,14 +103,16 @@ class PlaygroundSimulator:
         if self._pool is None:
             self._pool = parallel.WarmPool(n)
 
-    def run_many(self, jobs: list[tuple[str, Path]], cull: Cull | None = None) -> list[RunResult | Stopped | str]:
+    def run_many(
+        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+    ) -> list[RunResult | Stopped | str]:
         pool, self._pool = self._pool, None
         # Halving compares candidates at the same eval, so they all train at once.
         max_parallel = max(self.max_parallel, len(jobs)) if cull else self.max_parallel
         try:
             return parallel.run_in_processes(
-                jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, pool=pool, cull=cull,
-                behavior_metrics=cull is not None,  # the cull ranks candidates by them
+                jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, scene=scene, pool=pool,
+                cull=cull, behavior_metrics=cull is not None,  # the cull ranks candidates by them
             )
         finally:
             if pool:

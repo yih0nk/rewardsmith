@@ -17,6 +17,7 @@ from pathlib import Path
 from .base import Cull, RunResult, Stopped
 from .progress import point_metrics, read_progress
 from .run_one import FRAMES_DIR, RESULT_FILE
+from .scene import SceneSpec
 
 GPU_MEMORY_SHARE = 0.9  # split across processes; the rest stays free for the driver
 
@@ -64,14 +65,15 @@ def run_in_processes(
     max_parallel: int = 4,
     fake: bool = False,
     timeout_s: float = 3600,
+    scene: SceneSpec | None = None,
     pool: WarmPool | None = None,
     cull: Cull | None = None,
     behavior_metrics: bool = False,
 ) -> list[RunResult | Stopped | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs.
 
-    Jobs go to pool's warm processes first, then to newly started ones. cull, if
-    given, is asked every poll which running jobs to stop early.
+    Every job trains in scene. Jobs go to pool's warm processes first, then to newly
+    started ones. cull, if given, is asked every poll which running jobs to stop early.
     """
     if not jobs:
         return []
@@ -87,9 +89,9 @@ def run_in_processes(
             i, (source, out_dir) = pending.pop(0)
             warm = pool.take() if pool else None
             if warm:
-                proc = _hand_over(warm, source, out_dir, preset, impl, behavior_metrics)
+                proc = _hand_over(warm, source, out_dir, preset, impl, behavior_metrics, scene)
             else:
-                proc = _start(source, out_dir, preset, impl, fake, env, behavior_metrics)
+                proc = _start(source, out_dir, preset, impl, fake, env, behavior_metrics, scene)
             running[i] = (proc, out_dir, time.monotonic())
         time.sleep(0.5)
         for i, (proc, out_dir, started) in list(running.items()):
@@ -121,23 +123,28 @@ def _child_env(slots: int) -> dict[str, str]:
     }
 
 
-def _prepare(source: str, out_dir: Path) -> Path:
+def _prepare(source: str, out_dir: Path, scene: SceneSpec | None = None) -> tuple[Path, Path | None]:
+    """Write the job's reward.py, and scene.json unless the scene is the plain floor."""
     out_dir.mkdir(parents=True, exist_ok=True)
     reward_file = out_dir / "reward.py"
     reward_file.write_text(source)
     (out_dir / RESULT_FILE).unlink(missing_ok=True)
-    return reward_file
+    scene_file = None
+    if scene is not None and not scene.is_empty:
+        scene_file = out_dir / "scene.json"
+        scene_file.write_text(scene.to_json())
+    return reward_file, scene_file
 
 
 def _hand_over(
     warm: tuple[subprocess.Popen, Path], source: str, out_dir: Path, preset: str, impl: str | None,
-    behavior_metrics: bool = False,
+    behavior_metrics: bool = False, scene: SceneSpec | None = None,
 ) -> subprocess.Popen:
     proc, job = warm
-    reward_file = _prepare(source, out_dir)
+    reward_file, scene_file = _prepare(source, out_dir, scene)
     payload = {
         "reward": str(reward_file), "out_dir": str(out_dir), "preset": preset, "impl": impl,
-        "behavior_metrics": behavior_metrics,
+        "behavior_metrics": behavior_metrics, "scene": str(scene_file) if scene_file else None,
     }
     tmp = job.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload))
@@ -146,12 +153,15 @@ def _hand_over(
 
 
 def _start(
-    source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict, behavior_metrics: bool = False
+    source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict,
+    behavior_metrics: bool = False, scene: SceneSpec | None = None,
 ) -> subprocess.Popen:
-    reward_file = _prepare(source, out_dir)
+    reward_file, scene_file = _prepare(source, out_dir, scene)
     cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir), "--preset", preset]
     if impl:
         cmd += ["--impl", impl]
+    if scene_file:
+        cmd += ["--scene", str(scene_file)]
     if fake:
         cmd.append("--fake")
     if behavior_metrics:

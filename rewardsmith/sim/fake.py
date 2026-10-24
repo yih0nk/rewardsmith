@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from .base import Cull, RunResult, Stopped, run_sequentially
 from .go1_spec import describe
 from .progress import ProgressWriter
+from .scene import EMPTY, SceneSpec
 
 FAKE_TOTAL_STEPS = 10_000_000  # the "round" preset's num_timesteps
 FAKE_EVALS = 20
@@ -17,11 +18,11 @@ FAKE_EVAL_S = 9.0
 
 
 class FakeSimulator:
-    def describe(self) -> str:
+    def describe(self, scene: SceneSpec | None = None) -> str:
         # The real Go1 contract, so prompts written against the fake match the GPU run.
-        return describe()
+        return describe(scene or EMPTY)
 
-    def gate(self, source: str) -> str | None:
+    def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
         try:
             tree = ast.parse(source)
         except SyntaxError as exc:
@@ -30,7 +31,7 @@ class FakeSimulator:
             return "reward.py must define reward(state, action, prev_action)"
         return None
 
-    def run(self, source: str, out_dir: Path) -> RunResult:
+    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None) -> RunResult:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "reward.py").write_text(source)
         h = int(hashlib.sha256(source.encode()).hexdigest()[:8], 16)
@@ -49,12 +50,15 @@ class FakeSimulator:
                 "upright": 0.98,
                 "fell": 0.0,
                 **terms,
+                **_fake_target_metrics(scene, quality),
             },
             reward_curve=curve,
         )
 
-    def run_many(self, jobs: list[tuple[str, Path]], cull: Cull | None = None) -> list[RunResult | Stopped | str]:
-        results: list[RunResult | Stopped | str] = list(run_sequentially(self, jobs))
+    def run_many(
+        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+    ) -> list[RunResult | Stopped | str]:
+        results: list[RunResult | Stopped | str] = list(run_sequentially(self, jobs, scene))
         if cull is None:
             return results
         # Every fake run is already "done", with its whole curve on disk; let the cull
@@ -89,6 +93,23 @@ def _write_fake_progress(out_dir: Path, curve: list[float], terms: dict[str, flo
     wall[0] += 6.0  # rollout and video
     progress.stage("rendering")
     progress.stage("done")
+
+
+def _fake_target_metrics(scene: SceneSpec | None, quality: float) -> dict[str, float]:
+    """The target_* metrics scene_eval reports, scaled so better fake runs get closer."""
+    target = scene.target_object if scene else None
+    if target is None:
+        return {}
+    start = sum(target.distance) / 2
+    final = round(start * (1 - quality / 10), 2)
+    return {
+        "target_reached": round(quality / 10, 2),
+        "target_start_dist": round(start, 2),
+        "target_min_dist": final,
+        "target_final_dist": final,
+        "target_time_to_reach": round(20 - quality, 1),
+        "target_fell": 0.0,
+    }
 
 
 def _fake_terms(source: str) -> dict[str, float]:

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS requests (
     status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | failed
     best_score  REAL,
     created_at  REAL NOT NULL,
+    scene        TEXT,     -- JSON scene spec; NULL until the scene writer has run
     success_spec TEXT,     -- JSON: the pass/fail check, written once before training (agents/checker.py)
     succeeded    INTEGER   -- 1 if the best candidate passed both the critic and the check
 );
@@ -73,10 +74,10 @@ def connect(path: Path) -> sqlite3.Connection:
 # Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
 # existing table alone, so a db file from an older version gets them here.
 ADDED_COLUMNS = {
-    "requests": {"success_spec": "TEXT", "succeeded": "INTEGER"},
+    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER"},
     "candidates": {"flagged_at": "REAL", "flag_note": "TEXT", "check_result": "TEXT"},
 }
-JSON_COLUMNS = ("success_spec", "check_result")  # metrics is decoded in _row
+JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -124,11 +125,12 @@ def _decode(out: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def create_request(conn: sqlite3.Connection, text: str) -> str:
+def create_request(conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None) -> str:
+    """scene: a validated scene spec to use as is; None lets the scene writer decide."""
     rid = uuid.uuid4().hex[:8]
     conn.execute(
-        "INSERT INTO requests (id, text, created_at) VALUES (?, ?, ?)",
-        (rid, text, time.time()),
+        "INSERT INTO requests (id, text, created_at, scene) VALUES (?, ?, ?, ?)",
+        (rid, text, time.time(), json.dumps(scene) if scene is not None else None),
     )
     return rid
 
@@ -172,6 +174,8 @@ def claim_next_request(conn: sqlite3.Connection) -> dict[str, Any] | None:
 
 
 def set_request(conn: sqlite3.Connection, rid: str, **fields: Any) -> None:
+    if fields.get("scene") is not None:
+        fields["scene"] = json.dumps(fields["scene"])
     _update(conn, "requests", "id", rid, fields)
 
 

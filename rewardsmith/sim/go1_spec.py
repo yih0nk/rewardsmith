@@ -1,10 +1,13 @@
 """What a generated Go1 reward can read. No heavy imports, so fakes and prompts can use it.
 
 The FEATURES list is the contract with the reward writer: go1.Go1Env.features()
-must return exactly these keys and shapes (a test checks it).
+must return exactly these keys and shapes (a test checks it). A scene with
+objects adds per-object features on top: features_for(scene) lists them all.
 """
 
 from dataclasses import dataclass
+
+from .scene import EMPTY, SceneObject, SceneSpec
 
 CTRL_DT = 0.02  # seconds per policy step
 EPISODE_STEPS = 1000  # 20 s
@@ -31,22 +34,78 @@ FEATURES: tuple[Feature, ...] = (
     Feature("feet_air_time", (4,), "seconds each foot has been off the floor, same order"),
     Feature("feet_height", (4,), "height of each foot above the floor, m, same order"),
     Feature("torques", (12,), "actuator torques, N·m, joint order"),
+    Feature("base_pos", (3,), "base position in the world, m: [x, y, z]; each episode starts within 0.5 m of [0, 0]"),
+    Feature("base_yaw", (), "the robot's heading in the world, rad, in [-pi, pi]; random at the start of each episode"),
+    Feature("time", (), "seconds since the episode started"),
+)
+
+# Per-object features: state[f"{name}_{suffix}"], and state[f"target_{suffix}"] for the target object.
+OBJECT_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
+    ("rel_pos", (3,), "object centre relative to the robot base, m, in the robot's heading frame: "
+                      "[forward, left, up]; turning with the robot, ignoring its pitch and roll"),
+    ("dist", (), "horizontal distance from the robot base to the object centre, m"),
+    ("heading_err", (), "angle from the robot's forward direction to the object, rad, in [-pi, pi]; "
+                        "0 = straight ahead, positive = to the left"),
+    ("pos", (3,), "object centre in the world, m: [x, y, z]"),
+)
+MOVABLE_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
+    ("vel", (3,), "object velocity in the world, m/s: [x, y, z]"),
 )
 
 
-def describe() -> str:
+def object_features(obj: SceneObject, alias: str | None = None) -> tuple[Feature, ...]:
+    """Features for one object, named after it (or after alias, e.g. "target")."""
+    rows = OBJECT_FEATURES + (MOVABLE_FEATURES if obj.movable else ())
+    who = alias or obj.name
+    return tuple(Feature(f"{who}_{suffix}", shape, meaning) for suffix, shape, meaning in rows)
+
+
+def scene_features(scene: SceneSpec) -> tuple[Feature, ...]:
+    out: list[Feature] = []
+    for obj in scene.objects:
+        out += object_features(obj)
+    if scene.target_object is not None:
+        out += object_features(scene.target_object, alias="target")
+    return tuple(out)
+
+
+def features_for(scene: SceneSpec = EMPTY) -> tuple[Feature, ...]:
+    return FEATURES + scene_features(scene)
+
+
+def describe(scene: SceneSpec = EMPTY) -> str:
+    floor = "rough, bumpy ground" if scene.terrain == "rough" else "flat floor"
     lines = [
-        "Robot: Unitree Go1 quadruped in MuJoCo Playground (JAX/MJX), flat floor.",
+        f"Robot: Unitree Go1 quadruped in MuJoCo Playground (JAX/MJX), {floor}.",
         f"One policy step is {CTRL_DT} s; an episode is {EPISODE_STEPS} steps ({EPISODE_STEPS * CTRL_DT:.0f} s).",
-        "",
-        "reward(state, action, prev_action) gets:",
     ]
+    if not scene.is_empty:
+        lines += ["", "Scene:", scene.summary()]
+    lines += ["", "reward(state, action, prev_action) gets:"]
     for f in FEATURES:
         shape = "scalar" if not f.shape else f"shape {f.shape}"
         lines.append(f"- state[\"{f.name}\"] ({shape}): {f.meaning}")
-    lines += [
+    lines.append(
         "- action, prev_action (shape (12,)): the policy's joint offsets in [-1, 1]; the motor target is "
-        "the standing pose + 0.5 rad * action, joint order as above",
+        "the standing pose + 0.5 rad * action, joint order as above"
+    )
+    if scene.terrain == "rough":
+        lines.append("- On rough ground, base_height and feet_height are world z, so they vary with the bumps (up to 5 cm).")
+    if scene.objects:
+        lines += ["", "Per object, for each object name above (e.g. state[\"ball_dist\"]):"]
+        for suffix, shape, meaning in OBJECT_FEATURES + MOVABLE_FEATURES:
+            only = " (movable objects only)" if (suffix, shape, meaning) in MOVABLE_FEATURES else ""
+            lines.append(f"- state[\"<name>_{suffix}\"] ({'scalar' if not shape else f'shape {shape}'}){only}: {meaning}")
+        target = scene.target_object
+        if target is not None:
+            lines.append(f"- the same keys with \"target_\" instead of \"<name>_\" (e.g. state[\"target_dist\"]) "
+                         f"refer to the target object, {target.name}")
+        lines.append(f"Objects present: {', '.join(o.name for o in scene.objects)}. "
+                     "Use only these names; any other key raises a KeyError.")
+        if target is not None:
+            lines.append(f"The base is within reach of {target.name} when {target.name}_dist < "
+                         f"{target.reach_radius:.2f} m.")
+    lines += [
         "",
         "How the reward is used:",
         "- Return a dict of named scalar terms. Each step the terms are summed, multiplied by "
@@ -56,4 +115,13 @@ def describe() -> str:
         "- The robot starts standing, with a random heading and small random velocities.",
         "- There is no velocity command. Reward the behavior directly.",
     ]
+    if scene.objects:
+        lines += [
+            "- Objects are placed fresh each episode (ranges above), and the policy observes each object's "
+            "relative position, so reward the skill (e.g. distance or heading to the object), not a fixed spot.",
+            "- The feet and the body (trunk) collide with solid objects; the thighs and calves pass through them.",
+            "- The foot_contact feature counts touching an object as contact.",
+        ]
+        if any(o.kind == "zone" for o in scene.objects):
+            lines.append("- Zones are painted on the floor; nothing collides with them.")
     return "\n".join(lines)

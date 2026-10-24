@@ -31,7 +31,7 @@ def test_gates_from_threads_take_turns(monkeypatch):
 
     inside, peak, lock = [0], [0], threading.Lock()
 
-    def slow_check(source, impl=None):
+    def slow_check(source, impl=None, scene=None):
         with lock:
             inside[0] += 1
             peak[0] = max(peak[0], inside[0])

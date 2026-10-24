@@ -108,7 +108,7 @@ def test_candidates_are_marked_training_before_results_come_back(tmp_path):
     seen: list[set[str]] = []
 
     class WatchingSimulator(FakeSimulator):
-        def run_many(self, jobs):
+        def run_many(self, jobs, scene=None):
             cands = db.get_request(conn, rid)["rounds"][-1]["candidates"]
             seen.append({c["status"] for c in cands})
             return super().run_many(jobs)
@@ -148,9 +148,9 @@ def test_gates_and_critic_calls_run_concurrently(tmp_path):
     gates, reviews = _Barrier(), _Barrier()
 
     class SlowGateSimulator(FakeSimulator):
-        def gate(self, source):
+        def gate(self, source, scene=None):
             with gates:
-                return super().gate(source)
+                return super().gate(source, scene)
 
     class SlowCritic(FakeCritic):
         def review(self, request, result):

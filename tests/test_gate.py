@@ -66,3 +66,13 @@ def test_shape_bug_is_readable():
 def test_describe_exception_keeps_messages_short():
     exc = ValueError("x" * 5000)
     assert len(gate._clip(gate.describe_exception(exc, ""))) <= gate.MAX_MESSAGE
+
+
+def test_scene_reward_passes_with_its_scene():
+    from rewardsmith.sim import scene
+
+    root = Path(__file__).parent.parent / "examples"
+    spec = scene.parse((root / "scenes" / "red_ball.json").read_text())
+    source = (root / "rewards" / "walk_to_ball.py").read_text()
+    assert gate.check_reward(source, scene=spec, **SMALL) is None
+    assert "target_dist" in gate.check_reward(source, **SMALL)  # without the scene there is no target

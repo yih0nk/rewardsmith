@@ -1,5 +1,8 @@
 """The worker: claims a request and runs write -> gate -> train -> critique rounds.
 
+Before round 1: the scene writer turns the request into a scene spec (objects,
+terrain), unless the request came with one. The spec shapes the env notes, so
+every reward is written against that scene's features.
 Round 1: the writer drafts K rewards from the request.
 Round 2+: the editor revises the best reward so far, using the critic's notes.
 """
@@ -15,13 +18,16 @@ from typing import Any
 
 from . import config, db
 from .agents import checker as check_spec
-from .agents.base import Checker, Critic, Editor, Ranker, Writer
+from .agents.base import Checker, Critic, Editor, Ranker, Scener, Writer
 from .search import Halving
+from .sim import scene as scene_spec
 from .sim.base import Simulator, Stopped
+from .sim.scene import SceneError, SceneSpec
 
 log = logging.getLogger("rewardsmith.worker")
 
 GATE_RETRIES = 2
+SCENE_RETRIES = 2
 
 
 @dataclass
@@ -49,13 +55,17 @@ def run_request(
     *,
     ranker: Ranker | None = None,
     checker: Checker | None = None,
+    scener: Scener | None = None,
 ) -> Best | None:
     rid, text = req["id"], req["text"]
     halving = settings.halving if ranker is not None else ()
     k = halving[0] if halving else settings.candidates_per_round
     best: Best | None = None
     ranked: list[Best] = []  # every scored candidate so far, best first
-    env_doc = sim.describe()
+    scene = _make_scene(conn, req, scener)
+    env_doc = sim.describe(scene)
+    # The critic sees the frames; naming the objects helps it judge them.
+    critic_request = text if not scene.objects else f"{text}\n\nScene: {scene.summary()}"
     spec = _success_spec(conn, req, checker)
 
     for n in range(1, settings.max_rounds + 1):
@@ -79,7 +89,7 @@ def run_request(
         lock = threading.Lock()  # the threads share conn
         with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
             gated = list(pool.map(
-                lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim),
+                lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim, scene),
                 range(len(drafts)),
             ))
         ready: list[tuple[int, str, Path]] = [
@@ -100,9 +110,9 @@ def run_request(
                 on_event=lambda msg: db.log_event(conn, rid, "halving", msg),
                 labels=[out_dir.name for _, out_dir in jobs],
             )
-            results = sim.run_many(jobs, cull=cull)
+            results = sim.run_many(jobs, scene, cull=cull)
         else:
-            results = sim.run_many(jobs) if jobs else []
+            results = sim.run_many(jobs, scene) if jobs else []
 
         trained = []
         for (cid, src, _), result in zip(ready, results):
@@ -119,7 +129,7 @@ def run_request(
 
         # One Claude call per video, all at once; each takes tens of seconds.
         with ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
-            reviews = list(pool.map(lambda t: _review(critic, text, t[2], t[3]), trained))
+            reviews = list(pool.map(lambda t: _review(critic, critic_request, t[2], t[3]), trained))
 
         round_best: Best | None = None
         for (cid, src, result, check), review in zip(trained, reviews):
@@ -142,6 +152,37 @@ def run_request(
 
     db.set_request(conn, rid, succeeded=int(best is not None and _succeeded(best, settings)))
     return best
+
+
+def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | None) -> SceneSpec:
+    """The request's scene: the one it came with, else the scene writer's, else the plain floor.
+
+    Rejected specs go back to the scene writer with the validator's errors, like
+    the reward gate. Every attempt is logged as a "scene" event.
+    """
+    rid, text = req["id"], req["text"]
+    if req.get("scene") is not None:
+        scene = scene_spec.parse(req["scene"])
+        db.log_event(conn, rid, "scene", f"Using the scene the request came with. {scene.summary()}")
+        return scene
+    if scener is None:
+        return scene_spec.EMPTY
+
+    spec = scener.make(text)
+    for attempt in range(SCENE_RETRIES + 1):
+        try:
+            scene = scene_spec.parse(spec)
+            break
+        except SceneError as exc:
+            db.log_event(conn, rid, "scene", f"Scene attempt {attempt + 1} rejected: {exc}")
+            if attempt == SCENE_RETRIES:
+                db.log_event(conn, rid, "scene", "Falling back to the plain flat floor")
+                scene = scene_spec.EMPTY
+                break
+            spec = scener.fix(text, spec, str(exc))
+    db.set_request(conn, rid, scene=scene.to_dict())
+    db.log_event(conn, rid, "scene", scene.summary())
+    return scene
 
 
 def _review(critic: Critic, text: str, result: Any, check: dict[str, Any] | None):
@@ -195,6 +236,7 @@ def _pass_gate(
     writer: Writer,
     env_doc: str,
     sim: Simulator,
+    scene: SceneSpec | None = None,
 ) -> str | None:
     """Return a source that compiles, asking the writer to fix errors, or None.
 
@@ -202,7 +244,7 @@ def _pass_gate(
     got wrong and how it fixed it, even when the retry passes.
     """
     for attempt in range(GATE_RETRIES + 1):
-        error = sim.gate(src)
+        error = sim.gate(src, scene)
         if error is not None:
             with lock:
                 db.log_event(conn, rid, "gate", f"Candidate {idx}, attempt {attempt + 1} failed: {error}")
@@ -226,6 +268,18 @@ def _relative(path: Path | None, root: Path) -> str | None:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
+
+
+def build_scener(settings: config.Settings) -> Scener:
+    if settings.fake_llm:
+        from .agents.fake import FakeScener
+
+        return FakeScener()
+    import anthropic
+
+    from .agents.scener import ClaudeScener
+
+    return ClaudeScener(anthropic.Anthropic(), settings.model)
 
 
 def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]:
@@ -293,6 +347,7 @@ def main() -> None:
     writer, editor, critic, sim = build(settings)
     ranker = build_ranker(settings)
     checker = build_checker(settings)
+    scener = build_scener(settings)
     log.info("worker up (fake_sim=%s, fake_llm=%s)", settings.fake_sim, settings.fake_llm)
 
     while True:
@@ -302,7 +357,9 @@ def main() -> None:
             continue
         log.info("running %s: %s", req["id"], req["text"])
         try:
-            best = run_request(conn, settings, req, writer, editor, critic, sim, ranker=ranker, checker=checker)
+            best = run_request(
+                conn, settings, req, writer, editor, critic, sim, ranker=ranker, checker=checker, scener=scener
+            )
             db.set_request(conn, req["id"], status="done")
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")
         except Exception as exc:

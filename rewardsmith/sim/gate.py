@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from . import go1
+from .scene import SceneSpec
 
 MAX_MESSAGE = 1500
 REWARD_FILE = "reward.py"  # filename reward_slot.load_reward compiles the module under
@@ -44,14 +45,30 @@ class GateReport:
     run_s: float  # executing the compiled rollout
 
 
-def check_reward(source: str, *, impl: str | None = None, num_envs: int = 4, steps: int = 50, seed: int = 0) -> str | None:
+def check_reward(
+    source: str,
+    *,
+    impl: str | None = None,
+    num_envs: int = 4,
+    steps: int = 50,
+    seed: int = 0,
+    scene: SceneSpec | None = None,
+) -> str | None:
     """Return None if the reward survives a short jitted rollout, else a message for the writer."""
-    return run_gate(source, impl=impl, num_envs=num_envs, steps=steps, seed=seed).error
+    return run_gate(source, impl=impl, num_envs=num_envs, steps=steps, seed=seed, scene=scene).error
 
 
-def run_gate(source: str, *, impl: str | None = None, num_envs: int = 4, steps: int = 50, seed: int = 0) -> GateReport:
+def run_gate(
+    source: str,
+    *,
+    impl: str | None = None,
+    num_envs: int = 4,
+    steps: int = 50,
+    seed: int = 0,
+    scene: SceneSpec | None = None,
+) -> GateReport:
     try:
-        env = go1.make_env(source, impl=impl)
+        env = go1.make_env(source, impl=impl, scene=scene)
     except go1.RewardError as exc:
         where = _reward_lines(exc, source)  # make_env chains the original error; point at its line
         return GateReport(_clip(f"{exc}\n{where}" if where else str(exc)), 0.0, 0.0)
