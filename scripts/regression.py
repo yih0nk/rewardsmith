@@ -4,11 +4,15 @@
     python scripts/regression.py --compare   # measure and compare against it; exit 1 on FAIL
 
 Each case trains one hand-written reward from examples/rewards/ through the same
-path the worker uses (PlaygroundSimulator.run_many), one case at a time so the
-timings don't contend. Training and the rollout both use seed 0, the production
-default. A case FAILs if its behavior check fails, or if its final
-episode_reward is more than 5% below the baseline. Timings are reported, never
-failed: they are for speed branches to quote.
+path the worker uses (PlaygroundSimulator.run_many). Training and the rollout both
+use seed 0, the production default, but warp is not bit-deterministic and one run
+of the same code can land 10% low or collapse outright. So each case trains
+--repeats times (3 by default, side by side) and is judged on the median
+episode_reward and on its behavior check passing in a majority of the runs.
+
+A case FAILs if its behavior check fails, or if its median episode_reward is more
+than 5% below the baseline's. Timings are medians too (with the repeats contending
+for the GPU, as candidates in a round do); they are reported, never failed.
 
 Run it on the GPU pod under the shared lock (see the README).
 """
@@ -17,6 +21,7 @@ import argparse
 import json
 import operator
 import os
+import statistics
 import subprocess
 import sys
 import time
@@ -60,13 +65,39 @@ def check(metrics: dict[str, Any], checks: tuple[tuple[str, str, float], ...]) -
     return out
 
 
-def run_case(sim, case: Case, out_root: Path) -> dict[str, Any]:
-    out_dir = out_root / case.name
+def run_case(sim, case: Case, out_root: Path, repeats: int = 3) -> dict[str, Any]:
+    """Train the case `repeats` times at once and summarize: medians, and majority votes."""
+    source = (ROOT / case.reward).read_text()
     start = time.perf_counter()
-    [result] = sim.run_many([((ROOT / case.reward).read_text(), out_dir)])
+    results = sim.run_many([(source, out_root / case.name / f"run{i}") for i in range(repeats)])
     wall_s = round(time.perf_counter() - start, 1)
+    runs = [_one_run(r, case) for r in results]
+    good = [r for r in runs if "error" not in r]
+    if not good:
+        return {"error": runs[0]["error"], "wall_s": wall_s, "behavior_pass": False, "runs": runs}
+    majority = len(runs) // 2 + 1  # a crashed run counts as a failed one
+    checks = []
+    for i, (metric, op, value) in enumerate(case.checks):
+        passed = sum(r["checks"][i]["pass"] for r in good)
+        checks.append({"metric": metric, "op": op, "value": value, "actual": _median(r["checks"][i]["actual"] for r in good),
+                       "passed": f"{passed}/{len(runs)}", "pass": passed >= majority})
+    passed = sum(r["behavior_pass"] for r in good)
+    return {
+        "episode_reward": _median(r["episode_reward"] for r in good),
+        "behavior_pass": passed >= majority,
+        "behavior_passed": f"{passed}/{len(runs)}",
+        "checks": checks,
+        "compile_s": _median(r["compile_s"] for r in good),
+        "train_s": _median(r["train_s"] for r in good),
+        "wall_s": wall_s,
+        "metrics": {k: _median(r["metrics"].get(k) for r in good) for k in KEPT_METRICS},
+        "runs": runs,
+    }
+
+
+def _one_run(result, case: Case) -> dict[str, Any]:
     if isinstance(result, str):
-        return {"error": result[-2000:], "wall_s": wall_s, "behavior_pass": False}
+        return {"error": result[-2000:]}
     m = result.metrics
     clauses = check(m, case.checks)
     return {
@@ -75,9 +106,13 @@ def run_case(sim, case: Case, out_root: Path) -> dict[str, Any]:
         "checks": clauses,
         "compile_s": m.get("compile_s"),
         "train_s": m.get("train_s"),
-        "wall_s": wall_s,
         "metrics": {k: m[k] for k in KEPT_METRICS if k in m},
     }
+
+
+def _median(values) -> float | None:
+    nums = [v for v in values if isinstance(v, (int, float))]
+    return round(statistics.median(nums), 3) if nums else None
 
 
 def compare(run: dict[str, Any], baseline: dict[str, Any]) -> list[dict[str, Any]]:
@@ -91,8 +126,11 @@ def compare(run: dict[str, Any], baseline: dict[str, Any]) -> list[dict[str, Any
         elif "error" in cur:
             reasons.append(f"error: {cur['error'].splitlines()[-1] if cur['error'] else '?'}")
         else:
-            reasons += [f"check {c['metric']} {c['op']} {c['value']} failed (got {c['actual']})"
-                        for c in cur["checks"] if not c["pass"]]
+            failed = [f"check {c['metric']} {c['op']} {c['value']} failed (median {c['actual']}, "
+                      f"passed {c.get('passed', '0/1')})" for c in cur["checks"] if not c["pass"]]
+            if not failed and cur.get("behavior_pass") is False:  # each clause held in most runs, but not together
+                failed = [f"behavior check passed in only {cur.get('behavior_passed')} runs"]
+            reasons += failed
             floor = base["episode_reward"] - REWARD_DROP * abs(base["episode_reward"])
             if cur["episode_reward"] is None or cur["episode_reward"] < floor:
                 reasons.append(f"episode_reward {cur['episode_reward']} < {floor:.3f} (baseline - 5%)")
@@ -111,18 +149,22 @@ def format_rows(rows: list[dict[str, Any]]) -> str:
     lines = []
     for r in rows:
         cur, base = r["current"], r["baseline"]
+        rewards = [x["episode_reward"] for x in cur.get("runs", []) if x.get("episode_reward") is not None]
+        spread = f" [runs {', '.join(f'{x:.1f}' for x in rewards)}]" if len(rewards) > 1 else ""
         lines.append(f"{r['status']}  {r['case']:<16} " + "  ".join(
-            delta(cur, base, k) for k in ("episode_reward", "compile_s", "train_s", "wall_s")))
+            delta(cur, base, k) for k in ("episode_reward", "compile_s", "train_s", "wall_s")) + spread)
         lines += [f"      - {why}" for why in r["reasons"]]
     return "\n".join(lines)
 
 
-def run_suite(sim, cases: tuple[Case, ...], out_root: Path, preset: str, impl: str | None) -> dict[str, Any]:
+def run_suite(
+    sim, cases: tuple[Case, ...], out_root: Path, preset: str, impl: str | None, repeats: int = 3
+) -> dict[str, Any]:
     start = time.perf_counter()
     results = {}
     for case in cases:
-        print(f"training {case.name} ({case.reward}) ...", flush=True)
-        results[case.name] = run_case(sim, case, out_root)
+        print(f"training {case.name} ({case.reward}) x{repeats} ...", flush=True)
+        results[case.name] = run_case(sim, case, out_root, repeats)
         print(f"  {json.dumps(results[case.name])}", flush=True)
     return {
         "preset": preset,
@@ -132,6 +174,7 @@ def run_suite(sim, cases: tuple[Case, ...], out_root: Path, preset: str, impl: s
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "total_wall_s": round(time.perf_counter() - start, 1),
         "reward_drop_limit": REWARD_DROP,
+        "repeats": repeats,
         "cases": results,
     }
 
@@ -164,6 +207,7 @@ def main(argv: list[str] | None = None, sim=None) -> int:
     ap.add_argument("--preset", help="training preset (default: round to record, the baseline's to compare)")
     ap.add_argument("--impl", help="jax or warp (default: warp on a CUDA GPU)")
     ap.add_argument("--only", nargs="+", metavar="CASE", help="run only these cases")
+    ap.add_argument("--repeats", type=int, help="training runs per case (default: 3, or the baseline's)")
     ap.add_argument("--baseline", type=Path, default=BASELINE)
     ap.add_argument("--out", type=Path, default=ROOT / ".rewardsmith" / "regression",
                     help="where videos, logs and last_run.json go")
@@ -174,12 +218,14 @@ def main(argv: list[str] | None = None, sim=None) -> int:
     if baseline and preset != baseline["preset"]:
         ap.error(f"the baseline was recorded with --preset {baseline['preset']}; rewards from {preset} don't compare")
     cases = tuple(c for c in CASES if not args.only or c.name in args.only)
+    repeats = args.repeats or (baseline or {}).get("repeats") or 3
 
     if sim is None:
         from rewardsmith.sim.playground import PlaygroundSimulator
 
         sim = PlaygroundSimulator(preset=preset, impl=args.impl)
-    run = run_suite(sim, cases, args.out, preset, getattr(sim, "impl", args.impl))
+        sim.max_parallel = max(sim.max_parallel, repeats)
+    run = run_suite(sim, cases, args.out, preset, getattr(sim, "impl", args.impl), repeats)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "last_run.json").write_text(json.dumps(run, indent=2))
 
