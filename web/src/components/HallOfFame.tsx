@@ -36,16 +36,16 @@ export default function HallOfFame({
 
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">HALL OF FAME</div>
-          <h1>Reward hacking, caught on camera.</h1>
-          <p>
-            Candidates that earned their score by gaming the reward instead of
-            doing the behavior.
-          </p>
-        </div>
-      </div>
+      <section className="masthead">
+        <div className="eyebrow">Hall of fame</div>
+        <h1>
+          Reward hacking, <em>caught on camera.</em>
+        </h1>
+        <p>
+          Candidates that earned their score by gaming the reward instead of
+          doing the behavior.
+        </p>
+      </section>
       {error && (
         <div className="error" role="alert">
           {error} Retrying automatically.
@@ -53,12 +53,21 @@ export default function HallOfFame({
       )}
       {entries === null ? (
         !error && (
-          <div className="loading" role="status">
-            Loading the hall of fame…
+          <div className="loading hall-loading" role="status">
+            <span className="label">Loading the hall of fame…</span>
+            <i />
+            <i />
           </div>
         )
       ) : entries.length === 0 ? (
         <section className="empty-state">
+          <svg viewBox="0 0 240 64" aria-hidden="true">
+            <path
+              className="grid"
+              d="M0 16H240M0 32H240M0 48H240M40 0V64M80 0V64M120 0V64M160 0V64M200 0V64"
+            />
+            <path className="trace" d="M0 40H240" />
+          </svg>
           <h2>Nothing flagged yet.</h2>
           <p>
             When a robot games its reward, open that candidate and choose “Flag
@@ -88,30 +97,35 @@ export function HallCard({
 }) {
   return (
     <article className="hall-card">
-      {entry.video_path ? (
-        <video
-          src={artifactUrl(entry.video_path)}
-          controls
-          muted
-          loop
-          playsInline
-          preload="metadata"
-        />
-      ) : (
-        <div className="video-empty">
-          <span>No rollout video</span>
+      <div className="hall-media">
+        <div className="well">
+          {entry.video_path ? (
+            <video
+              src={artifactUrl(entry.video_path)}
+              controls
+              muted
+              loop
+              playsInline
+              preload="metadata"
+            />
+          ) : (
+            <div className="well-empty">
+              <span className="label">No signal</span>
+              <strong>No rollout video</strong>
+            </div>
+          )}
         </div>
-      )}
+      </div>
       <div className="hall-body">
         <span className="eyebrow">
           ROUND {entry.round_n} · CANDIDATE {entry.idx + 1} ·{" "}
           {entry.score?.toFixed(1) ?? "—"} / 10
         </span>
         <h2>{entry.request_text}</h2>
-        <p className="hall-note">“{entry.flag_note}”</p>
+        <blockquote className="hall-note">{entry.flag_note}</blockquote>
         <RewardTerms metrics={entry.metrics} />
         <button className="link" onClick={() => onOpen(entry.request_id)}>
-          Open experiment ↗
+          Open experiment →
         </button>
       </div>
     </article>

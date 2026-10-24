@@ -1,0 +1,8 @@
+{
+  "terrain": "flat",
+  "objects": [
+    {"name": "ball", "kind": "ball", "color": "red", "size": [0.15],
+     "distance": [1.5, 3.0], "bearing": [-180, 180], "yaw": [0, 0], "movable": false, "mass": 0.5}
+  ],
+  "target": "ball"
+}

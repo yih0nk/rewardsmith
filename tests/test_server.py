@@ -77,6 +77,39 @@ def test_flag_and_list_hall_of_fame(tmp_path, monkeypatch):
     assert client.get("/api/hall-of-fame").json() == []
 
 
+def test_non_finite_metrics_are_saved_as_null(tmp_path, monkeypatch):
+    # A diverged run can report NaN or inf. json.dumps would store them as NaN/Infinity,
+    # which is not JSON; the column must stay valid JSON and the API must still answer.
+    client = _client(tmp_path, monkeypatch)
+    rid, cid = _scored_candidate(tmp_path)
+    conn = db.connect(tmp_path / "rewardsmith.db")
+    metrics = {"episode_reward": float("nan"), "term_spin": float("inf"), "yaw_rate": -float("inf"),
+               "fell": 0.0, "nested": {"curve": [1.0, float("nan")]}}
+    db.set_candidate(conn, cid, metrics=metrics)
+    db.flag_candidate(conn, cid, "diverged")
+
+    stored = conn.execute("SELECT metrics FROM candidates WHERE id = ?", (cid,)).fetchone()[0]
+    assert "NaN" not in stored and "Infinity" not in stored
+    want = {"episode_reward": None, "term_spin": None, "yaw_rate": None, "fell": 0.0, "nested": {"curve": [1.0, None]}}
+    detail = client.get(f"/api/requests/{rid}")
+    assert detail.status_code == 200
+    assert detail.json()["rounds"][0]["candidates"][0]["metrics"] == want
+    hall = client.get("/api/hall-of-fame")
+    assert hall.status_code == 200
+    assert hall.json()[0]["metrics"] == want
+
+
+def test_nan_saved_by_an_older_version_reads_as_null(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    rid, cid = _scored_candidate(tmp_path)
+    conn = db.connect(tmp_path / "rewardsmith.db")
+    conn.execute("UPDATE candidates SET metrics = ? WHERE id = ?", ('{"episode_reward": NaN, "fell": 0.0}', cid))
+
+    detail = client.get(f"/api/requests/{rid}")
+    assert detail.status_code == 200
+    assert detail.json()["rounds"][0]["candidates"][0]["metrics"] == {"episode_reward": None, "fell": 0.0}
+
+
 def test_flag_rejects_bad_input(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     _, cid = _scored_candidate(tmp_path)
@@ -163,3 +196,53 @@ def test_request_detail_attaches_live_progress(tmp_path, monkeypatch):
     assert (p["stage"], p["steps"], p["total_steps"], p["fraction"]) == ("training", 250, 1000, 0.25)
     assert p["curve"] == [{"steps": 250, "wall_s": 31.0, "episode_reward": 1.5, "terms": {"task": 1.2}}]
     assert by_id[waiting]["progress"] is None
+
+
+def test_request_with_a_scene(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    ball = {"name": "ball", "kind": "ball", "color": "red", "size": [0.15], "distance": [1.5, 3]}
+
+    rid = client.post("/api/requests", json={"text": "walk to the ball", "scene": {"objects": [ball]}}).json()["id"]
+    scene = client.get(f"/api/requests/{rid}").json()["scene"]
+    assert scene["target"] == "ball"
+    assert scene["objects"][0]["bearing"] == [0.0, 0.0]  # stored normalized
+
+    plain = client.post("/api/requests", json={"text": "walk backwards"}).json()["id"]
+    assert client.get(f"/api/requests/{plain}").json()["scene"] is None  # the scene writer decides
+
+    bad = client.post("/api/requests", json={"text": "walk to the ball", "scene": {"objects": [{**ball, "size": [9]}]}})
+    assert bad.status_code == 422
+    assert "radius must be between" in bad.json()["detail"]
+
+
+def test_old_db_gets_the_scene_column(tmp_path):
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE requests (id TEXT PRIMARY KEY, text TEXT NOT NULL, "
+                "status TEXT NOT NULL DEFAULT 'queued', best_score REAL, created_at REAL NOT NULL)")
+    old.commit()
+    old.close()
+    conn = db.connect(path)
+    rid = db.create_request(conn, "walk to the ball", {"terrain": "flat", "objects": [], "target": None})
+    assert db.get_request(conn, rid)["scene"]["terrain"] == "flat"
+
+
+def test_request_detail_reports_robustness(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    rid, cid = _scored_candidate(tmp_path)
+    [cand] = client.get(f"/api/requests/{rid}").json()["rounds"][0]["candidates"]
+    assert cand["robustness"] is None  # not scored for robustness
+
+    conn = db.connect(tmp_path / "rewardsmith.db")
+    metrics = {"robust_robots_pass": 8, "robust_robots_n": 10, "robust_pushes_pass": 3, "robust_pushes_n": 4}
+    db.set_candidate(conn, cid, metrics=metrics)
+    [cand] = client.get(f"/api/requests/{rid}").json()["rounds"][0]["candidates"]
+    assert cand["robustness"] == {"robots": {"passed": 8, "total": 10}, "pushes": {"passed": 3, "total": 4}}
+
+
+def test_malformed_scene_color_returns_validation_error(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    response = client.post("/api/requests", json={"text": "walk to the ball", "scene": {
+        "objects": [{"name": "ball", "kind": "ball", "size": [0.15], "distance": 2, "color": []}]}})
+    assert response.status_code == 422
+    assert "color must be" in response.json()["detail"]

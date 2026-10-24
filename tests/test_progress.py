@@ -100,3 +100,9 @@ def test_fake_run_writes_a_done_progress_file(tmp_path):
     assert data["wall_s"] >= data["curve"][-1]["wall_s"] > 0
     # the last eval's terms match the run's term_<name> metrics
     assert data["curve"][-1]["terms"] == {"task": result.metrics["term_task"], "energy": result.metrics["term_energy"]}
+
+
+def test_behavior_means_are_kept_when_present(tmp_path):
+    w = ProgressWriter(tmp_path, 1000)
+    w.point(SimpleNamespace(steps=10, wall_s=1.0, episode_reward=0.5, terms={}, behavior={"forward_velocity": -0.4}))
+    assert read_progress(tmp_path)["curve"][-1]["behavior"] == {"forward_velocity": -0.4}

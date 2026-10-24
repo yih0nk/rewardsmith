@@ -1,0 +1,448 @@
+{
+  "preset": "round",
+  "impl": "warp",
+  "git_sha": "63b6db3+pr19@459dca0",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "recorded_at": "2026-10-24T14:18:37+0000",
+  "total_wall_s": 745.9,
+  "reward_drop_limit": 0.05,
+  "repeats": 3,
+  "cases": {
+    "walk_backwards": {
+      "episode_reward": 29.37,
+      "behavior_pass": true,
+      "behavior_passed": "3/3",
+      "checks": [
+        {
+          "metric": "forward_velocity",
+          "op": "<",
+          "value": -0.3,
+          "actual": -0.5,
+          "passed": "3/3",
+          "pass": true
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "passed": "3/3",
+          "pass": true
+        }
+      ],
+      "compile_s": 52.4,
+      "train_s": 218.7,
+      "wall_s": 257.1,
+      "metrics": {
+        "forward_velocity": -0.5,
+        "lateral_velocity": -0.013,
+        "yaw_rate": -0.03,
+        "base_height": 0.286,
+        "upright": 0.997,
+        "fell": 0.0
+      },
+      "runs": [
+        {
+          "episode_reward": 29.37,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "forward_velocity",
+              "op": "<",
+              "value": -0.3,
+              "actual": -0.5,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 52.4,
+          "train_s": 216.8,
+          "metrics": {
+            "forward_velocity": -0.5,
+            "lateral_velocity": -0.003,
+            "yaw_rate": -0.036,
+            "base_height": 0.284,
+            "upright": 0.997,
+            "fell": 0.0
+          }
+        },
+        {
+          "episode_reward": 29.368,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "forward_velocity",
+              "op": "<",
+              "value": -0.3,
+              "actual": -0.505,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 52.7,
+          "train_s": 218.9,
+          "metrics": {
+            "forward_velocity": -0.505,
+            "lateral_velocity": -0.019,
+            "yaw_rate": -0.027,
+            "base_height": 0.288,
+            "upright": 0.997,
+            "fell": 0.0
+          }
+        },
+        {
+          "episode_reward": 29.371,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "forward_velocity",
+              "op": "<",
+              "value": -0.3,
+              "actual": -0.5,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 52.1,
+          "train_s": 218.7,
+          "metrics": {
+            "forward_velocity": -0.5,
+            "lateral_velocity": -0.013,
+            "yaw_rate": -0.03,
+            "base_height": 0.286,
+            "upright": 0.997,
+            "fell": 0.0
+          }
+        }
+      ]
+    },
+    "walk_forward": {
+      "episode_reward": 29.156,
+      "behavior_pass": true,
+      "behavior_passed": "3/3",
+      "checks": [
+        {
+          "metric": "forward_velocity",
+          "op": ">",
+          "value": 0.3,
+          "actual": 0.594,
+          "passed": "3/3",
+          "pass": true
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "passed": "3/3",
+          "pass": true
+        }
+      ],
+      "compile_s": 49.3,
+      "train_s": 203.7,
+      "wall_s": 239.8,
+      "metrics": {
+        "forward_velocity": 0.594,
+        "lateral_velocity": -0.005,
+        "yaw_rate": -0.032,
+        "base_height": 0.25,
+        "upright": 0.994,
+        "fell": 0.0
+      },
+      "runs": [
+        {
+          "episode_reward": 29.189,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "forward_velocity",
+              "op": ">",
+              "value": 0.3,
+              "actual": 0.595,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 47.8,
+          "train_s": 188.8,
+          "metrics": {
+            "forward_velocity": 0.595,
+            "lateral_velocity": -0.005,
+            "yaw_rate": -0.013,
+            "base_height": 0.25,
+            "upright": 0.994,
+            "fell": 0.0
+          }
+        },
+        {
+          "episode_reward": 28.987,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "forward_velocity",
+              "op": ">",
+              "value": 0.3,
+              "actual": 0.594,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 49.3,
+          "train_s": 203.9,
+          "metrics": {
+            "forward_velocity": 0.594,
+            "lateral_velocity": -0.007,
+            "yaw_rate": -0.032,
+            "base_height": 0.253,
+            "upright": 0.996,
+            "fell": 0.0
+          }
+        },
+        {
+          "episode_reward": 29.156,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "forward_velocity",
+              "op": ">",
+              "value": 0.3,
+              "actual": 0.586,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 49.4,
+          "train_s": 203.7,
+          "metrics": {
+            "forward_velocity": 0.586,
+            "lateral_velocity": -0.001,
+            "yaw_rate": -0.035,
+            "base_height": 0.249,
+            "upright": 0.994,
+            "fell": 0.0
+          }
+        }
+      ]
+    },
+    "spin_in_place": {
+      "episode_reward": 23.79,
+      "behavior_pass": true,
+      "behavior_passed": "3/3",
+      "checks": [
+        {
+          "metric": "yaw_rate",
+          "op": ">",
+          "value": 1.0,
+          "actual": 1.478,
+          "passed": "3/3",
+          "pass": true
+        },
+        {
+          "metric": "forward_velocity",
+          "op": "<",
+          "value": 0.3,
+          "actual": -0.01,
+          "passed": "3/3",
+          "pass": true
+        },
+        {
+          "metric": "forward_velocity",
+          "op": ">",
+          "value": -0.3,
+          "actual": -0.01,
+          "passed": "3/3",
+          "pass": true
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "passed": "3/3",
+          "pass": true
+        }
+      ],
+      "compile_s": 50.3,
+      "train_s": 211.4,
+      "wall_s": 249.0,
+      "metrics": {
+        "forward_velocity": -0.01,
+        "lateral_velocity": -0.002,
+        "yaw_rate": 1.478,
+        "base_height": 0.284,
+        "upright": 0.995,
+        "fell": 0.0
+      },
+      "runs": [
+        {
+          "episode_reward": 21.606,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "yaw_rate",
+              "op": ">",
+              "value": 1.0,
+              "actual": 1.478,
+              "pass": true
+            },
+            {
+              "metric": "forward_velocity",
+              "op": "<",
+              "value": 0.3,
+              "actual": -0.006,
+              "pass": true
+            },
+            {
+              "metric": "forward_velocity",
+              "op": ">",
+              "value": -0.3,
+              "actual": -0.006,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 48.6,
+          "train_s": 205.0,
+          "metrics": {
+            "forward_velocity": -0.006,
+            "lateral_velocity": -0.002,
+            "yaw_rate": 1.478,
+            "base_height": 0.286,
+            "upright": 0.995,
+            "fell": 0.0
+          }
+        },
+        {
+          "episode_reward": 28.677,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "yaw_rate",
+              "op": ">",
+              "value": 1.0,
+              "actual": 1.483,
+              "pass": true
+            },
+            {
+              "metric": "forward_velocity",
+              "op": "<",
+              "value": 0.3,
+              "actual": -0.026,
+              "pass": true
+            },
+            {
+              "metric": "forward_velocity",
+              "op": ">",
+              "value": -0.3,
+              "actual": -0.026,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 50.3,
+          "train_s": 212.4,
+          "metrics": {
+            "forward_velocity": -0.026,
+            "lateral_velocity": -0.018,
+            "yaw_rate": 1.483,
+            "base_height": 0.284,
+            "upright": 0.993,
+            "fell": 0.0
+          }
+        },
+        {
+          "episode_reward": 23.79,
+          "behavior_pass": true,
+          "checks": [
+            {
+              "metric": "yaw_rate",
+              "op": ">",
+              "value": 1.0,
+              "actual": 1.455,
+              "pass": true
+            },
+            {
+              "metric": "forward_velocity",
+              "op": "<",
+              "value": 0.3,
+              "actual": -0.01,
+              "pass": true
+            },
+            {
+              "metric": "forward_velocity",
+              "op": ">",
+              "value": -0.3,
+              "actual": -0.01,
+              "pass": true
+            },
+            {
+              "metric": "fell",
+              "op": "<",
+              "value": 0.5,
+              "actual": 0.0,
+              "pass": true
+            }
+          ],
+          "compile_s": 50.3,
+          "train_s": 211.4,
+          "metrics": {
+            "forward_velocity": -0.01,
+            "lateral_velocity": 0.0,
+            "yaw_rate": 1.455,
+            "base_height": 0.274,
+            "upright": 0.995,
+            "fell": 0.0
+          }
+        }
+      ]
+    }
+  }
+}

@@ -21,16 +21,26 @@ export interface Progress {
   curve: CurvePoint[];
 }
 
-// written → training → trained → scored, or gate_failed / failed.
+// written → training → trained → scored, or gate_failed / failed, or stopped
+// (successive halving cut it short mid-training: metrics but no video or score).
 export type CandidateStatus =
   | "written"
   | "gate_failed"
   | "training"
   | "trained"
   | "scored"
+  | "stopped"
   | "failed";
 
+export interface CheckResult {
+  pass: boolean;
+  verified?: boolean;
+  error?: string;
+  clauses: { metric: string; op: string; value: number; actual: number | null; pass: boolean }[];
+}
+
 export interface Candidate {
+  check_result?: CheckResult | null;
   id: number;
   idx: number;
   reward_src: string;
@@ -67,6 +77,9 @@ export interface RequestSummary {
   text: string;
   status: Status;
   best_score: number | null;
+  best_candidate_id?: number | null;
+  succeeded?: number | null;
+  success_check_error?: string | null;
   created_at: number;
 }
 

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "node --test tests/dashboard.test.cjs"
+    "test": "node --test tests/dashboard.test.cjs ../tests/test_dashboard_ranking.cjs"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",
