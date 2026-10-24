@@ -137,6 +137,9 @@ def run_suite(sim, cases: tuple[Case, ...], out_root: Path, preset: str, impl: s
 
 
 def _git_sha() -> str | None:
+    """HEAD of this checkout, or REWARDSMITH_GIT_SHA for a copy with no .git (as on the pod)."""
+    if os.environ.get("REWARDSMITH_GIT_SHA"):
+        return os.environ["REWARDSMITH_GIT_SHA"]
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
                               text=True, check=True).stdout.strip()
