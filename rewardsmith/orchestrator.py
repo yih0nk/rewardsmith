@@ -9,6 +9,7 @@ Round 2+: the editor revises the best reward so far, using the critic's notes.
 
 import inspect
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -377,12 +378,16 @@ def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]
         import anthropic
 
         from .agents.critic import ClaudeCritic
-        from .agents.editor import ClaudeEditor
+        from .agents.editor import ClaudeEditor, DroidEditor
         from .agents.writer import ClaudeWriter
 
         client = anthropic.Anthropic()
         writer = ClaudeWriter(client, settings.model)
-        editor = ClaudeEditor(client, settings.model)  # swap for DroidEditor once it works
+        if settings.editor == "droid":
+            droid_model = os.environ.get("REWARDSMITH_DROID_MODEL") or None
+            editor = DroidEditor(settings.artifacts_dir / "droid", model=droid_model)
+        else:
+            editor = ClaudeEditor(client, settings.model)
         critic = ClaudeCritic(client, settings.model)
 
     if settings.fake_sim:
@@ -434,7 +439,9 @@ def main() -> None:
     ranker = build_ranker(settings)
     checker = build_checker(settings)
     scener = build_scener(settings)
-    log.info("worker up (fake_sim=%s, fake_llm=%s)", settings.fake_sim, settings.fake_llm)
+    log.info(
+        "worker up (fake_sim=%s, fake_llm=%s, editor=%s)", settings.fake_sim, settings.fake_llm, type(editor).__name__
+    )
 
     while True:
         req = db.claim_next_request(conn)

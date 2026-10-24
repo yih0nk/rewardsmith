@@ -478,3 +478,43 @@ def test_a_revision_fixed_by_the_gate_gets_a_fresh_diff(tmp_path):
     revised = db.get_request(conn, req["id"])["rounds"][1]["candidates"][0]
     assert revised["status"] == "scored"
     assert "+# fixed" in revised["diff"] and "BROKEN" not in revised["diff"]
+
+
+def test_droid_editor_workspace_and_readback(tmp_path):
+    from rewardsmith.agents.editor import DroidEditor
+
+    class StubDroid(DroidEditor):
+        """Stands in for the droid subprocess: edits two of three files like Droid would."""
+
+        def _run(self, prompt, cwd):
+            self.seen = sorted(p.name for p in cwd.iterdir())
+            self.prompt = prompt
+            for i in (0, 2):
+                path = cwd / f"candidate_{i}.py"
+                path.write_text(path.read_text() + f"# droid fix {i}\n")
+            return ["idea zero", "idea one", "idea two"]
+
+    best = FakeWriter().write("walk backwards", "", 1)[0]
+    editor = StubDroid(tmp_path / "droid")
+
+    drafts = editor.revise("walk backwards", "env notes", best, "it walked forwards", {"forward_velocity": 0.4}, 3)
+
+    assert editor.seen == [
+        "candidate_0.py", "candidate_1.py", "candidate_2.py", "critique.md", "env.md", "history.md", "metrics.json"
+    ]
+    assert "walk backwards" in editor.prompt
+    assert [d.idea for d in drafts] == ["idea zero", "idea two"]  # candidate_1 was left unchanged
+    assert all(d.diff and "+# droid fix" in d.diff for d in drafts)
+
+
+def test_droid_editor_with_no_edits_fails(tmp_path):
+    import pytest
+
+    from rewardsmith.agents.editor import DroidEditor
+
+    class LazyDroid(DroidEditor):
+        def _run(self, prompt, cwd):
+            return []
+
+    with pytest.raises(RuntimeError, match="changed no candidate files"):
+        LazyDroid(tmp_path / "droid").revise("spin", "", "def reward(s, a, p):\n    return {}\n", "", {}, 2)

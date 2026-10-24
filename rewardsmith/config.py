@@ -17,6 +17,7 @@ class Settings:
     min_rounds: int = 2  # always run at least this many, so the editor and its diffs get used
     carry_top: int = 2  # each later round revises this many of the best candidates so far
     halving: tuple[int, ...] = ()  # e.g. (8, 4, 2): successive halving within a round; () = off
+    editor: str = "claude"  # claude | droid: who revises rewards from round 2 on
 
 
 def _flag(name: str, default: str) -> bool:
@@ -59,4 +60,5 @@ def load() -> Settings:
         min_rounds=int(os.environ.get("REWARDSMITH_MIN_ROUNDS", "2")),
         carry_top=max(1, int(os.environ.get("REWARDSMITH_CARRY", "2"))),
         halving=_halving(os.environ.get("REWARDSMITH_HALVING", "")),
+        editor=os.environ.get("REWARDSMITH_EDITOR", "claude").strip().lower(),
     )
