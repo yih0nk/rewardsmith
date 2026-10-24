@@ -23,7 +23,7 @@ def run_in_processes(
     jobs: list[tuple[str, Path]],
     *,
     preset: str = "round",
-    impl: str = "jax",
+    impl: str | None = None,
     max_parallel: int = 4,
     fake: bool = False,
     timeout_s: float = 3600,
@@ -61,13 +61,14 @@ def run_in_processes(
     return [r if r is not None else "Error: no result" for r in results]
 
 
-def _start(source: str, out_dir: Path, preset: str, impl: str, fake: bool, env: dict) -> subprocess.Popen:
+def _start(source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict) -> subprocess.Popen:
     out_dir.mkdir(parents=True, exist_ok=True)
     reward_file = out_dir / "reward.py"
     reward_file.write_text(source)
     (out_dir / RESULT_FILE).unlink(missing_ok=True)
-    cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir),
-           "--preset", preset, "--impl", impl]
+    cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir), "--preset", preset]
+    if impl:
+        cmd += ["--impl", impl]
     if fake:
         cmd.append("--fake")
     log = open(out_dir / "train.log", "w")  # noqa: SIM115 (closed when the process exits)

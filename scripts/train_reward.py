@@ -18,7 +18,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("reward", type=Path)
     ap.add_argument("--preset", default="smoke", choices=sorted(train.PRESETS))
-    ap.add_argument("--impl", default="jax", help="jax, or warp on a CUDA GPU")
+    ap.add_argument("--impl", help="jax or warp (default: warp on a CUDA GPU, jax elsewhere)")
     ap.add_argument("--timesteps", type=int, help="override num_timesteps")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--video", type=Path, help="write a rollout mp4 here")
@@ -26,7 +26,7 @@ def main() -> None:
 
     t0 = time.perf_counter()
     env = go1.make_env(args.reward.read_text(), impl=args.impl)
-    print(f"env built in {time.perf_counter() - t0:.1f}s, terms: {', '.join(env.term_names)}")
+    print(f"env built in {time.perf_counter() - t0:.1f}s ({env._config.impl}), terms: {', '.join(env.term_names)}")
 
     overrides = {"num_timesteps": args.timesteps} if args.timesteps else None
 

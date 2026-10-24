@@ -26,7 +26,9 @@ PRESETS: dict[str, dict[str, Any]] = {
         num_timesteps=60_000, num_envs=32, batch_size=32, num_minibatches=4, unroll_length=10,
         num_updates_per_batch=2, episode_length=200, num_evals=3, num_eval_envs=16, num_resets_per_eval=0,
     ),
-    "round": dict(num_timesteps=20_000_000, num_evals=5, num_eval_envs=128),
+    # On the 4090 the walk-backwards reward was at 94% of its final score by 6.5M steps.
+    # brax rounds the step count up to whole eval blocks.
+    "round": dict(num_timesteps=10_000_000, num_evals=5, num_eval_envs=128),
     "final": dict(num_timesteps=100_000_000, num_evals=10),
 }
 

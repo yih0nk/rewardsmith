@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("reward", type=Path)
     ap.add_argument("out_dir", type=Path)
     ap.add_argument("--preset", default="round")
-    ap.add_argument("--impl", default="jax")
+    ap.add_argument("--impl", default=None, help="jax or warp (default: warp on a GPU)")
     ap.add_argument("--fake", action="store_true", help="use the no-GPU fake simulator (tests)")
     args = ap.parse_args(argv)
     args.out_dir.mkdir(parents=True, exist_ok=True)
