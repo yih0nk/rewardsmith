@@ -1,0 +1,218 @@
+/* Paper, ink and one dark instrument well. Serif for words, mono for numbers. */
+:root {
+  --paper: #f3efe6;
+  --paper-deep: #e9e3d6;
+  --card: #fbf9f4;
+  --ink: #1b1d18;
+  --ink-2: #44483f;
+  --ink-3: #686a5f;
+  --rule: #d9d2c2;
+  --rule-strong: #b8af9b;
+
+  --signal: #b23a0b;
+  --signal-soft: #f6e1d3;
+  --good: #2b6a3a;
+  --good-soft: #dfeadb;
+  --bad: #a3372a;
+  --bad-soft: #f5dfd9;
+
+  /* The instrument well: video, curves and code sit on this. */
+  --scope: #11140f;
+  --scope-2: #1a1f17;
+  --scope-grid: rgba(196, 232, 170, 0.09);
+  --scope-rule: rgba(196, 232, 170, 0.18);
+  --scope-text: #d6dfcb;
+  --scope-dim: #92a089;
+  --phosphor: #a6e27c;
+
+  --display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --serif: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius: 3px;
+  --shadow: 0 1px 0 rgba(27, 29, 24, 0.04), 0 8px 24px -16px rgba(27, 29, 24, 0.25);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  color-scheme: light;
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  overflow-x: hidden;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+a {
+  color: inherit;
+}
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+h1,
+h2,
+h3 {
+  font-family: var(--display);
+  font-weight: 450;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  margin: 0;
+  font-variation-settings: "SOFT" 30;
+}
+p {
+  margin: 0;
+}
+code,
+pre,
+kbd {
+  font-family: var(--mono);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Small caps-style labels: the instrument's engraving. */
+.eyebrow,
+.label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.subtle {
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 11px 18px;
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition: background 0.15s, transform 0.15s var(--ease);
+}
+.primary:not(:disabled):hover {
+  background: #33372e;
+}
+.primary:not(:disabled):active {
+  transform: translateY(1px);
+}
+.link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 4px;
+}
+.link:not(:disabled):hover {
+  color: var(--ink);
+  text-decoration-color: var(--ink);
+}
+
+/* Status lamps. Running ones breathe. */
+.lamp {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rule-strong);
+  flex-shrink: 0;
+}
+.lamp.running,
+.lamp.queued {
+  background: var(--signal);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+.lamp.done {
+  background: var(--good);
+}
+.lamp.failed {
+  background: var(--bad);
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes march {
+  to {
+    background-position: 24px 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
