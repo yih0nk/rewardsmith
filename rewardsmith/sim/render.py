@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
 import mediapy
 import mujoco
 import numpy as np
@@ -73,42 +72,54 @@ def rollout_and_render(
     with side_video_path(mp4 path).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    policy = jax.jit(result.make_inference_fn(result.params, deterministic=True))
-    reset, step = jax.jit(env.reset), jax.jit(env.step)
-
-    rng = jax.random.PRNGKey(seed)
-    state = reset(rng)
-    qpos, lin, yaw, height_z, up = [state.data.qpos], [], [], [], []
-    for _ in range(steps):
-        rng, key = jax.random.split(rng)
-        action, _ = policy(state.obs, key)
-        state = step(state, action)
-        qpos.append(state.data.qpos)
-        lin.append(env.get_local_linvel(state.data))
-        yaw.append(env.get_gyro(state.data)[2])
-        height_z.append(state.data.qpos[2])
-        up.append(env.get_upvector(state.data)[2])
-        if bool(state.done):
-            break
-    qpos_np = np.asarray(jnp.stack(qpos))
+    qpos, summary = rollout(env, result, steps, seed)
 
     video = out_dir / VIDEO_FILE
     views = [(video, camera)] + ([(side_video_path(video), "side")] if side_view else [])
-    picks = np.linspace(0, len(qpos_np) - 1, num=min(n_frames, len(qpos_np))).round().astype(int)
-    stills = render_videos(env.mj_model, qpos_np, env.dt, views, picks, height, width)
+    picks = np.linspace(0, len(qpos) - 1, num=min(n_frames, len(qpos))).round().astype(int)
+    stills = render_videos(env.mj_model, qpos, env.dt, views, picks, height, width)
     pngs = [_png(f, critic_width, critic_height) for f in stills]
-
-    lin_a = jnp.stack(lin)
-    summary = {
-        "forward_velocity": float(lin_a[:, 0].mean()),
-        "lateral_velocity": float(lin_a[:, 1].mean()),
-        "yaw_rate": float(jnp.stack(yaw).mean()),
-        "base_height": float(jnp.stack(height_z).mean()),
-        "upright": float(jnp.stack(up).mean()),
-        "fell": float(bool(state.done)),
-        "rollout_steps": float(len(lin)),
-    }
     return video, pngs, summary
+
+
+def rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0) -> tuple[np.ndarray, dict[str, float]]:
+    """Run the deterministic policy for up to `steps` control steps, stopping at the first fall.
+
+    Returns qpos for the reset state and every step taken, and the rollout summary.
+    The whole rollout is one compiled scan: far cheaper than a Python loop that
+    dispatches and syncs every step, especially with four candidates sharing the GPU.
+    """
+    policy = result.make_inference_fn(result.params, deterministic=True)
+
+    def body(carry, _):
+        state, rng = carry
+        rng, key = jax.random.split(rng)
+        action, _ = policy(state.obs, key)
+        state = env.step(state, action)
+        d = state.data
+        out = (d.qpos, env.get_local_linvel(d), env.get_gyro(d)[2], env.get_upvector(d)[2], state.done)
+        return (state, rng), out
+
+    @jax.jit
+    def run(rng):
+        state = env.reset(rng)
+        _, outs = jax.lax.scan(body, (state, rng), length=steps)
+        return state.data.qpos, outs
+
+    qpos0, outs = jax.device_get(run(jax.random.PRNGKey(seed)))
+    qpos, lin, yaw, up, done = (np.asarray(x) for x in outs)
+    fell = bool(done.any())
+    n = int(np.argmax(done)) + 1 if fell else steps  # keep the step that fell, drop the ones after
+    summary = {
+        "forward_velocity": float(lin[:n, 0].mean()),
+        "lateral_velocity": float(lin[:n, 1].mean()),
+        "yaw_rate": float(yaw[:n].mean()),
+        "base_height": float(qpos[:n, 2].mean()),
+        "upright": float(up[:n].mean()),
+        "fell": float(fell),
+        "rollout_steps": float(n),
+    }
+    return np.concatenate([qpos0[None], qpos[:n]]), summary
 
 
 def side_video_path(video: Path) -> Path:

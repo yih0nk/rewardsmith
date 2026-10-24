@@ -8,6 +8,7 @@ import pytest
 
 pytest.importorskip("mujoco_playground")
 
+import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -68,6 +69,32 @@ def test_rollout_writes_browser_ready_videos_and_small_critic_frames(tmp_path):
         assert int(info["nb_read_frames"]) == 21  # the reset state plus 20 steps
     assert len(pngs) == 4
     assert all(Image.open(io.BytesIO(p)).size == (64, 36) for p in pngs)
+
+
+def _stand(env) -> TrainResult:
+    return TrainResult(
+        make_inference_fn=lambda params, deterministic: lambda obs, key: (0.3 * obs["state"][:12], {}),
+        params=None,
+    )
+
+
+def test_scanned_rollout_matches_a_step_by_step_loop():
+    env = go1.make_env(WALK_BACKWARDS)
+    qpos, summary = render.rollout(env, _stand(env), steps=30)
+
+    policy = _stand(env).make_inference_fn(None, deterministic=True)
+    reset, step = jax.jit(env.reset), jax.jit(env.step)
+    rng = jax.random.PRNGKey(0)
+    state = reset(rng)
+    ref = [state.data.qpos]
+    for _ in range(30):
+        rng, key = jax.random.split(rng)
+        state = step(state, policy(state.obs, key)[0])
+        ref.append(state.data.qpos)
+    assert qpos.shape == (31, env.mj_model.nq)
+    np.testing.assert_allclose(qpos, np.stack(ref), atol=1e-4)
+    assert summary["rollout_steps"] == 30 and summary["fell"] == 0.0
+    assert summary["base_height"] == pytest.approx(float(np.mean(np.stack(ref)[1:, 2])), abs=1e-4)
 
 
 def test_unknown_camera_is_refused(tmp_path):
