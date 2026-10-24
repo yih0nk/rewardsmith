@@ -130,7 +130,7 @@ export default function RunStatus({
               <span className="sr-only">Round {stage.round}. </span>
             )}
             ↻ Steps 2–7 repeat each round:{" "}
-            <Explain term="carry">Claude revises the best rewards</Explain>.
+            <Explain term="carry">Claude revises the best rewards</Explain>
           </p>
         </>
       )}
