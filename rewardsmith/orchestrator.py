@@ -53,18 +53,22 @@ def run_request(
                 text, env_doc, best.source, best.critique, best.metrics, settings.candidates_per_round
             )
 
-        round_best: Best | None = None
+        # Gate every draft first, then train the survivors together: on the GPU,
+        # sim.run_many trains them side by side, which hides most of the JIT time.
+        ready: list[tuple[int, str, Path]] = []
         for idx, (src, diff) in enumerate(drafts):
             cid = db.add_candidate(conn, round_id, idx, src, diff)
             src = _pass_gate(conn, cid, src, writer, env_doc, sim)
-            if src is None:
-                continue
+            if src is not None:
+                ready.append((cid, src, settings.artifacts_dir / rid / f"r{n}c{idx}"))
+        if ready:
+            db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
+        results = sim.run_many([(src, out_dir) for _, src, out_dir in ready]) if ready else []
 
-            out_dir = settings.artifacts_dir / rid / f"r{n}c{idx}"
-            try:
-                result = sim.run(src, out_dir)
-            except Exception as exc:  # a crashed run shouldn't stop the round
-                db.set_candidate(conn, cid, status="failed", error=f"{type(exc).__name__}: {exc}")
+        round_best: Best | None = None
+        for (cid, src, _), result in zip(ready, results):
+            if isinstance(result, str):  # a crashed run shouldn't stop the round
+                db.set_candidate(conn, cid, status="failed", error=result)
                 continue
             video = _relative(result.video_path, settings.artifacts_dir)
             db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video)
