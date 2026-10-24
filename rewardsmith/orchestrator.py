@@ -77,17 +77,22 @@ def run_request(
             db.set_candidate(conn, cid, status="training")
         results = sim.run_many([(src, out_dir) for _, src, out_dir in ready]) if ready else []
 
-        round_best: Best | None = None
+        trained = []
         for (cid, src, _), result in zip(ready, results):
             if isinstance(result, str):  # a crashed run shouldn't stop the round
                 db.set_candidate(conn, cid, status="failed", error=result)
                 continue
             video = _relative(result.video_path, settings.artifacts_dir)
             db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video)
+            trained.append((cid, src, result))
 
-            review = critic.review(text, result)
+        # One Claude call per video, all at once; each takes tens of seconds.
+        with ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
+            reviews = list(pool.map(lambda t: critic.review(text, t[2]), trained))
+
+        round_best: Best | None = None
+        for (cid, src, result), review in zip(trained, reviews):
             db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
-
             if round_best is None or review.score > round_best.score:
                 round_best = Best(cid, src, review.score, review.critique, result.metrics)
 
