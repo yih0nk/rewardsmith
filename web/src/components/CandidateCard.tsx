@@ -1,4 +1,6 @@
+import { ReactNode } from "react";
 import { Candidate } from "../api";
+import { candidateAnchor } from "../thread";
 import { candidateName, candidateState } from "../stages";
 import TrainingProgress, {
   Sparkline,
@@ -15,6 +17,7 @@ export default function CandidateCard({
   overall = false,
   selected,
   onSelect,
+  reply,
 }: {
   c: Candidate;
   round: number;
@@ -24,11 +27,16 @@ export default function CandidateCard({
   overall?: boolean;
   selected: boolean;
   onSelect: () => void;
+  // A reply control aimed at this candidate, once follow-ups exist.
+  reply?: ReactNode;
 }) {
   const live = liveState(c);
   const state = candidateState(c, live?.label);
   return (
     <div
+      id={candidateAnchor(c.id)}
+      data-round={round}
+      data-candidate-id={c.id}
       className={`candidate-option ${selected ? "active" : ""} ${best ? "winner" : ""} ${state.kind}`}
     >
       <button
@@ -74,6 +82,7 @@ export default function CandidateCard({
           />
         )
       )}
+      {reply && <div className="reply-slot">{reply}</div>}
     </div>
   );
 }

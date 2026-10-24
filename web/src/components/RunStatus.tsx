@@ -10,6 +10,7 @@ import {
   runStage,
   stepIndex,
 } from "../stages";
+import { QueuePlace } from "../thread";
 import { useNow } from "../useNow";
 import { liveState, textBar } from "./TrainingProgress";
 
@@ -17,14 +18,16 @@ import { liveState, textBar } from "./TrainingProgress";
 export default function RunStatus({
   detail,
   candidatesPerRound,
+  queue,
   now: nowOverride,
 }: {
   detail: Detail;
   candidatesPerRound?: number | null;
+  queue?: QueuePlace | null;
   // Tests pass a fixed clock; the board ticks.
   now?: number;
 }) {
-  const stage = runStage(detail, candidatesPerRound);
+  const stage = runStage(detail, candidatesPerRound, queue);
   const active = detail.status === "running" || detail.status === "queued";
   const ticking = useNow(active && nowOverride == null);
   const now = nowOverride ?? ticking;
