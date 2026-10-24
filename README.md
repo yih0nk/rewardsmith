@@ -78,13 +78,18 @@ printed with their change from the baseline but never fail the run.
 
 To check that a branch (speed, robustness, ...) doesn't hurt quality, copy it to
 your own folder on the GPU pod and run the compare under the shared GPU lock
-(about 12 minutes):
+(about 8 minutes). The copy has no `.git`, so pass your commit for the report:
 
 ```sh
-rsync -a --exclude .venv --exclude node_modules --exclude .rewardsmith --exclude __pycache__ ./ pod:/workspace/<you>/
+rsync -a --exclude .venv --exclude .git --exclude node_modules --exclude .rewardsmith --exclude __pycache__ ./ pod:/workspace/<you>/
 cd /workspace/<you>
-flock /workspace/gpu.lock env MUJOCO_GL=egl /workspace/rewardsmith/.venv/bin/python scripts/regression.py --compare
+flock /workspace/gpu.lock env MUJOCO_GL=egl REWARDSMITH_GIT_SHA=<your short sha> \
+    /workspace/rewardsmith/.venv/bin/python scripts/regression.py --compare
 ```
+
+The baseline (RTX 4090, warp) was recorded with the rollout sampling the policy's
+actions, as brax's own eval does. A deterministic rollout makes the spin policy fall,
+so `spin_in_place` fails its check on any branch without that render change.
 
 It exits 1 and prints `REGRESSION FAIL` with the reasons if any case regressed.
 `--only walk_forward` runs a subset. Videos, logs and `last_run.json` go to
