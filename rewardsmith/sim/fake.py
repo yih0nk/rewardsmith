@@ -3,9 +3,16 @@
 import ast
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 from .base import RunResult, run_sequentially
 from .go1_spec import describe
+from .progress import ProgressWriter
+
+FAKE_TOTAL_STEPS = 10_000_000  # the "round" preset's num_timesteps
+FAKE_EVALS = 20
+FAKE_COMPILE_S = 45.0  # roughly what the real first eval waits on JIT
+FAKE_EVAL_S = 9.0
 
 
 class FakeSimulator:
@@ -27,18 +34,40 @@ class FakeSimulator:
         (out_dir / "reward.py").write_text(source)
         h = int(hashlib.sha256(source.encode()).hexdigest()[:8], 16)
         quality = round(3 + (h % 70) / 10, 1)  # 3.0 to 9.9
-        curve = [round(quality * (i + 1) / 20, 2) for i in range(20)]
+        curve = [round(quality * (i + 1) / FAKE_EVALS, 2) for i in range(FAKE_EVALS)]
+        terms = _fake_terms(source)
+        _write_fake_progress(out_dir, curve, terms)
         return RunResult(
             metrics={
                 "fake_quality": quality,
                 "forward_velocity": round((h % 200 - 100) / 100, 2),
-                **_fake_terms(source),
+                **terms,
             },
             reward_curve=curve,
         )
 
     def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
         return run_sequentially(self, jobs)
+
+
+def _write_fake_progress(out_dir: Path, curve: list[float], terms: dict[str, float]) -> None:
+    """Write the same progress.json a real run would, all at once, ending in "done".
+    Each term ramps up to its final metric value along with the episode reward."""
+    wall = [0.0]
+    progress = ProgressWriter(out_dir, FAKE_TOTAL_STEPS, clock=lambda: wall[0])
+    progress.stage("compiling")
+    for i, reward in enumerate(curve):
+        frac = (i + 1) / len(curve)
+        wall[0] = round(FAKE_COMPILE_S + i * FAKE_EVAL_S, 1)
+        progress.point(SimpleNamespace(
+            steps=int(FAKE_TOTAL_STEPS * frac),
+            wall_s=wall[0],
+            episode_reward=reward,
+            terms={k.removeprefix("term_"): round(v * frac, 3) for k, v in terms.items()},
+        ))
+    wall[0] += 6.0  # rollout and video
+    progress.stage("rendering")
+    progress.stage("done")
 
 
 def _fake_terms(source: str) -> dict[str, float]:
