@@ -9,10 +9,11 @@ import sqlite3
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import config, db
 
+config.load_dotenv()  # here, not in main(): the console script imports this module first
 settings = config.load()
 settings.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -28,12 +29,14 @@ def get_conn() -> Iterator[sqlite3.Connection]:
 
 
 class NewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)  # "   ab" must not pass min_length
+
     text: str = Field(min_length=3, max_length=300)
 
 
 @app.post("/api/requests", status_code=201)
 def create_request(body: NewRequest, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    rid = db.create_request(conn, body.text.strip())
+    rid = db.create_request(conn, body.text)
     db.log_event(conn, rid, "queued", "Request queued")
     return {"id": rid}
 
@@ -49,6 +52,31 @@ def get_request(rid: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     if req is None:
         raise HTTPException(status_code=404, detail="No request with that id")
     return req
+
+
+class Flag(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    note: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/candidates/{cid}/flag")
+def flag_candidate(cid: int, body: Flag, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    if not db.flag_candidate(conn, cid, body.note):
+        raise HTTPException(status_code=404, detail="No candidate with that id")
+    return {"ok": True}
+
+
+@app.delete("/api/candidates/{cid}/flag")
+def unflag_candidate(cid: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    if not db.unflag_candidate(conn, cid):
+        raise HTTPException(status_code=404, detail="No candidate with that id")
+    return {"ok": True}
+
+
+@app.get("/api/hall-of-fame")
+def hall_of_fame(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    return db.list_flagged(conn)
 
 
 @app.get("/api/health")
@@ -67,3 +95,7 @@ def main() -> None:
     import uvicorn
 
     uvicorn.run("rewardsmith.server:app", host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()

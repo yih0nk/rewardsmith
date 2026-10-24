@@ -1,131 +1,317 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Candidate, RequestDetail, RequestSummary, createRequest, getRequest, listRequests } from "./api";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  RequestDetail as Detail,
+  RequestSummary,
+  Health,
+  ApiError,
+  createRequest,
+  getRequest,
+  listRequests,
+  getHealth,
+} from "./api";
+import HallOfFame from "./components/HallOfFame";
+import QrPanel from "./components/QrPanel";
+import RequestDetail from "./components/RequestDetail";
+import RequestList from "./components/RequestList";
 
-const POLL_MS = 2000;
-
-// The board. A request id in the URL hash (#abc123) opens that request: that's the phone link.
+const suggestions = [
+  "Walk backwards",
+  "Stand on two legs",
+  "Do a little dance",
+];
 export default function App() {
-  const [requests, setRequests] = useState<RequestSummary[]>([]);
-  const [selected, setSelected] = useState<string | null>(() => location.hash.slice(1) || null);
-  const [detail, setDetail] = useState<RequestDetail | null>(null);
+  const [runs, setRuns] = useState<RequestSummary[]>([]);
+  const [selected, setSelected] = useState(location.hash.slice(1));
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const [text, setText] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [listError, setListError] = useState("");
+  const [detailError, setDetailError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const hall = selected === "hall";
+  // Open the newest run on first load only; afterwards the logo goes home and stays there.
+  const firstLoad = useRef(true);
 
   useEffect(() => {
-    const tick = () => listRequests().then(setRequests).catch((e) => setError(String(e)));
-    tick();
-    const t = setInterval(tick, POLL_MS);
-    return () => clearInterval(t);
+    let active = true;
+    async function refresh() {
+      try {
+        const data = await listRequests();
+        if (active) {
+          setRuns(data);
+          setListError("");
+          if (firstLoad.current) {
+            firstLoad.current = false;
+            if (!location.hash.slice(1) && data[0]) setSelected(data[0].id);
+          }
+        }
+      } catch (error) {
+        if (active) setListError(`Cannot load experiments: ${String(error)}`);
+      } finally {
+        if (active) setListLoading(false);
+      }
+    }
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
-    if (!selected) return setDetail(null);
-    location.hash = selected;
-    const tick = () => getRequest(selected).then(setDetail).catch((e) => setError(String(e)));
-    tick();
-    const t = setInterval(tick, POLL_MS);
-    return () => clearInterval(t);
-  }, [selected]);
+    let active = true;
+    const refresh = () =>
+      getHealth()
+        .then((data) => {
+          if (active) setHealth(data);
+        })
+        .catch(() => {
+          if (active) setHealth(null);
+        });
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (text.trim().length < 3) return;
+  useEffect(() => {
+    setDetail(null);
+    setDetailError("");
+    setDetailLoading(Boolean(selected && !hall));
+    if (!selected || hall) return;
+    let active = true;
+    async function refresh() {
+      try {
+        const data = await getRequest(selected);
+        if (active) {
+          setDetail(data);
+          setDetailError("");
+        }
+      } catch (error) {
+        if (active) {
+          if (error instanceof ApiError && error.status === 404)
+            setDetail(null);
+          setDetailError(`Cannot load this experiment: ${String(error)}`);
+        }
+      } finally {
+        if (active) setDetailLoading(false);
+      }
+    }
+    refresh();
+    const timer = setInterval(refresh, 1500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [selected, hall]);
+
+  useEffect(() => {
+    location.hash = selected;
+  }, [selected]);
+  useEffect(() => {
+    const change = () => setSelected(location.hash.slice(1));
+    window.addEventListener("hashchange", change);
+    return () => window.removeEventListener("hashchange", change);
+  }, []);
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (text.trim().length < 3 || busy) return;
+    setBusy(true);
+    setSubmitError("");
     try {
-      const { id } = await createRequest(text.trim());
+      const result = await createRequest(text.trim());
+      setSelected(result.id);
       setText("");
-      setSelected(id);
-    } catch (err) {
-      setError(`Couldn't queue that request: ${err}`);
+    } catch (error) {
+      setSubmitError(`Could not start experiment: ${String(error)}`);
+    } finally {
+      setBusy(false);
     }
   }
-
+  const mode = !health
+    ? "API unavailable"
+    : health.fake_sim
+      ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
+      : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
   return (
-    <main>
-      <header>
-        <h1>Rewardsmith</h1>
-        <p className="muted">Type a behavior. Watch the robot learn it.</p>
-      </header>
-
-      <form onSubmit={submit} className="ask">
-        <label htmlFor="behavior" className="label">Behavior</label>
-        <div className="row">
-          <input
-            id="behavior"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="make the robot dog walk backwards"
-            maxLength={300}
-          />
-          <button type="submit">Teach it</button>
-        </div>
-      </form>
-
-      {error && <p className="error" role="alert">{error}</p>}
-
-      <div className="layout">
-        <section aria-label="Requests">
-          <h2 className="label">Requests</h2>
-          {requests.length === 0 && <p className="muted">Nothing yet. Type a behavior above to start.</p>}
-          <ul className="requests">
-            {requests.map((r) => (
-              <li key={r.id}>
-                <button className={r.id === selected ? "req active" : "req"} onClick={() => setSelected(r.id)}>
-                  <span>{r.text}</span>
-                  <span className="muted">
-                    {r.status}
-                    {r.best_score != null && ` · ${r.best_score.toFixed(1)}`}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section aria-label="Rounds">{detail ? <Detail detail={detail} /> : <p className="muted">Pick a request.</p>}</section>
-      </div>
-    </main>
-  );
-}
-
-function Detail({ detail }: { detail: RequestDetail }) {
-  return (
-    <div>
-      <h2>{detail.text}</h2>
-      <p className="muted">
-        {detail.status} · best score {detail.best_score?.toFixed(1) ?? "n/a"} · link: {location.origin}/#{detail.id}
-      </p>
-      {detail.rounds.map((round) => (
-        <div key={round.id} className="round">
-          <h3 className="label">Round {round.n}</h3>
-          <div className="grid">
-            {round.candidates.map((c) => (
-              <CandidateView key={c.id} c={c} best={c.id === round.best_candidate_id} />
-            ))}
+    <div className="shell">
+      <aside className="sidebar">
+        <a className="brand" href="#" onClick={() => setSelected("")}>
+          <span className="brand-icon">⌘</span> rewardsmith
+          <span className="brand-dot">.</span>
+        </a>
+        <div className="workspace-label">WORKSPACE</div>
+        <button
+          className="nav-item"
+          onClick={() => setSelected(runs[0]?.id ?? "")}
+        >
+          <span>▦</span> Experiments{" "}
+          <span className="count">{runs.length}</span>
+        </button>
+        <a className="hall-link" href="#hall">
+          ↗ Hall of fame
+        </a>
+        <div className="sidebar-heading">RECENT RUNS</div>
+        <RequestList
+          requests={runs}
+          selected={selected}
+          onSelect={setSelected}
+        />
+        <div className="sidebar-footer">
+          <span className="tiny-logo">R</span>
+          <div>
+            Cal Hacks 13.0<small>Built to learn. Built to iterate.</small>
           </div>
         </div>
-      ))}
+      </aside>
+      <main>
+        <header className="topbar">
+          <span>
+            Workspace <span className="slash">/</span>{" "}
+            <strong>{hall ? "Hall of fame" : "Experiments"}</strong>
+          </span>
+          <span className="mode">
+            <span className="status-dot" />
+            {mode}
+          </span>
+        </header>
+        <div className="content">
+          <select
+            className="mobile-runs"
+            aria-label="Select experiment"
+            value={selected}
+            onChange={(event) => setSelected(event.target.value)}
+          >
+            <option value="">Experiments</option>
+            <option value="hall">Hall of fame</option>
+            {runs.map((run) => (
+              <option key={run.id} value={run.id}>
+                {run.text} · {run.status}
+              </option>
+            ))}
+          </select>
+          {hall ? (
+            <HallOfFame
+              onOpen={setSelected}
+              onBack={() => setSelected(runs[0]?.id ?? "")}
+            />
+          ) : (
+            <>
+              <div className="page-heading">
+                <div>
+                  <div className="eyebrow">
+                    THE REINFORCEMENT LEARNING PLAYGROUND
+                  </div>
+                  <h1>A little prompt. A new behavior.</h1>
+                  <p>Describe a behavior. Watch your robot figure it out.</p>
+                </div>
+                <div className="heading-side">
+                  <QrPanel />
+                  <span className="version">DRAFT 01</span>
+                </div>
+              </div>
+              <form className="prompt-card" onSubmit={submit}>
+                <label htmlFor="behavior">What should the robot learn?</label>
+                <div className="prompt-row">
+                  <span className="spark">✧</span>
+                  <input
+                    id="behavior"
+                    value={text}
+                    onChange={(event) => setText(event.target.value)}
+                    maxLength={300}
+                    placeholder="Make the robot dog walk backwards…"
+                    required
+                    minLength={3}
+                  />
+                  <button
+                    className="primary"
+                    disabled={busy || text.trim().length < 3}
+                  >
+                    {busy ? "Starting…" : "Start experiment"} <span>↗</span>
+                  </button>
+                </div>
+                <div className="suggestions">
+                  <span>Try a behavior</span>
+                  {suggestions.map((suggestion) => (
+                    <button
+                      type="button"
+                      key={suggestion}
+                      onClick={() =>
+                        setText(
+                          `Make the robot dog ${suggestion.toLowerCase()}`,
+                        )
+                      }
+                    >
+                      {suggestion} ↗
+                    </button>
+                  ))}
+                </div>
+              </form>
+              {submitError && (
+                <div className="error" role="alert">
+                  {submitError}
+                </div>
+              )}
+              {listError && (
+                <div className="error" role="alert">
+                  {listError} Retrying automatically.
+                </div>
+              )}
+              {detailError && (
+                <div className="error" role="alert">
+                  {detailError}{" "}
+                  <button onClick={() => setSelected(runs[0]?.id ?? "")}>
+                    Back to experiments
+                  </button>
+                </div>
+              )}
+              {detail ? (
+                <RequestDetail
+                  key={detail.id}
+                  detail={detail}
+                  health={health}
+                />
+              ) : detailLoading || listLoading ? (
+                <div className="loading" role="status">
+                  Loading experiment…
+                </div>
+              ) : (
+                !detailError && (
+                  <section className="empty-state">
+                    {runs.length ? (
+                      <>
+                        <h2>Pick up where you left off.</h2>
+                        <p>
+                          Choose an experiment from the sidebar, or describe a
+                          new behavior above.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h2>Your first experiment starts here.</h2>
+                        <p>
+                          Describe a behavior above to queue a request. Run the
+                          worker to train and evaluate candidates.
+                        </p>
+                      </>
+                    )}
+                  </section>
+                )
+              )}
+            </>
+          )}
+          <footer>
+            REWARDSMITH <span>Language → reward → motion.</span>
+            <span>Made at Cal Hacks 13.0</span>
+          </footer>
+        </div>
+      </main>
     </div>
-  );
-}
-
-function CandidateView({ c, best }: { c: Candidate; best: boolean }) {
-  return (
-    <article className={best ? "cand best" : "cand"}>
-      <div className="cand-head">
-        <span>#{c.idx}</span>
-        <span>{c.score != null ? c.score.toFixed(1) : c.status}</span>
-      </div>
-      {c.video_path ? (
-        <video src={`/artifacts/${c.video_path}`} controls muted loop playsInline />
-      ) : (
-        <div className="novideo muted">{c.status === "gate_failed" ? "Didn't compile" : "No video yet"}</div>
-      )}
-      {c.critique && <p className="critique">{c.critique}</p>}
-      {c.error && <pre className="err">{c.error}</pre>}
-      <details>
-        <summary>{c.diff ? "Diff" : "Reward"}</summary>
-        <pre>{c.diff || c.reward_src}</pre>
-      </details>
-    </article>
   );
 }

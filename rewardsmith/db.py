@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS candidates (
     video_path   TEXT,   -- relative to the artifacts dir
     score        REAL,
     critique     TEXT,
-    created_at   REAL NOT NULL
+    created_at   REAL NOT NULL,
+    flagged_at   REAL,   -- set when someone flags it as reward hacking (hall of fame)
+    flag_note    TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,12 +55,33 @@ CREATE TABLE IF NOT EXISTS events (
 
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=30, isolation_level=None)
+    # FastAPI may open a connection in one worker thread and use it in another.
+    # Each connection still serves one request at a time, so this is safe.
+    conn = sqlite3.connect(path, timeout=30, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+# Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
+# existing table alone, so a db file from an older version gets them here.
+ADDED_COLUMNS = {"candidates": {"flagged_at": "REAL", "flag_note": "TEXT"}}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, columns in ADDED_COLUMNS.items():
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, kind in columns.items():
+            if name in have:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            except sqlite3.OperationalError as exc:  # the server and worker raced to add it
+                if "duplicate column" not in str(exc):
+                    raise
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -153,6 +176,44 @@ def log_event(conn: sqlite3.Connection, rid: str, kind: str, message: str) -> No
         "INSERT INTO events (request_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
         (rid, kind, message, time.time()),
     )
+
+
+def fail_interrupted(conn: sqlite3.Connection) -> list[str]:
+    """Fail requests a stopped worker left running. Call once at worker startup.
+
+    Assumes one worker: a second worker starting up would fail the first one's run.
+    """
+    ids = [r["id"] for r in conn.execute("SELECT id FROM requests WHERE status = 'running'").fetchall()]
+    for rid in ids:
+        set_request(conn, rid, status="failed")
+        log_event(conn, rid, "error", "The worker restarted mid-run. Submit the behavior again to retry.")
+    return ids
+
+
+def flag_candidate(conn: sqlite3.Connection, cid: int, note: str) -> bool:
+    """Add a candidate to the hall of fame. False if there is no such candidate."""
+    cur = conn.execute(
+        "UPDATE candidates SET flagged_at = ?, flag_note = ? WHERE id = ?", (time.time(), note, cid)
+    )
+    return cur.rowcount > 0
+
+
+def unflag_candidate(conn: sqlite3.Connection, cid: int) -> bool:
+    cur = conn.execute("UPDATE candidates SET flagged_at = NULL, flag_note = NULL WHERE id = ?", (cid,))
+    return cur.rowcount > 0
+
+
+def list_flagged(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Flagged candidates with their request and round, newest flag first."""
+    rows = conn.execute(
+        """SELECT c.*, r.n AS round_n, q.id AS request_id, q.text AS request_text
+           FROM candidates c
+           JOIN rounds r ON r.id = c.round_id
+           JOIN requests q ON q.id = r.request_id
+           WHERE c.flagged_at IS NOT NULL
+           ORDER BY c.flagged_at DESC"""
+    ).fetchall()
+    return [_row(r) for r in rows]
 
 
 def _update(conn: sqlite3.Connection, table: str, key: str, value: Any, fields: dict[str, Any]) -> None:
