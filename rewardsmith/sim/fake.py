@@ -5,15 +5,13 @@ import hashlib
 from pathlib import Path
 
 from .base import RunResult
-
-ENV_DOC = """FAKE ENVIRONMENT (no GPU). Real notes come from PlaygroundSimulator.describe().
-state: base linear/angular velocity, gravity in body frame, joint angles and velocities, foot contacts.
-action: 12 joint targets in [-1, 1]. prev_action: the previous step's action."""
+from .go1_spec import describe
 
 
 class FakeSimulator:
     def describe(self) -> str:
-        return ENV_DOC
+        # The real Go1 contract, so prompts written against the fake match the GPU run.
+        return describe()
 
     def gate(self, source: str) -> str | None:
         try:

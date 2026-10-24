@@ -11,6 +11,8 @@ uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -U "jax[cuda12]"
 uv pip install --python .venv/bin/python -e ".[sim,dev]"
 
+bash scripts/fetch_menagerie.sh
+
 echo 'export MUJOCO_GL=egl' >> ~/.bashrc
 export MUJOCO_GL=egl
 
