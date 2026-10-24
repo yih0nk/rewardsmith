@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from .base import Attempt, Draft
 from .claude import ask_json
+from .stream import IdeaStream, OnIdea
 from .writer import SYSTEM, WRITE_SCHEMA
 
 log = logging.getLogger("rewardsmith.editor")
@@ -56,7 +57,9 @@ class ClaudeEditor:
         metrics: dict[str, Any],
         k: int,
         history: Sequence[Attempt] = (),
+        on_idea: OnIdea | None = None,
     ) -> list[Draft]:
+        """on_idea(i, idea) is called as each revision's idea streams in."""
         earlier = (
             f"Earlier attempts and what the critic said (don't repeat what failed):\n{format_history(history)}\n\n"
             if history
@@ -72,7 +75,10 @@ class ClaudeEditor:
             f"Write {k} revised reward modules that fix what the critic saw. "
             "Each idea should say what you changed and why."
         )
-        out = ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA)
+        out = ask_json(
+            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA,
+            on_text=IdeaStream(on_idea) if on_idea else None,
+        )
         return [Draft(c["source"], unified_diff(best_source, c["source"]), c["idea"]) for c in out["candidates"]][:k]
 
 

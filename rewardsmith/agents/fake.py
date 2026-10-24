@@ -37,8 +37,10 @@ def reward(state, action, prev_action):
 
 
 class FakeWriter:
-    def write(self, request: str, env_doc: str, k: int) -> list[str]:
+    def write(self, request: str, env_doc: str, k: int, on_idea=None) -> list[str]:
         template = TARGET_TEMPLATE if 'state["target_dist"]' in env_doc else TEMPLATE
+        for i in range(k if on_idea else 0):
+            on_idea(i, f"fake draft {i}: task term weighted {1.0 + i * 0.25:g}")
         return [template.format(n=i, w=1.0 + i * 0.25) for i in range(k)]
 
     def fix(self, source: str, error: str, env_doc: str) -> str:
@@ -47,10 +49,13 @@ class FakeWriter:
 
 class FakeEditor:
     def revise(
-        self, request: str, env_doc: str, best_source: str, critique: str, metrics: dict[str, Any], k: int
+        self, request: str, env_doc: str, best_source: str, critique: str, metrics: dict[str, Any], k: int,
+        on_idea=None,
     ) -> list[tuple[str, str]]:
         out = []
         for i in range(k):
+            if on_idea:
+                on_idea(i, f"fake revision {i}")
             new = best_source.rstrip("\n") + f"\n# fake revision {i}\n"
             out.append((new, unified_diff(best_source, new)))
         return out
