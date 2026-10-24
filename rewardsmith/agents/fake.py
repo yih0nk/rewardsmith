@@ -4,6 +4,7 @@ from typing import Any
 
 from ..sim.base import RunResult
 from .base import Review
+from .checker import NO_FALL, validate
 from .editor import unified_diff
 
 TEMPLATE = '''\
@@ -38,8 +39,25 @@ class FakeEditor:
         return out
 
 
+class FakeChecker:
+    """Keyword rules, so offline runs get a plausible spec."""
+
+    def write_spec(self, request: str) -> list[dict[str, Any]]:
+        text = request.lower()
+        if "backward" in text:
+            core = [{"metric": "forward_velocity", "op": "<", "value": -0.3}]
+        elif "spin" in text or "turn" in text:
+            core = [{"metric": "abs_yaw_rate", "op": ">", "value": 1.0},
+                    {"metric": "abs_forward_velocity", "op": "<", "value": 0.3}]
+        elif "walk" in text or "run" in text or "forward" in text:
+            core = [{"metric": "forward_velocity", "op": ">", "value": 0.3}]
+        else:
+            core = [{"metric": "upright", "op": ">", "value": 0.8}]
+        return validate(core + [NO_FALL])
+
+
 class FakeCritic:
-    def review(self, request: str, result: RunResult) -> Review:
+    def review(self, request: str, result: RunResult, check: dict[str, Any] | None = None) -> Review:
         score = float(result.metrics.get("fake_quality", 5.0))
         return Review(score=score, critique=f"Fake critique for '{request}': try a stronger task term.")
 

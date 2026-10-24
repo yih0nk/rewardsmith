@@ -79,7 +79,7 @@ def test_fake_round_with_halving_trains_eight_and_scores_two(tmp_path):
     )
     conn = db.connect(s.db_path)
     rid = db.create_request(conn, "walk backwards")
-    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(), FakeRanker())
+    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(), ranker=FakeRanker())
 
     detail = db.get_request(conn, rid)
     for r in detail["rounds"]:

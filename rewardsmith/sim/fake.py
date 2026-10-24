@@ -41,7 +41,13 @@ class FakeSimulator:
         return RunResult(
             metrics={
                 "fake_quality": quality,
+                # the rollout metrics PlaygroundSimulator reports, so the success check has data
                 "forward_velocity": round((h % 200 - 100) / 100, 2),
+                "lateral_velocity": round((h // 7 % 40 - 20) / 100, 2),
+                "yaw_rate": round((h // 11 % 300 - 150) / 100, 2),
+                "base_height": 0.27,
+                "upright": 0.98,
+                "fell": 0.0,
                 **terms,
             },
             reward_curve=curve,
