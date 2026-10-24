@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from rewardsmith import config, db
@@ -97,3 +98,26 @@ def test_fake_metrics_include_reward_terms(tmp_path):
     assert scored
     # FakeWriter's rewards return "task" and "energy" terms.
     assert all({"term_task", "term_energy"} <= set(c["metrics"]) for c in scored)
+
+
+def test_candidates_are_marked_training_before_results_come_back(tmp_path):
+    s = replace(_settings(tmp_path), max_rounds=1, min_rounds=1)
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    seen: list[set[str]] = []
+
+    class WatchingSimulator(FakeSimulator):
+        def run_many(self, jobs):
+            cands = db.get_request(conn, rid)["rounds"][-1]["candidates"]
+            seen.append({c["status"] for c in cands})
+            return super().run_many(jobs)
+
+    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), WatchingSimulator())
+
+    assert seen == [{"training"}]
+    detail = db.get_request(conn, rid)
+    assert {c["status"] for c in detail["rounds"][0]["candidates"]} == {"scored"}
+    # and the fake left a finished progress file in each candidate's folder
+    from rewardsmith.sim.progress import read_progress
+
+    assert all(read_progress(s.artifacts_dir / rid / f"r1c{i}")["stage"] == "done" for i in range(3))
