@@ -532,6 +532,40 @@ test("mid-round, the stage shows the candidate furthest into training", () => {
       },
     ],
   });
-  assert.match(html, /class="label">Round 1 · Candidate 2</);
+  assert.match(html, /class="stage-title">Round 1 · Candidate 2</);
   assert.match(html, /class="training-stage">Training 60%/);
+});
+
+test("bars and strips are drawn in characters from the real numbers", () => {
+  assert.equal(progress.textBar(0.42, 10), "[####......]");
+  assert.equal(progress.textBar(1.7, 4), "[####]");
+  assert.equal(progress.textBar(Number.NaN, 4), "[....]");
+  const r = {
+    id: 1,
+    n: 1,
+    status: "done",
+    best_candidate_id: 2,
+    candidates: [
+      { ...candidate, id: 1, score: 0 },
+      { ...candidate, id: 2, score: 10 },
+      { ...candidate, id: 3, score: 5 },
+      { ...candidate, id: 4, score: null },
+    ],
+  };
+  // 0–10 in half-point cells: candidates are "o", the winner "O", unscored ones are skipped.
+  assert.equal(timeline.scoreStrip(r, 21).join(""), "o·········o·········O");
+  const html = render({
+    ...base,
+    status: "running",
+    rounds: [
+      {
+        id: 1,
+        n: 1,
+        status: "running",
+        best_candidate_id: null,
+        candidates: [training({ progress: live("training", 0.5) })],
+      },
+    ],
+  });
+  assert.match(html, /role="progressbar"[^>]*><span aria-hidden="true">\[#{8}\.{8}\]/);
 });

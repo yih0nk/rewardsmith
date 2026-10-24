@@ -1,200 +1,180 @@
-/* Tablets drop the side panel's width; phones get one column and a run picker. */
+/* 1100: narrower gutter and identity columns. 800: stack the opening and the stage.
+   540: shorter indentation and single-column rows. */
 @media (max-width: 1100px) {
+  :root {
+    --gutter-width: 4ch;
+  }
+  .cmd,
+  .cmd.hero {
+    column-gap: var(--dp-spacing-gutter);
+  }
+  .cmd-note,
+  .session > .error,
+  .directory {
+    margin-left: calc(var(--gutter-width) + var(--dp-spacing-gutter));
+  }
   .result-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .evaluation {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    column-gap: 28px;
+  .round {
+    grid-template-columns: 8ch 8ch 5ch 21ch minmax(0, 1fr);
   }
-  .evaluation > .label,
-  .evaluation > .score,
-  .evaluation > .score-label {
-    grid-column: 1;
+  .round-best {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
-  .evaluation > .metrics,
-  .evaluation > .subtle,
-  .evaluation > .critic,
-  .evaluation > .flag {
+  .round-best:empty {
+    display: none;
+  }
+}
+
+@media (max-width: 800px) {
+  .cmd.hero {
+    grid-template-columns: var(--gutter-width) minmax(0, 1fr);
+  }
+  .cmd.hero > .facts {
     grid-column: 2;
+    margin-top: var(--dp-spacing-section-compact);
   }
-  .evaluation > .metrics {
-    grid-row: 1 / span 3;
-    margin-top: 0;
+  .hero-main h1 {
+    font-size: var(--dp-typography-display-narrow);
+    line-height: var(--dp-typography-display-leading-narrow);
+  }
+  .mode {
+    margin-left: 0;
+    flex-basis: 100%;
   }
   .summary {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .summary > div:nth-child(3) {
     padding-left: 0;
     border-left: 0;
   }
   .summary > div:nth-child(n + 3) {
-    border-top: 1px solid var(--rule);
+    border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
+  }
+  /* Rounds become two lines: identity and score, then the strip and counts. */
+  .round {
+    grid-template-columns: 8ch 8ch minmax(0, 1fr);
+  }
+  .track {
+    grid-column: 1 / 3;
+  }
+  .round-meta {
+    grid-column: 3;
+  }
+  .candidate-option {
+    grid-template-columns: minmax(0, 1fr) 12ch;
+    row-gap: 4px;
+  }
+  .candidate-option > .training-progress,
+  .candidate-option > .sparkline,
+  .candidate-option.live > .training-progress {
+    grid-column: 1 / -1;
+  }
+  .directory {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 860px) {
-  .sidebar {
-    display: none;
-  }
-  .mobile-brand {
-    display: block;
-  }
-  .mobile-brand .brand {
-    font-size: 20px;
-  }
-  .mobile-brand .brand svg {
-    width: 26px;
-    height: 26px;
-  }
-  .crumb {
-    display: none;
-  }
-  .mobile-runs {
-    display: block;
-    width: 100%;
-    margin-bottom: 24px;
-    padding: 10px 12px;
-    border: 1px solid var(--rule-strong);
-    border-radius: var(--radius);
-    background: var(--card);
-    font-family: var(--mono);
-    font-size: 13px;
-  }
-  .hall-card {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 600px) {
+@media (max-width: 540px) {
   :root {
-    font-size: 16px;
+    --gutter-width: 2ch;
   }
-  .topbar {
-    height: 54px;
+  .cmd {
+    padding-top: var(--dp-spacing-section-compact);
   }
-  .mode-long {
-    display: none;
+  .terminal {
+    padding: 0 var(--dp-spacing-cell);
   }
-  .mode-short {
-    display: inline;
+  .cmd,
+  .cmd.hero {
+    column-gap: var(--dp-spacing-cell);
   }
-  .content {
-    padding-top: 20px;
+  .cmd::before {
+    padding-right: 0;
+    border-right: 0;
+    text-align: left;
+    font-size: 12px;
   }
-  .masthead p {
-    font-size: 16px;
+  .cmd-note,
+  .session > .error,
+  .directory {
+    margin-left: calc(var(--gutter-width) + var(--dp-spacing-cell));
   }
-  .composer {
-    margin: 18px 0 28px;
-    padding: 14px;
+  .cmd-title {
+    line-height: 30px;
   }
   .composer-row .primary {
     flex: 1 1 100%;
   }
-  .composer input {
-    font-size: 19px;
+  .prompt {
+    display: none;
   }
-  .exp-head {
-    flex-direction: column;
-    gap: 12px;
-    padding-top: 20px;
+  .run-link {
+    grid-template-columns: 8ch minmax(0, 1fr);
+    column-gap: var(--dp-spacing-gutter);
   }
-  .pipeline {
-    flex-direction: column;
-    gap: 2px;
+  .run-text {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
+  .runs {
+    max-height: calc(5 * 72px);
   }
   .summary > div {
-    padding: 14px 12px 14px 0;
+    padding-right: var(--dp-spacing-cell);
   }
   .summary > div + div {
-    padding-left: 12px;
+    padding-left: var(--dp-spacing-cell);
   }
   .summary > div:nth-child(3) {
     padding-left: 0;
   }
-  .summary dd {
-    font-size: 24px;
-  }
-  .summary .summary-best dd.num {
-    font-size: 34px;
-  }
-  .round {
-    flex-basis: 130px;
-    max-width: none;
-  }
-  .round-score {
-    font-size: 24px;
-  }
-  .result-grid {
-    margin-left: -6px;
-    margin-right: -6px;
-  }
-  .stage-head,
-  .stage-foot {
-    padding: 10px 12px;
-  }
   .stage-foot span:last-child {
     display: none;
   }
-  .well {
-    margin: 0 10px;
-  }
-  .curve {
-    margin: 12px 10px 10px;
-  }
   .curve-plot {
-    height: 96px;
-  }
-  .well-empty strong {
-    font-size: 19px;
-  }
-  .well-empty > span:last-child {
-    font-size: 13px;
-  }
-  .evaluation {
-    display: flex;
-    padding: 18px;
+    height: 110px;
   }
   .score .num:first-child {
-    font-size: 60px;
+    font-size: var(--dp-typography-display-narrow);
   }
-  .candidate-option {
-    flex-basis: 140px;
-    max-width: none;
-    padding: 12px;
+  .round {
+    grid-template-columns: 8ch minmax(0, 1fr) 5ch;
+    column-gap: var(--dp-spacing-gutter);
   }
-  .candidate-score {
-    font-size: 24px;
+  .round .delta {
+    justify-self: end;
   }
-  .sparkline {
-    flex-wrap: wrap;
-    gap: 4px 10px;
+  .track,
+  .round-meta,
+  .round-best {
+    grid-column: 1 / -1;
   }
-  .term {
-    grid-template-columns: minmax(0, 1fr) 70px;
-    gap: 4px 12px;
+  .candidate-select {
+    grid-template-columns: 12ch minmax(0, 1fr);
+  }
+  .reward-terms > .term {
+    grid-template-columns: minmax(0, 1fr) 9ch;
+    row-gap: 4px;
   }
   .term-bar {
     grid-column: 1 / -1;
     grid-row: 2;
   }
-  .reward-terms {
-    padding: 18px 16px 14px;
+  .technical details > :not(summary) {
+    margin-left: var(--dp-spacing-gutter);
   }
   .log li {
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 2px 12px;
+    gap: 0 var(--dp-spacing-gutter);
   }
   .log li > span:last-child {
     grid-column: 1 / -1;
   }
-  .hall-body {
-    padding: 18px;
-  }
-  footer .label:last-child {
-    margin-left: 0;
+  .gallery {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

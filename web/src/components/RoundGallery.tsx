@@ -18,11 +18,11 @@ export default function RoundGallery({
     typeof window !== "undefined" &&
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   return (
-    <section aria-label="Best rollout of each round">
-      <div className="section-heading">
-        <h3>Every round, side by side</h3>
+    <section className="cmd" aria-label="Best rollout of each round">
+      <h2 className="cmd-title">
+        Every round, side by side
         <span className="subtle">{tiles.length} winning rollouts</span>
-      </div>
+      </h2>
       <div className="gallery">
         {tiles.map(({ round, best, video }) => (
           <figure key={round.id}>

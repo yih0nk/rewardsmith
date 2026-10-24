@@ -1,5 +1,9 @@
 import { Candidate } from "../api";
-import TrainingProgress, { Sparkline, liveState } from "./TrainingProgress";
+import TrainingProgress, {
+  Sparkline,
+  liveState,
+  textBar,
+} from "./TrainingProgress";
 
 // A div rather than one big button, so the progress bar keeps its role;
 // the button stretches over the card, so the whole card still selects it.
@@ -51,7 +55,7 @@ export default function CandidateCard({
       </button>
       {c.score != null && (
         <span className="score-bar" aria-hidden="true">
-          <i style={{ width: `${Math.min(10, Math.max(0, c.score)) * 10}%` }} />
+          {textBar(c.score / 10, 10)}
         </span>
       )}
       {live ? (

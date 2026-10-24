@@ -3,8 +3,10 @@ import { Candidate } from "../api";
 // The term_* metrics a candidate reported, one bar per named reward term.
 export default function RewardTerms({
   metrics,
+  className = "",
 }: {
   metrics: Candidate["metrics"];
+  className?: string;
 }) {
   const terms = Object.entries(metrics ?? {}).filter(
     (entry): entry is [string, number] =>
@@ -15,8 +17,8 @@ export default function RewardTerms({
   if (terms.length === 0) return null;
   const largest = Math.max(...terms.map(([, v]) => Math.abs(v)), 0.001);
   return (
-    <section className="reward-terms">
-      <h3>Reward breakdown</h3>
+    <section className={`reward-terms ${className}`}>
+      <h2 className="cmd-title">Reward breakdown</h2>
       {terms.map(([key, value]) => (
         <div className={`term ${value < 0 ? "negative" : ""}`} key={key}>
           <span className="term-name">{key.slice(5).replaceAll("_", " ")}</span>

@@ -6,15 +6,13 @@ export default function QrPanel() {
     <figure className="qr">
       <QRCodeSVG
         value={location.origin}
-        size={88}
-        fgColor="#1b1d18"
-        bgColor="transparent"
+        size={96}
+        fgColor="#000000"
+        bgColor="#66ff66"
+        marginSize={2}
         title="QR code linking to this board"
       />
-      <figcaption>
-        <span className="label">On your phone</span>
-        Scan to try it yourself
-      </figcaption>
+      <figcaption>Scan to try it yourself</figcaption>
     </figure>
   );
 }

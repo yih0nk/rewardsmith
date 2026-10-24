@@ -51,17 +51,19 @@ or candidates is assumed by the UI.
 
 `#<request id>` links directly to an experiment. `#hall` is the hall of fame: candidates
 someone flagged as reward hacking from the evaluation panel. A completed run with two or
-more rollout videos also shows each round's winner side by side. The sidebar has a QR
-code to the board for judges; it is hidden on phones.
+more rollout videos also shows each round's winner side by side. The opening lists the
+mode, the run count and a QR code to the board for judges.
 
-Each round shows its winner's score, the change from the previous scored round and every
-candidate's score on a 0–10 track. The run summary compares the best score with round 1.
-While a round trains, the stage shows the candidate furthest along, with its live reward
-curve under the video.
+The board is styled as a terminal: a black page in green IBM Plex Mono (bound to the
+`TerminalPlex` alias), laid out as numbered sections with the content in an output column.
+Each round row shows its winner's score, the change from the previous scored round and a
+0–10 strip with every candidate as `o` and the winner as `O`. The run summary compares
+the best score with round 1. Live training progress is drawn as a text bar from the real
+fraction, still exposed as an ARIA progress bar. While a round trains, the stage shows the
+candidate furthest along, with its reward curve under the video. The only motion is the
+cursor after the wordmark, which stops under reduced motion.
 
-Type is Fraunces (headings), Newsreader (text) and IBM Plex Mono (data), loaded from
-Google Fonts with serif and monospace fallbacks. Styles live in `src/styles/`, one file
-per area, with shared tokens in `base.css`.
+Styles live in `src/styles/`, one file per area, with the design tokens in `base.css`.
 
 ## Build
 

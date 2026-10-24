@@ -1,46 +1,60 @@
-/* Paper, ink and one dark instrument well. Serif for words, mono for numbers. */
+/* Terminal: a black page in green IBM Plex Mono, laid out as commands and their output. */
+
+/* "TerminalPlex" is the one face. It binds to an installed IBM Plex Mono first,
+   then to the Google Fonts copy loaded in index.html. */
+@font-face {
+  font-family: "TerminalPlex";
+  font-weight: 400;
+  src: local("IBM Plex Mono"), local("IBMPlexMono");
+}
+@font-face {
+  font-family: "TerminalPlex";
+  font-weight: 500;
+  src: local("IBM Plex Mono Medium"), local("IBMPlexMono-Medium");
+}
+
 :root {
-  --paper: #f3efe6;
-  --paper-deep: #e9e3d6;
-  --card: #fbf9f4;
-  --ink: #1b1d18;
-  --ink-2: #44483f;
-  --ink-3: #686a5f;
-  --rule: #d9d2c2;
-  --rule-strong: #b8af9b;
+  --dp-color-ground: #000000;
+  --dp-color-ink: #66ff66;
+  --dp-color-ink-muted: #58ca58;
+  --dp-color-rule: #255325;
+  --dp-color-emphasis: #ffffff;
+  --dp-typography-face: "TerminalPlex", "IBM Plex Mono", ui-monospace, Menlo,
+    monospace;
+  --dp-typography-body: 18px;
+  --dp-typography-label: 16px;
+  --dp-typography-heading: 24px;
+  --dp-typography-display: 40px;
+  --dp-typography-display-narrow: 32px;
+  --dp-typography-body-leading: 1.5;
+  --dp-typography-display-leading: 1.2;
+  --dp-typography-display-leading-narrow: 1.25;
+  --dp-typography-list-leading: 27px;
+  --dp-spacing-cell: 1ch;
+  --dp-spacing-gutter: 2ch;
+  --dp-spacing-column-gap: 3ch;
+  --dp-spacing-column-gap-wide: 4ch;
+  --dp-spacing-inset: 9px;
+  --dp-spacing-row-compact: 18px;
+  --dp-spacing-row: 27px;
+  --dp-spacing-section-compact: 36px;
+  --dp-spacing-section: 54px;
+  --dp-radius-control: 0;
+  --dp-border-hairline: 1px;
+  --dp-motion-cursor: 1.2s;
 
-  --signal: #b23a0b;
-  --signal-soft: #f6e1d3;
-  --good: #2b6a3a;
-  --good-soft: #dfeadb;
-  --bad: #a3372a;
-  --bad-soft: #f5dfd9;
+  /* The command gutter: room for a two-digit number and its marker. */
+  --gutter-width: 6ch;
 
-  /* The instrument well: video, curves and code sit on this. */
-  --scope: #11140f;
-  --scope-2: #1a1f17;
-  --scope-grid: rgba(196, 232, 170, 0.09);
-  --scope-rule: rgba(196, 232, 170, 0.18);
-  --scope-text: #d6dfcb;
-  --scope-dim: #92a089;
-  --phosphor: #a6e27c;
-
-  --display: "Fraunces", "Iowan Old Style", Georgia, serif;
-  --serif: "Newsreader", "Iowan Old Style", Georgia, serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-
-  --radius: 3px;
-  --shadow: 0 1px 0 rgba(27, 29, 24, 0.04), 0 8px 24px -16px rgba(27, 29, 24, 0.25);
-  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-
-  color-scheme: light;
-  font-family: var(--serif);
-  font-size: 17px;
-  line-height: 1.5;
-  color: var(--ink);
-  background: var(--paper);
+  color-scheme: dark;
+  font-family: var(--dp-typography-face);
+  font-size: var(--dp-typography-body);
+  font-weight: 400;
+  line-height: var(--dp-typography-body-leading);
+  color: var(--dp-color-ink);
+  background: var(--dp-color-ground);
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  font-variant-ligatures: none;
   -webkit-font-smoothing: antialiased;
 }
 * {
@@ -48,46 +62,56 @@
 }
 body {
   margin: 0;
-  background: var(--paper);
+  background: var(--dp-color-ground);
   overflow-x: hidden;
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
+  border-radius: var(--dp-radius-control);
 }
 button {
   cursor: pointer;
 }
 button:disabled {
   cursor: default;
-  opacity: 0.45;
 }
 a {
   color: inherit;
 }
+::selection {
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+}
 :focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline: 2px solid var(--dp-color-emphasis);
+  outline-offset: 2px;
+}
+h1,
+h2,
+h3,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
 }
 h1,
 h2,
 h3 {
-  font-family: var(--display);
-  font-weight: 450;
-  letter-spacing: -0.01em;
-  line-height: 1.1;
-  margin: 0;
-  font-variation-settings: "SOFT" 30;
+  font-weight: 500;
 }
-p {
-  margin: 0;
+strong,
+b {
+  font-weight: 500;
 }
-code,
 pre,
-kbd {
-  font-family: var(--mono);
+code {
+  font-family: inherit;
 }
 .sr-only {
   position: absolute;
@@ -98,113 +122,83 @@ kbd {
   white-space: nowrap;
 }
 
-/* Small caps-style labels: the instrument's engraving. */
-.eyebrow,
-.label {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-.num {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
+/* Supporting text and engraved labels. */
+.label,
+.eyebrow {
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
 }
 .subtle {
-  color: var(--ink-3);
-  font-size: 14px;
+  color: var(--dp-color-ink-muted);
+  font-size: var(--dp-typography-label);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.em {
+  color: var(--dp-color-emphasis);
 }
 
+/* A filled green control with black text marks the action. Hover inverts it. */
 .primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-  padding: 11px 18px;
-  border-radius: var(--radius);
-  font-family: var(--mono);
-  font-size: 13px;
+  gap: 1ch;
+  min-height: 45px;
+  padding: 0 2ch;
+  border: var(--dp-border-hairline) solid var(--dp-color-ink);
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
   font-weight: 500;
-  letter-spacing: 0.02em;
-  transition: background 0.15s, transform 0.15s var(--ease);
 }
 .primary:not(:disabled):hover {
-  background: #33372e;
+  background: var(--dp-color-ground);
+  color: var(--dp-color-ink);
 }
-.primary:not(:disabled):active {
-  transform: translateY(1px);
+.primary:disabled {
+  border-color: var(--dp-color-rule);
+  background: transparent;
+  color: var(--dp-color-ink-muted);
 }
+/* Bracketed links: the brackets are decoration, hidden from assistive tech. */
 .link {
-  border: 0;
   padding: 0;
+  border: 0;
   background: none;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  color: var(--ink-2);
-  text-decoration: underline;
-  text-decoration-color: var(--rule-strong);
-  text-underline-offset: 4px;
+  color: var(--dp-color-ink);
+  font-size: var(--dp-typography-label);
+  text-decoration: none;
+}
+.link::before {
+  content: "[";
+  content: "[" / "";
+}
+.link::after {
+  content: "]";
+  content: "]" / "";
 }
 .link:not(:disabled):hover {
-  color: var(--ink);
-  text-decoration-color: var(--ink);
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+}
+.link:disabled {
+  color: var(--dp-color-ink-muted);
 }
 
-/* Status lamps. Running ones breathe. */
-.lamp {
+/* The one moving thing on the page. */
+.cursor {
   display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--rule-strong);
-  flex-shrink: 0;
+  width: 1ch;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--dp-color-ink);
+  animation: blink var(--dp-motion-cursor) steps(1, end) infinite;
 }
-.lamp.running,
-.lamp.queued {
-  background: var(--signal);
-  animation: breathe 1.6s ease-in-out infinite;
-}
-.lamp.done {
-  background: var(--good);
-}
-.lamp.failed {
-  background: var(--bad);
-}
-@keyframes breathe {
+@keyframes blink {
   50% {
-    opacity: 0.35;
-  }
-}
-@keyframes rise {
-  from {
     opacity: 0;
-    transform: translateY(6px);
-  }
-}
-@keyframes fade {
-  from {
-    opacity: 0;
-  }
-}
-@keyframes shimmer {
-  to {
-    background-position: -200% 0;
-  }
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes march {
-  to {
-    background-position: 24px 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
