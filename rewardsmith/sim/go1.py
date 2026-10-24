@@ -6,8 +6,12 @@ velocity command (our behaviors don't track a joystick).
 
 With a scene (see scene.py), the env loads the compiled scene instead of the
 stock flat floor, places every object afresh at each reset, adds per-object
-features for the reward, and appends each object's relative position (and the
-episode time) to the policy's observation so it can learn the skill.
+features for the reward, and appends each object's relative position to the
+policy's observation so it can learn the skill.
+
+The policy does not observe the episode time: the round preset resets every
+training env after about 320 steps (6.4 s), so a time input is out of range for
+most of a 20 s episode, and scene policies flipped once it was.
 """
 
 import os
@@ -162,7 +166,7 @@ class Go1Env(joystick.Joystick):
 
     def _scene_obs(self, data: mjx.Data) -> jax.Array:
         """What the policy sees of the scene: per object its relative position, distance and
-        bearing (as cos, sin), its velocity if movable, then the episode's elapsed fraction."""
+        bearing (as cos, sin), and its velocity if movable."""
         feats = self.scene_features(data)
         yaw = self._yaw(data)
         c, s = jnp.cos(yaw), jnp.sin(yaw)
@@ -175,8 +179,6 @@ class Go1Env(joystick.Joystick):
             if p.obj.movable:
                 v = feats[f"{n}_vel"]
                 parts.append(jnp.stack([c * v[0] + s * v[1], -s * v[0] + c * v[1]]))
-        episode_s = self._config.episode_length * self.dt
-        parts.append(jnp.asarray(data.time / episode_s, dtype=jnp.float32)[None])
         return jnp.concatenate(parts)
 
     def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> dict[str, jax.Array]:
@@ -185,6 +187,8 @@ class Go1Env(joystick.Joystick):
         # Joystick reads the joints as qpos[7:] and qvel[6:]; hand it the robot's slice only.
         robot = data.replace(qpos=data.qpos[:ROBOT_NQ], qvel=data.qvel[:ROBOT_NV])
         obs = super()._get_obs(robot, info)
+        if not self._placed:  # rough ground alone: nothing more to see
+            return obs
         extra = self._scene_obs(data)
         return {k: jnp.concatenate([v, extra]) for k, v in obs.items()}
 

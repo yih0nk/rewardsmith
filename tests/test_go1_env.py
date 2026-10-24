@@ -122,8 +122,8 @@ def test_objects_are_placed_afresh_within_their_ranges(scene_env, scene_states):
 def test_scene_adds_to_the_observation(env, scene_env, scene_states):
     plain = jax.jit(env.reset)(jax.random.PRNGKey(0))
     per_object = 5 * 3 + 2  # rel x, y, dist, cos, sin each; crate also has velocity
-    assert scene_states.obs["state"].shape[-1] == plain.obs["state"].shape[-1] + per_object + 1  # + time
-    assert scene_states.obs["privileged_state"].shape[-1] == plain.obs["privileged_state"].shape[-1] + per_object + 1
+    assert scene_states.obs["state"].shape[-1] == plain.obs["state"].shape[-1] + per_object  # no time: see go1.py
+    assert scene_states.obs["privileged_state"].shape[-1] == plain.obs["privileged_state"].shape[-1] + per_object
 
 
 def test_scene_env_steps_with_finite_rewards(scene_env, scene_state):
@@ -142,9 +142,11 @@ def test_rough_terrain_scene_builds():
     env = go1.make_env(WALK_BACKWARDS, scene=rough)
     assert env.mj_model.geom("floor").type == 1  # mjGEOM_HFIELD
     assert env._config.njmax > 40
-    # No objects, so no mocap bodies: reset and step must still work.
+    # No objects, so no mocap bodies: reset and step must still work, with the plain observation.
     state = jax.jit(env.step)(jax.jit(env.reset)(jax.random.PRNGKey(0)), jnp.zeros(env.action_size))
     assert jnp.isfinite(state.reward)
+    plain = jax.jit(go1.make_env(WALK_BACKWARDS).reset)(jax.random.PRNGKey(0))
+    assert state.obs["state"].shape == plain.obs["state"].shape
 
 
 def test_reward_reading_a_missing_object_is_refused():
