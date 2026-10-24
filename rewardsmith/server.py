@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import config, db
 
+config.load_dotenv()  # here, not in main(): the console script imports this module first
 settings = config.load()
 settings.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -28,12 +29,14 @@ def get_conn() -> Iterator[sqlite3.Connection]:
 
 
 class NewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)  # "   ab" must not pass min_length
+
     text: str = Field(min_length=3, max_length=300)
 
 
 @app.post("/api/requests", status_code=201)
 def create_request(body: NewRequest, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    rid = db.create_request(conn, body.text.strip())
+    rid = db.create_request(conn, body.text)
     db.log_event(conn, rid, "queued", "Request queued")
     return {"id": rid}
 

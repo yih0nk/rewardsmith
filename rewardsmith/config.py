@@ -21,7 +21,11 @@ def _flag(name: str, default: str) -> bool:
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
-    """Copy KEY=value lines from .env into the environment. Variables already set win."""
+    """Copy KEY=value lines from .env into the environment. Variables already set win.
+
+    The server module and the worker's main() call this; load() does not, so code
+    that only builds Settings (tests included) never picks up a developer's .env.
+    """
     if not path.is_file():
         return
     for line in path.read_text().splitlines():
@@ -32,8 +36,7 @@ def load_dotenv(path: Path = Path(".env")) -> None:
 
 
 def load() -> Settings:
-    load_dotenv()
-    home =Path(os.environ.get("REWARDSMITH_HOME", ".rewardsmith"))
+    home = Path(os.environ.get("REWARDSMITH_HOME", ".rewardsmith"))
     return Settings(
         db_path=Path(os.environ.get("REWARDSMITH_DB", home / "rewardsmith.db")),
         artifacts_dir=Path(os.environ.get("REWARDSMITH_ARTIFACTS", home / "artifacts")),

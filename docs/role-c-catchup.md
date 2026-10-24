@@ -23,7 +23,7 @@ What other roles read or write.
 - **Hall of fame:** `candidates` has two new columns, `flagged_at` (REAL, NULL = not flagged) and `flag_note` (TEXT). Older db files gain them when `db.connect()` opens them.
 - **New endpoints:** `POST /api/candidates/{id}/flag` with `{"note": "..."}` (1 to 200 characters), `DELETE /api/candidates/{id}/flag`, `GET /api/hall-of-fame` (flagged candidates with `request_id`, `request_text`, `round_n`, newest flag first).
 - **Worker startup:** `db.fail_interrupted()` marks requests left `running` as `failed`, with the event "The worker restarted mid-run…". This assumes **one worker**: starting a second worker would fail the first one's run.
-- **`.env`:** `config.load()` now reads `.env` from the folder the process starts in. Variables already exported win, and empty values are skipped.
+- **`.env`:** the server module and the worker's `main()` call `config.load_dotenv()`, which reads `.env` from the folder the process starts in. Variables already exported win, and empty values are skipped. `config.load()` itself never reads `.env`, so tests stay isolated from a developer's `.env`.
 - **URL routes:** `#<request id>` opens a request; `#hall` is the hall of fame.
 - **npm:** one new dependency, `qrcode.react` 4.2.0.
 
@@ -31,15 +31,16 @@ What other roles read or write.
 
 | File | Owner | Change |
 |---|---|---|
-| `rewardsmith/orchestrator.py` | B | Two lines at the top of `main()` that call `db.fail_interrupted()`. `run_request` is untouched. |
+| `rewardsmith/orchestrator.py` | B | Lines at the top of `main()` that load `.env` and call `db.fail_interrupted()`. `run_request` is untouched. |
 | `rewardsmith/sim/fake.py` | A | `run()` adds `**_fake_terms(source)` to its metrics; two new helpers at the end of the file. |
-| `rewardsmith/config.py` | Shared | New `load_dotenv()`, called first in `load()`. |
+| `rewardsmith/config.py` | Shared | New `load_dotenv()`. |
 | `tests/test_loop.py` | Shared | One new test at the end. |
 | `.env.example`, `README.md` | Shared | Documents `.env` loading and `REWARDSMITH_SUCCESS_SCORE=11` for demos. |
 
 ## Fixes
 
 - **Intermittent 500s from the API.** FastAPI used a request's SQLite connection from two threads. `db.connect()` passes `check_same_thread=False`; each connection still serves one request at a time.
+- **Whitespace-only behaviors were accepted.** Five spaces passed the 3-character minimum and queued a request with empty text. Request text is now trimmed before validation.
 - **`python -m rewardsmith.server` exited without starting.** `server.py` had no `__main__` block. web/README now uses the same commands as the root README.
 - **The logo couldn't reach the home view.** The request poll re-selected the newest run every 2 s. The board now auto-selects only on first load.
 - **Runs could stop after round 1.** Not a code change: the worker stops at `REWARDSMITH_SUCCESS_SCORE` (default 8). Set it to 11 for demos so every round runs.

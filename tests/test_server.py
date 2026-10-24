@@ -8,12 +8,19 @@ from fastapi.testclient import TestClient
 from rewardsmith import config, db
 
 
-def test_create_and_read_request(tmp_path, monkeypatch):
+def _client(tmp_path, monkeypatch) -> TestClient:
+    """A fresh server on a db in tmp_path. Runs from tmp_path so the server
+    module's .env loading can't pick up a developer's .env."""
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("REWARDSMITH_HOME", str(tmp_path))
     import rewardsmith.server as server
 
     importlib.reload(server)
-    client = TestClient(server.app)
+    return TestClient(server.app)
+
+
+def test_create_and_read_request(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
 
     created = client.post("/api/requests", json={"text": "walk backwards"})
     assert created.status_code == 201
@@ -38,14 +45,6 @@ def test_connection_works_across_threads(tmp_path):
     t.join()
     rid = db.create_request(box["conn"], "walk backwards")
     assert db.get_request(box["conn"], rid)["text"] == "walk backwards"
-
-
-def _client(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setenv("REWARDSMITH_HOME", str(tmp_path))
-    import rewardsmith.server as server
-
-    importlib.reload(server)
-    return TestClient(server.app)
 
 
 def _scored_candidate(tmp_path) -> tuple[str, int]:
@@ -122,3 +121,21 @@ def test_dotenv_fills_unset_variables_only(tmp_path, monkeypatch):
     assert os.environ["RS_TEST_SET"] == "from-shell"
     for key in ("RS_TEST_A", "RS_TEST_B"):
         monkeypatch.delenv(key)
+
+
+def test_request_text_is_trimmed_before_validation(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    assert client.post("/api/requests", json={"text": "     "}).status_code == 422
+    assert client.post("/api/requests", json={"text": "  ab  "}).status_code == 422
+    rid = client.post("/api/requests", json={"text": "  spin  "}).json()["id"]
+    assert client.get(f"/api/requests/{rid}").json()["text"] == "spin"
+
+
+def test_settings_ignore_dotenv_until_an_entry_point_loads_it(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("REWARDSMITH_ROUNDS=42\n")
+    monkeypatch.delenv("REWARDSMITH_ROUNDS", raising=False)
+    assert config.load().max_rounds == 5
+    config.load_dotenv()
+    assert config.load().max_rounds == 42
+    monkeypatch.delenv("REWARDSMITH_ROUNDS")

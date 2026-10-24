@@ -89,7 +89,14 @@ export function HallCard({
   return (
     <article className="hall-card">
       {entry.video_path ? (
-        <video src={artifactUrl(entry.video_path)} controls muted loop playsInline />
+        <video
+          src={artifactUrl(entry.video_path)}
+          controls
+          muted
+          loop
+          playsInline
+          preload="metadata"
+        />
       ) : (
         <div className="video-empty">
           <span>No rollout video</span>
