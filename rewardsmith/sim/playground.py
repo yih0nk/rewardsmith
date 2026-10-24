@@ -7,6 +7,7 @@ Settings (env vars):
   REWARDSMITH_RANDOMIZE 1 = train on domain-randomized robots (default 1: about 5% slower,
                         same learning within a round, and spin in place falls less)
   REWARDSMITH_PUSH      1 = train with random pushes (default 0)
+  REWARDSMITH_ROBUSTNESS  1 = score the policy on unseen robots, seeds and pushes (default 1)
 """
 
 import os
@@ -16,7 +17,7 @@ from pathlib import Path
 # before the training processes start. Has to be set before jax initializes.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
+from . import gate, go1, go1_spec, parallel, render, robustness, train  # noqa: E402
 from .base import RunResult  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 
@@ -29,6 +30,7 @@ class PlaygroundSimulator:
         impl: str | None = None,
         randomize: bool | None = None,
         push: bool | None = None,
+        robustness: bool | None = None,
     ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
@@ -37,6 +39,7 @@ class PlaygroundSimulator:
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
         self.randomize = _flag("REWARDSMITH_RANDOMIZE", "1") if randomize is None else randomize
         self.push = _flag("REWARDSMITH_PUSH") if push is None else push
+        self.robustness = _flag("REWARDSMITH_ROBUSTNESS", "1") if robustness is None else robustness
 
     def describe(self) -> str:
         return go1_spec.describe()
@@ -53,6 +56,7 @@ class PlaygroundSimulator:
         result = train.train(train_env, self.preset, on_progress=progress.point, randomize=self.randomize)
         progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
+        robust = robustness.evaluate(env, result, rollout, out_dir) if self.robustness else {}
         (out_dir / "reward.py").write_text(source)
 
         last = result.curve[-1]
@@ -60,6 +64,7 @@ class PlaygroundSimulator:
             "episode_reward": round(last.episode_reward, 3),
             **{f"term_{k}": round(v, 3) for k, v in last.terms.items()},
             **{k: round(v, 3) for k, v in rollout.items()},
+            **robust,
             "train_s": round(result.train_s, 1),
             "compile_s": round(result.compile_s, 1),
             "train_randomized": int(self.randomize),
