@@ -51,8 +51,17 @@ or candidates is assumed by the UI.
 
 `#<request id>` links directly to an experiment. `#hall` is the hall of fame: candidates
 someone flagged as reward hacking from the evaluation panel. A completed run with two or
-more rollout videos also shows each round's winner side by side. The home view has a QR
+more rollout videos also shows each round's winner side by side. The sidebar has a QR
 code to the board for judges; it is hidden on phones.
+
+Each round shows its winner's score, the change from the previous scored round and every
+candidate's score on a 0–10 track. The run summary compares the best score with round 1.
+While a round trains, the stage shows the candidate furthest along, with its live reward
+curve under the video.
+
+Type is Fraunces (headings), Newsreader (text) and IBM Plex Mono (data), loaded from
+Google Fonts with serif and monospace fallbacks. Styles live in `src/styles/`, one file
+per area, with shared tokens in `base.css`.
 
 ## Build
 
