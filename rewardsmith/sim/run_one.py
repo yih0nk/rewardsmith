@@ -6,9 +6,13 @@
 Writes <out_dir>/result.json, plus frames/NN.png for the critic. On failure,
 result.json holds {"error": "..."} and the exit code is 1.
 
---serve starts a warm process: it does the slow imports first, then waits for
-parallel.py to write job.json ({"reward", "out_dir", "preset", "impl"}) and runs
-that job. The imports take ~15 s on the pod, so they overlap the writer's call.
+--serve starts a warm process: it does the slow imports first (~15 s on the pod,
+overlapping the writer's Claude call), then answers
+parallel.py's messages in job.json:
+  {"kind": "gate", "seq", "source", "scene", "impl"}  gate the source and write
+      {"seq", "error"} (or {"seq", "crash"} for a non-reward failure) to job.gate.json;
+      then wait for the next message. The orchestrator's fix-retry loop reuses this.
+  {"kind": "train", "reward", "out_dir", "preset", "impl", ...}  run that job and exit.
 """
 
 import argparse
@@ -60,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.serve:
         _warm_up(args.fake)
-        job = _wait_for_job(args.serve, args.parent_pid or os.getppid())
+        job = _serve_gates(args.serve, args.parent_pid or os.getppid(), args.fake)
         if job is None:
             return 0
         args.reward, args.out_dir = Path(job["reward"]), Path(job["out_dir"])
@@ -115,14 +119,46 @@ def _warm_up(fake: bool) -> None:
     jax.devices()
 
 
+def _serve_gates(path: Path, parent: int, fake: bool) -> dict | None:
+    """Answer gate messages until the train job arrives; return it (None: none came)."""
+    while True:
+        job = _wait_for_job(path, parent)
+        if job is None or job.get("kind", "train") == "train":
+            return job
+        answer: dict = {"seq": job["seq"]}
+        try:
+            answer["error"] = _gate(job, fake)
+        except Exception:
+            answer["crash"] = traceback.format_exc()[-3000:]
+        tmp = path.with_name(path.stem + ".gate.tmp")
+        tmp.write_text(json.dumps(answer))
+        os.replace(tmp, path.with_name(path.stem + ".gate.json"))
+
+
+def _gate(job: dict, fake: bool) -> str | None:
+    from .scene import parse
+
+    scene = parse(job["scene"]) if job.get("scene") else None
+    if fake:
+        from .fake import FakeSimulator
+
+        return FakeSimulator().gate(job["source"], scene)
+    from . import gate
+
+    return gate.check_reward(job["source"], impl=job.get("impl"), scene=scene)
+
+
 def _wait_for_job(path: Path, parent: int) -> dict | None:
-    """The job, once parallel.py writes it; None if the parent went away or never sent one."""
+    """The next message, once parallel.py writes it (taken off the file, so the next one
+    can follow); None if the parent went away or never sent one."""
     start = time.monotonic()
     while not path.exists():
         if not _alive(parent) or time.monotonic() - start > SERVE_MAX_WAIT_S:
             return None
         time.sleep(SERVE_POLL_S)
-    return json.loads(path.read_text())
+    job = json.loads(path.read_text())
+    path.unlink()
+    return job
 
 
 def _alive(pid: int) -> bool:

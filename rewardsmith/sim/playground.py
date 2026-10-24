@@ -11,6 +11,7 @@ Settings (env vars):
   REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
 """
 
+import logging
 import os
 import threading
 from pathlib import Path
@@ -29,6 +30,8 @@ from . import gate, go1, go1_spec, parallel, render, robustness, scene_eval, tra
 from .base import Cull, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 from .scene import EMPTY, SceneSpec  # noqa: E402
+
+log = logging.getLogger("rewardsmith.sim")
 
 
 class PlaygroundSimulator:
@@ -61,6 +64,23 @@ class PlaygroundSimulator:
         return go1_spec.describe(scene or EMPTY)
 
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
+        """Gate in a warm training process when one is free, else here.
+
+        In a warm process the gates of a round run side by side instead of one at a
+        time, on a process whose imports and first compile are already paid, and the
+        process that passed a source then trains it (see parallel.WarmPool).
+        """
+        pool = self._pool
+        warm = pool.reserve() if pool else None
+        if warm is not None:
+            try:
+                error = warm.gate(source, scene, self.impl)
+            except parallel.WarmProcessError:
+                log.exception("warm gate failed; gating in the worker instead")
+                pool.discard(warm)
+            else:
+                pool.release(warm)
+                return error
         with self._gate_lock:
             return gate.check_reward(source, impl=self.impl, scene=scene)
 
