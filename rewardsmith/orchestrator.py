@@ -5,6 +5,9 @@ terrain), unless the request came with one. The spec shapes the env notes, so
 every reward is written against that scene's features.
 Round 1: the writer drafts K rewards from the request.
 Round 2+: the editor revises the best reward so far, using the critic's notes.
+
+A run can be paused (it stops at the next round boundary and later resumes from the
+database) or cancelled (it stops at the next checkpoint). See _checkpoint.
 """
 
 import logging
@@ -44,6 +47,24 @@ class Best:
         return (self.passed, self.score)
 
 
+class Paused(Exception):
+    """A pause was requested and the run reached a round boundary."""
+
+
+class Cancelled(Exception):
+    """A cancel was requested and the run reached a checkpoint."""
+
+
+def _checkpoint(conn: sqlite3.Connection, rid: str, *, round_boundary: bool) -> None:
+    """Act on a pending pause or cancel. Cancel stops at any checkpoint; pause only between
+    rounds, so a resumed run never has a half-finished round to pick up."""
+    control = db.control_of(conn, rid)
+    if control == "cancel":
+        raise Cancelled
+    if control == "pause" and round_boundary:
+        raise Paused
+
+
 def run_request(
     conn: sqlite3.Connection,
     settings: config.Settings,
@@ -60,16 +81,21 @@ def run_request(
     rid, text = req["id"], req["text"]
     halving = settings.halving if ranker is not None else ()
     k = halving[0] if halving else settings.candidates_per_round
-    best: Best | None = None
-    ranked: list[Best] = []  # every scored candidate so far, best first
-    scene = _make_scene(conn, req, scener)
+    # A resumed run picks up after its last finished round, with the same scene and check.
+    start, best, ranked = _resume_state(conn, rid)  # ranked: every scored candidate, best first
+    if start > 1:
+        db.log_event(conn, rid, "control", f"Resuming at round {start}")
+        scene = scene_spec.parse(req["scene"]) if req.get("scene") is not None else scene_spec.EMPTY
+    else:
+        scene = _make_scene(conn, req, scener)
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
     critic_request = text if not scene.objects else f"{text}\n\nScene: {scene.summary()}"
     spec = _success_spec(conn, req, checker)
     check_error = db.get_request(conn, rid).get("success_check_error")
 
-    for n in range(1, settings.max_rounds + 1):
+    for n in range(start, settings.max_rounds + 1):
+        _checkpoint(conn, rid, round_boundary=True)
         round_id = db.add_round(conn, rid, n)
         db.log_event(conn, rid, "round", f"Round {n} started")
         try:
@@ -108,6 +134,7 @@ def run_request(
                 for idx, (cid, src) in enumerate(zip(cids, gated))
                 if src is not None
             ]
+            _checkpoint(conn, rid, round_boundary=False)  # before the GPU time
             if ready:
                 db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
             for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
@@ -140,6 +167,7 @@ def run_request(
                 db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
                 trained.append((cid, src, result, check))
 
+            _checkpoint(conn, rid, round_boundary=False)  # before the critic's Claude calls
             # One Claude call per video, all at once; each takes tens of seconds.
             with ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
                 reviews = list(pool.map(lambda t: _safe_review(critic, critic_request, t[2], t[3]), trained))
@@ -173,6 +201,19 @@ def run_request(
 
     db.set_request(conn, rid, succeeded=int(best is not None and _succeeded(best, settings)))
     return best
+
+
+def _resume_state(conn: sqlite3.Connection, rid: str) -> tuple[int, Best | None, list[Best]]:
+    """(first round to run, best so far, every scored candidate best first), from the
+    rounds already in the database. A fresh request starts at round 1 with nothing."""
+    rounds = db.get_request(conn, rid)["rounds"]
+    ranked = [
+        Best(c["id"], c["reward_src"], c["score"], c["critique"] or "", c["metrics"] or {},
+             (c.get("check_result") or {}).get("pass", True))
+        for r in rounds for c in r["candidates"] if c["status"] == "scored"
+    ]
+    ranked.sort(key=lambda b: b.rank(), reverse=True)  # stable: on a tie the earlier candidate stays ahead
+    return len(rounds) + 1, (ranked[0] if ranked else None), ranked
 
 
 def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | None) -> SceneSpec:
@@ -407,8 +448,15 @@ def main() -> None:
             best = run_request(
                 conn, settings, req, writer, editor, critic, sim, ranker=ranker, checker=checker, scener=scener
             )
-            db.set_request(conn, req["id"], status="done")
+            db.set_request(conn, req["id"], status="done", control=None)  # a late pause has nothing left to pause
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")
+        except Paused:
+            rounds_done = len(db.get_request(conn, req["id"])["rounds"])
+            log.info("request %s paused after round %d", req["id"], rounds_done)
+            db.finish_paused(conn, req["id"], rounds_done)
+        except Cancelled:
+            log.info("request %s cancelled", req["id"])
+            db.finish_cancelled(conn, req["id"])
         except Exception as exc:
             log.exception("request %s failed", req["id"])
             db.fail_request(conn, req["id"], _describe(exc))

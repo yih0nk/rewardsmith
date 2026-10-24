@@ -6,6 +6,7 @@ import FlagControl from "./FlagControl";
 import RewardTerms from "./RewardTerms";
 import RoundGallery from "./RoundGallery";
 import RoundTimeline, { formatDelta, roundScore } from "./RoundTimeline";
+import RunControls from "./RunControls";
 import TrainingProgress, { RewardCurve, liveState } from "./TrainingProgress";
 
 export default function RequestDetail({
@@ -81,9 +82,13 @@ export default function RequestDetail({
       ? "Queued"
       : running
         ? "In progress"
-        : detail.status === "failed"
-          ? "Failed"
-          : "Completed";
+        : detail.status === "paused"
+          ? "Paused"
+          : detail.status === "cancelled"
+            ? "Cancelled"
+            : detail.status === "failed"
+              ? "Failed"
+              : "Completed";
   const metrics = Object.entries(candidate?.metrics ?? {}).filter(
     (entry): entry is [string, number] =>
       typeof entry[1] === "number" && Number.isFinite(entry[1]),
@@ -102,14 +107,19 @@ export default function RequestDetail({
           <span className="pipeline-label" role="status">
             {detail.status === "failed"
               ? "Experiment failed"
-              : running
-                ? stage
-                : "Experiment complete"}
+              : detail.status === "paused"
+                ? `Paused after ${roundsDone} ${roundsDone === 1 ? "round" : "rounds"}`
+                : detail.status === "cancelled"
+                  ? "Experiment cancelled"
+                  : running
+                    ? stage
+                    : "Experiment complete"}
           </span>
           <span className="round-count">
             {roundsDone} {roundsDone === 1 ? "round" : "rounds"} completed
           </span>
         </div>
+        <RunControls run={detail} />
         {detail.success_check_error ? (
           <p className="success-check" role="status">
             Success could not be verified: the checker failed.

@@ -574,3 +574,20 @@ button.round:hover .label {
 .check-result.pass {
   color: var(--dp-color-emphasis);
 }
+
+/* ---- Pause, resume and cancel ---- */
+.badge.paused,
+.badge.cancelled {
+  color: var(--dp-color-ink-muted);
+}
+.run-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--dp-spacing-column-gap);
+  padding: var(--dp-spacing-inset) 0;
+}
+.run-controls-note {
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
