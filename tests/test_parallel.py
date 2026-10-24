@@ -31,3 +31,36 @@ def test_a_crashed_child_becomes_an_error_string(tmp_path):
 
 def test_no_jobs_starts_nothing():
     assert run_in_processes([], fake=True) == []
+
+
+def test_warm_processes_take_jobs_and_spares_are_stopped(tmp_path):
+    from rewardsmith.sim.parallel import WarmPool
+
+    pool = WarmPool(3, fake=True)
+    warm = list(pool.procs)
+    jobs = [(SOURCE + f"# {i}\n", tmp_path / f"c{i}") for i in range(2)]
+
+    results = run_in_processes(jobs, max_parallel=2, fake=True, pool=pool)
+    pool.close()
+
+    assert all(isinstance(r, RunResult) for r in results)
+    assert all((d / "train.log").exists() for _, d in jobs)
+    # the two jobs ran in warm processes, which exited cleanly; the spare was killed
+    assert [p.returncode for p, _ in warm[:2]] == [0, 0]
+    assert warm[2][0].returncode not in (None, 0)
+
+
+def test_a_warm_process_without_a_job_waits_then_exits_when_its_parent_does(tmp_path):
+    import subprocess
+    import sys
+    import time
+
+    parent = subprocess.Popen(["sleep", "2"])
+    child = subprocess.Popen([
+        sys.executable, "-m", "rewardsmith.sim.run_one", "--serve", str(tmp_path / "job.json"), "--fake",
+        "--parent-pid", str(parent.pid),
+    ])
+    time.sleep(1)
+    assert child.poll() is None  # still waiting for a job
+    parent.wait()
+    assert child.wait(timeout=10) == 0
