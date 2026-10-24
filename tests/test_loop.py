@@ -107,7 +107,7 @@ def test_candidates_are_marked_training_before_results_come_back(tmp_path):
     seen: list[set[str]] = []
 
     class WatchingSimulator(FakeSimulator):
-        def run_many(self, jobs):
+        def run_many(self, jobs, scene=None):
             cands = db.get_request(conn, rid)["rounds"][-1]["candidates"]
             seen.append({c["status"] for c in cands})
             return super().run_many(jobs)

@@ -32,6 +32,10 @@ Metrics: forward_velocity and lateral_velocity are mean m/s in the robot's own f
 (negative forward means backwards, positive lateral means left); yaw_rate is mean rad/s;
 base_height is mean metres (about 0.28 standing); upright is the mean up-axis z (1 = level);
 fell is 1 if it flipped; term_* are per-term episode rewards from the reward function.
+When the scene has a target object, target_* metrics come from 32 fresh episodes:
+target_reached is the fraction that got within reach of it, target_start_dist, target_min_dist
+and target_final_dist are mean distances in metres, target_time_to_reach is mean seconds to reach
+it (-1 if never). Trust these over a single video for whether it got there.
 
 Reward hacking means the robot collects reward without doing the behavior, for example
 vibrating in place, sliding, or exploiting one term. Check the frames against the numbers.
