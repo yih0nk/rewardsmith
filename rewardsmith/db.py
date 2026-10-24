@@ -77,7 +77,13 @@ def connect(path: Path) -> sqlite3.Connection:
 # existing table alone, so a db file from an older version gets them here.
 ADDED_COLUMNS = {
     "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER"},
-    "candidates": {"flagged_at": "REAL", "flag_note": "TEXT", "check_result": "TEXT"},
+    "candidates": {
+        "flagged_at": "REAL",
+        "flag_note": "TEXT",
+        "check_result": "TEXT",
+        "idea": "TEXT",  # what the writer or editor says this candidate tries
+        "reward_hacking": "INTEGER",  # 1 when the critic suspects reward hacking
+    },
 }
 JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
 
@@ -202,11 +208,16 @@ def finish_round(conn: sqlite3.Connection, round_id: int, best_candidate_id: int
 
 
 def add_candidate(
-    conn: sqlite3.Connection, round_id: int, idx: int, reward_src: str, diff: str | None = None
+    conn: sqlite3.Connection,
+    round_id: int,
+    idx: int,
+    reward_src: str,
+    diff: str | None = None,
+    idea: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO candidates (round_id, idx, reward_src, diff, created_at) VALUES (?, ?, ?, ?, ?)",
-        (round_id, idx, reward_src, diff, time.time()),
+        "INSERT INTO candidates (round_id, idx, reward_src, diff, idea, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (round_id, idx, reward_src, diff, idea, time.time()),
     )
     return int(cur.lastrowid)
 
