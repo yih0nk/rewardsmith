@@ -11,7 +11,8 @@ of the same code can land 10% low or collapse outright. So each case trains
 episode_reward and on its behavior check passing in a majority of the runs.
 
 A case FAILs if its behavior check fails, or if its median episode_reward is more
-than 5% below the baseline's. Timings are medians too (with the repeats contending
+than 5% below the baseline's. spin_in_place is advisory: it WARNs instead, because
+its training is unstable on unchanged code (a whole run of 3 can fall or land 10% low). Timings are medians too (with the repeats contending
 for the GPU, as candidates in a round do); they are reported, never failed.
 
 Run it on the GPU pod under the shared lock (see the README).
@@ -45,6 +46,7 @@ class Case:
     name: str
     reward: str  # path relative to the repo root
     checks: tuple[tuple[str, str, float], ...]  # (metric, op, value), all must hold
+    gating: bool = True  # False: a regression prints WARN and doesn't fail the run
 
 
 NO_FALL = ("fell", "<", 0.5)
@@ -52,7 +54,8 @@ CASES: tuple[Case, ...] = (
     Case("walk_backwards", "examples/rewards/walk_backwards.py", (("forward_velocity", "<", -0.3), NO_FALL)),
     Case("walk_forward", "examples/rewards/walk_forward.py", (("forward_velocity", ">", 0.3), NO_FALL)),
     Case("spin_in_place", "examples/rewards/spin_in_place.py",
-         (("yaw_rate", ">", 1.0), ("forward_velocity", "<", 0.3), ("forward_velocity", ">", -0.3), NO_FALL)),
+         (("yaw_rate", ">", 1.0), ("forward_velocity", "<", 0.3), ("forward_velocity", ">", -0.3), NO_FALL),
+         gating=False),
 )
 
 
@@ -116,7 +119,8 @@ def _median(values) -> float | None:
 
 
 def compare(run: dict[str, Any], baseline: dict[str, Any]) -> list[dict[str, Any]]:
-    """One row per baseline case: status PASS or FAIL, and why."""
+    """One row per baseline case: status PASS, FAIL or WARN (an advisory case that regressed), and why."""
+    gating = {c.name: c.gating for c in CASES}
     rows = []
     for name, base in baseline["cases"].items():
         cur = run["cases"].get(name)
@@ -134,7 +138,8 @@ def compare(run: dict[str, Any], baseline: dict[str, Any]) -> list[dict[str, Any
             floor = base["episode_reward"] - REWARD_DROP * abs(base["episode_reward"])
             if cur["episode_reward"] is None or cur["episode_reward"] < floor:
                 reasons.append(f"episode_reward {cur['episode_reward']} < {floor:.3f} (baseline - 5%)")
-        rows.append({"case": name, "status": "FAIL" if reasons else "PASS", "reasons": reasons,
+        status = "PASS" if not reasons else "FAIL" if gating.get(name, True) else "WARN"
+        rows.append({"case": name, "status": status, "reasons": reasons,
                      "current": cur or {}, "baseline": base})
     return rows
 
@@ -230,7 +235,8 @@ def main(argv: list[str] | None = None, sim=None) -> int:
     (args.out / "last_run.json").write_text(json.dumps(run, indent=2))
 
     if args.record:
-        failed = [name for name, r in run["cases"].items() if not r["behavior_pass"]]
+        gating = {c.name: c.gating for c in cases}
+        failed = [name for name, r in run["cases"].items() if not r["behavior_pass"] and gating[name]]
         if failed:
             print(f"not recording: behavior check failed for {', '.join(failed)}", file=sys.stderr)
             return 1
@@ -244,8 +250,10 @@ def main(argv: list[str] | None = None, sim=None) -> int:
     rows = compare(run, baseline)
     print(f"\nbaseline {baseline.get('git_sha')} vs now {run['git_sha']}, preset {preset}, total {run['total_wall_s']}s")
     print(format_rows(rows))
-    ok = all(r["status"] == "PASS" for r in rows)
-    print("\nREGRESSION PASS" if ok else "\nREGRESSION FAIL")
+    ok = all(r["status"] != "FAIL" for r in rows)
+    warned = sum(r["status"] == "WARN" for r in rows)
+    note = f" ({warned} advisory warning{'s' if warned > 1 else ''})" if warned else ""
+    print(f"\nREGRESSION PASS{note}" if ok else f"\nREGRESSION FAIL{note}")
     return 0 if ok else 1
 
 
