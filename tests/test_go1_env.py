@@ -142,6 +142,9 @@ def test_rough_terrain_scene_builds():
     env = go1.make_env(WALK_BACKWARDS, scene=rough)
     assert env.mj_model.geom("floor").type == 1  # mjGEOM_HFIELD
     assert env._config.njmax > 40
+    # No objects, so no mocap bodies: reset and step must still work.
+    state = jax.jit(env.step)(jax.jit(env.reset)(jax.random.PRNGKey(0)), jnp.zeros(env.action_size))
+    assert jnp.isfinite(state.reward)
 
 
 def test_reward_reading_a_missing_object_is_refused():

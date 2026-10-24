@@ -221,8 +221,8 @@ class Go1Env(joystick.Joystick):
             qpos=qpos,
             qvel=qvel,
             ctrl=qpos[7:ROBOT_NQ],
-            mocap_pos=mocap_pos,
-            mocap_quat=mocap_quat,
+            # make_data reshapes these by nmocap, which fails with no fixed objects (rough ground alone).
+            **({"mocap_pos": mocap_pos, "mocap_quat": mocap_quat} if self.mj_model.nmocap else {}),
             impl=self.mjx_model.impl.value,
             naconmax=self._config.naconmax,
             njmax=self._config.njmax,
