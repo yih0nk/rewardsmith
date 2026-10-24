@@ -68,10 +68,10 @@ def test_simulator_reads_robustness_flags(monkeypatch):
     monkeypatch.delenv("REWARDSMITH_RANDOMIZE", raising=False)
     monkeypatch.delenv("REWARDSMITH_PUSH", raising=False)
     sim = PlaygroundSimulator(preset="smoke")
-    assert (sim.randomize, sim.push) == (False, False)
+    assert (sim.randomize, sim.push) == (True, False)
 
-    monkeypatch.setenv("REWARDSMITH_RANDOMIZE", "1")
+    monkeypatch.setenv("REWARDSMITH_RANDOMIZE", "0")
     monkeypatch.setenv("REWARDSMITH_PUSH", "1")
     sim = PlaygroundSimulator(preset="smoke")
-    assert (sim.randomize, sim.push) == (True, True)
-    assert PlaygroundSimulator(preset="smoke", randomize=False).randomize is False
+    assert (sim.randomize, sim.push) == (False, True)
+    assert PlaygroundSimulator(preset="smoke", randomize=True).randomize is True

@@ -4,7 +4,8 @@ Settings (env vars):
   REWARDSMITH_PRESET  smoke | round | final   (default round; use smoke on a laptop)
   REWARDSMITH_IMPL    jax | warp              (default: warp on a CUDA GPU, jax elsewhere)
   REWARDSMITH_PARALLEL  candidates trained at once, one process each (default 4)
-  REWARDSMITH_RANDOMIZE 1 = train on domain-randomized robots (default 0)
+  REWARDSMITH_RANDOMIZE 1 = train on domain-randomized robots (default 1: about 5% slower,
+                        same learning within a round, and spin in place falls less)
   REWARDSMITH_PUSH      1 = train with random pushes (default 0)
 """
 
@@ -34,7 +35,7 @@ class PlaygroundSimulator:
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
-        self.randomize = _flag("REWARDSMITH_RANDOMIZE") if randomize is None else randomize
+        self.randomize = _flag("REWARDSMITH_RANDOMIZE", "1") if randomize is None else randomize
         self.push = _flag("REWARDSMITH_PUSH") if push is None else push
 
     def describe(self) -> str:
@@ -71,5 +72,5 @@ class PlaygroundSimulator:
         return parallel.run_in_processes(jobs, preset=self.preset, impl=self.impl, max_parallel=self.max_parallel)
 
 
-def _flag(name: str) -> bool:
-    return os.environ.get(name, "0").strip() == "1"
+def _flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip() == "1"
