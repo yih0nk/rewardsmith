@@ -1,6 +1,9 @@
 import importlib
+import threading
 
 from fastapi.testclient import TestClient
+
+from rewardsmith import db
 
 
 def test_create_and_read_request(tmp_path, monkeypatch):
@@ -23,3 +26,13 @@ def test_create_and_read_request(tmp_path, monkeypatch):
 
     assert client.get("/api/requests/missing").status_code == 404
     assert client.post("/api/requests", json={"text": "x"}).status_code == 422
+
+
+def test_connection_works_across_threads(tmp_path):
+    # The API opens a connection in one worker thread and may query it from another.
+    box = {}
+    t = threading.Thread(target=lambda: box.update(conn=db.connect(tmp_path / "t.db")))
+    t.start()
+    t.join()
+    rid = db.create_request(box["conn"], "walk backwards")
+    assert db.get_request(box["conn"], rid)["text"] == "walk backwards"

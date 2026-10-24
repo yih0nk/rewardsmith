@@ -17,13 +17,13 @@ const started = new Map<string, number>();
 function candidate(n: number): Candidate {
   return {
     id: n,
-    idx: 1,
+    idx: 0,
     reward_src: reward,
     diff:
       n > 1
         ? "- backward_velocity: 1.0\n+ backward_velocity: 2.0\n+ smooth_motion: -0.02 * action_delta"
         : null,
-    status: "done",
+    status: "scored",
     error: null,
     metrics: {
       backward_speed: Number((0.18 + n * 0.16).toFixed(2)),

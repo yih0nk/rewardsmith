@@ -5,9 +5,22 @@
   font-synthesis: none;
   font-size: 14px;
 }
-.mobile-runs { display: none; }
+.mobile-runs {
+  display: none;
+}
 @media (max-width: 650px) {
-  .mobile-runs { display: block; width: 100%; margin-bottom: 24px; padding: 10px; border: 1px solid #dce3d5; border-radius: 5px; background: #fff; color: #485a4b; font: inherit; font-size: 12px; }
+  .mobile-runs {
+    display: block;
+    width: 100%;
+    margin-bottom: 24px;
+    padding: 10px;
+    border: 1px solid #dce3d5;
+    border-radius: 5px;
+    background: #fff;
+    color: #485a4b;
+    font: inherit;
+    font-size: 12px;
+  }
 }
 * {
   box-sizing: border-box;
@@ -910,5 +923,115 @@ footer span:last-child {
   *::before,
   *::after {
     animation: none !important;
+  }
+}
+/* Backend-driven states and candidate comparison. */
+.nav-item {
+  width: 100%;
+  border: 0;
+  color: inherit;
+  text-align: left;
+}
+.hall-link {
+  margin: 14px 10px 0;
+  color: #77856c;
+  font-size: 11px;
+}
+.run-status {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.status-dot.red {
+  background: #b17c67;
+}
+.video-empty {
+  aspect-ratio: 1.92;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  background: #edf1e7;
+  color: #6a7e5c;
+  padding: 30px;
+  text-align: center;
+}
+.video-empty strong {
+  font-size: 15px;
+  font-weight: 500;
+}
+.video-empty span {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.candidate-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 15px;
+}
+.candidate-option {
+  display: grid;
+  gap: 8px;
+  flex: 1 1 170px;
+  padding: 13px;
+  text-align: left;
+  border: 1px solid #e1e6da;
+  border-radius: 6px;
+  background: #fff;
+  color: #6d805e;
+  font-size: 10px;
+}
+.candidate-option strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.candidate-option.active {
+  border-color: #829c69;
+  background: #f4f7ee;
+}
+.candidate-error {
+  color: #9f4131;
+}
+.reward-terms {
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid #e1e6da;
+  border-radius: 7px;
+  background: #fff;
+}
+.reward-terms h2 {
+  margin: 0 0 20px;
+  font-size: 14px;
+}
+.reward-terms .metric {
+  margin-top: 15px;
+}
+.empty-state {
+  margin: 35px 0;
+  padding: 35px;
+  background: #eff2e9;
+  border: 1px dashed #d1dbc5;
+  border-radius: 8px;
+}
+.empty-state p {
+  color: #819176;
+  font-size: 12px;
+}
+.error {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pipeline-label {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 650px) {
+  .pipeline {
+    flex-wrap: wrap;
+  }
+  .round-count {
+    margin-left: 0;
   }
 }
