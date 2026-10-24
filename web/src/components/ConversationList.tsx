@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Conversation } from "../thread";
 
 const STATUS: Record<Conversation["status"], string> = {
@@ -19,6 +20,11 @@ export default function ConversationList({
   loading: boolean;
   onSelect: (id: string) => void;
 }) {
+  // Keep the open task visible in a long list (a link straight to an old task).
+  const current = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    current.current?.scrollIntoView?.({ block: "nearest" });
+  }, [selected]);
   return (
     <nav aria-label="Tasks" className="conversations">
       {conversations.length === 0 && (
@@ -37,6 +43,7 @@ export default function ConversationList({
           return (
             <li key={c.id}>
               <button
+                ref={c.id === selected ? current : undefined}
                 className={`conversation ${c.id === selected ? "selected" : ""}`}
                 aria-current={c.id === selected ? "page" : undefined}
                 onClick={() => onSelect(c.id)}
