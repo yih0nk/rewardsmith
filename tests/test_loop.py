@@ -366,3 +366,66 @@ def test_unused_warm_pool_closes_on_early_exit(tmp_path, failure):
     else:
         run_request(conn, s, req, Writer(), Editor(), FakeCritic(), sim)
     assert sim.closed >= 1 and sim.active is False
+
+
+def test_ideas_and_reward_hacking_verdicts_are_stored(tmp_path):
+    from rewardsmith.agents.base import Draft, Review
+    from rewardsmith.agents.editor import unified_diff
+
+    class IdeaWriter(FakeWriter):
+        def write(self, request, env_doc, k):
+            return [Draft(src, idea=f"draft idea {i}") for i, src in enumerate(super().write(request, env_doc, k))]
+
+    class IdeaEditor(FakeEditor):
+        def revise(self, request, env_doc, best_source, critique, metrics, k):
+            out = []
+            for i in range(k):
+                new = best_source + f"# revision {i}\n"
+                out.append(Draft(new, unified_diff(best_source, new), f"revision idea {i}"))
+            return out
+
+    class SuspiciousCritic(FakeCritic):
+        def review(self, request, result):
+            return Review(score=5.0, critique="Reward hacking suspected. It vibrates.", reward_hacking=True)
+
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, IdeaWriter(), IdeaEditor(), SuspiciousCritic(), FakeSimulator())
+
+    rounds = db.get_request(conn, req["id"])["rounds"]
+    assert [c["idea"] for c in rounds[0]["candidates"]] == ["draft idea 0", "draft idea 1", "draft idea 2"]
+    assert rounds[1]["candidates"][0]["idea"].startswith("revision idea")
+    assert rounds[1]["candidates"][0]["diff"]
+    assert all(c["reward_hacking"] == 1 for r in rounds for c in r["candidates"])
+
+
+def test_plain_writers_and_editors_still_work_without_ideas(tmp_path):
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator())
+
+    candidates = [c for r in db.get_request(conn, req["id"])["rounds"] for c in r["candidates"]]
+    assert all(c["idea"] is None for c in candidates)
+    assert all(c["reward_hacking"] == 0 for c in candidates)
+
+
+def test_older_dbs_get_the_idea_and_reward_hacking_columns(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE candidates (id INTEGER PRIMARY KEY AUTOINCREMENT, round_id INTEGER NOT NULL, "
+        "idx INTEGER NOT NULL, reward_src TEXT NOT NULL, diff TEXT, status TEXT NOT NULL DEFAULT 'written', "
+        "error TEXT, metrics TEXT, video_path TEXT, score REAL, critique TEXT, created_at REAL NOT NULL)"
+    )
+    old.close()
+
+    cols = {r["name"] for r in db.connect(path).execute("PRAGMA table_info(candidates)")}
+    assert {"idea", "reward_hacking"} <= cols

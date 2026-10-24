@@ -11,6 +11,7 @@ from typing import Any
 
 import anthropic
 
+from .base import Draft
 from .claude import ask_json
 from .writer import SYSTEM, WRITE_SCHEMA
 
@@ -35,7 +36,7 @@ class ClaudeEditor:
         critique: str,
         metrics: dict[str, Any],
         k: int,
-    ) -> list[tuple[str, str]]:
+    ) -> list[Draft]:
         prompt = (
             f"Environment notes:\n{env_doc}\n\n"
             f"Behavior the user wants: {request}\n\n"
@@ -46,7 +47,7 @@ class ClaudeEditor:
             "Each idea should say what you changed and why."
         )
         out = ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA)
-        return [(c["source"], unified_diff(best_source, c["source"])) for c in out["candidates"]][:k]
+        return [Draft(c["source"], unified_diff(best_source, c["source"]), c["idea"]) for c in out["candidates"]][:k]
 
 
 class DroidEditor:

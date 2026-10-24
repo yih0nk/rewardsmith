@@ -18,7 +18,7 @@ from typing import Any
 
 from . import config, db
 from .agents import checker as check_spec
-from .agents.base import Checker, Critic, Editor, Ranker, Scener, Writer
+from .agents.base import Checker, Critic, Draft, Editor, Ranker, Scener, Writer
 from .search import Halving
 from .sim import scene as scene_spec
 from .sim.base import Simulator, Stopped
@@ -79,7 +79,7 @@ def run_request(
 
             try:
                 if best is None:
-                    drafts = [(src, None) for src in writer.write(text, env_doc, k)]
+                    drafts = [_as_draft(d) for d in writer.write(text, env_doc, k)]
                 else:
                     drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
             except Exception as exc:
@@ -96,11 +96,11 @@ def run_request(
             # Each draft is gated in its own thread, so one draft's writer.fix call to
             # Claude overlaps the others' gates. (The simulator may still run the GPU
             # part of its gates one at a time; PlaygroundSimulator does.)
-            cids = [db.add_candidate(conn, round_id, idx, src, diff) for idx, (src, diff) in enumerate(drafts)]
+            cids = [db.add_candidate(conn, round_id, idx, d.source, d.diff, d.idea) for idx, d in enumerate(drafts)]
             lock = threading.Lock()  # the threads share conn
             with ThreadPoolExecutor(max_workers=max(1, len(drafts))) as pool:
                 gated = list(pool.map(
-                    lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i][0], writer, env_doc, sim, scene),
+                    lambda i: _pass_gate(conn, lock, rid, i, cids[i], drafts[i].source, writer, env_doc, sim, scene),
                     range(len(drafts)),
                 ))
             ready: list[tuple[int, str, Path]] = [
@@ -150,7 +150,14 @@ def run_request(
                     error = f"The critic could not score this run: {_describe(review)}"
                     db.set_candidate(conn, cid, status="failed", error=error)
                     continue
-                db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
+                db.set_candidate(
+                    conn,
+                    cid,
+                    status="scored",
+                    score=review.score,
+                    critique=review.critique,
+                    reward_hacking=int(getattr(review, "reward_hacking", False)),
+                )
                 scored = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
                 ranked.append(scored)
                 if round_best is None or scored.rank() > round_best.rank():
@@ -254,7 +261,16 @@ def _success_spec(
     return spec
 
 
-def _revise(editor: Editor, text: str, env_doc: str, parents: list[Best], k: int) -> list[tuple[str, str]]:
+def _as_draft(item: Draft | str | tuple[str, str | None]) -> Draft:
+    """Writers may return plain sources and editors (source, diff) pairs; both become Drafts."""
+    if isinstance(item, Draft):
+        return item
+    if isinstance(item, str):
+        return Draft(item)
+    return Draft(item[0], item[1])
+
+
+def _revise(editor: Editor, text: str, env_doc: str, parents: list[Best], k: int) -> list[Draft]:
     """Revise each parent into its share of the k drafts, all editor calls at once.
 
     Revising the top two, not just the best, keeps a runner-up with a different
@@ -264,7 +280,7 @@ def _revise(editor: Editor, text: str, env_doc: str, parents: list[Best], k: int
     jobs = [(p, n) for p, n in zip(parents, shares) if n]
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
         out = pool.map(lambda j: editor.revise(text, env_doc, j[0].source, j[0].critique, j[0].metrics, j[1]), jobs)
-        return [draft for drafts in out for draft in drafts]
+        return [_as_draft(draft) for drafts in out for draft in drafts]
 
 
 def _pass_gate(

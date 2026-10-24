@@ -15,13 +15,24 @@ def reward(state, action, prev_action) -> dict[str, jax.Array]:
 
 
 @dataclass
+class Draft:
+    """A candidate reward from a writer or editor. Plain strings (writer) and
+    (source, diff) pairs (editor) are still accepted wherever a Draft is."""
+
+    source: str
+    diff: str | None = None  # against the reward it revises; None for first drafts
+    idea: str | None = None  # what this candidate tries, in the agent's words, for the board
+
+
+@dataclass
 class Review:
     score: float  # 0 to 10: how well the rollout matches the request
     critique: str  # what went wrong and what to change
+    reward_hacking: bool = False  # the critic's verdict, stored for the board and hall of fame
 
 
 class Writer(Protocol):
-    def write(self, request: str, env_doc: str, k: int) -> list[str]: ...
+    def write(self, request: str, env_doc: str, k: int) -> list[Draft] | list[str]: ...
 
     def fix(self, source: str, error: str, env_doc: str) -> str: ...
 
@@ -35,8 +46,8 @@ class Editor(Protocol):
         critique: str,
         metrics: dict[str, Any],
         k: int,
-    ) -> list[tuple[str, str]]:
-        """Return k (new_source, unified_diff) pairs."""
+    ) -> list[Draft] | list[tuple[str, str]]:
+        """Return k revisions, each with its diff against best_source."""
         ...
 
 
