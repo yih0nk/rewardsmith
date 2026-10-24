@@ -58,7 +58,13 @@ export default function RunStatus({
     >
       <div className="now">
         <span className="now-tag">
-          {active ? "NOW" : finished ? "DONE" : "STOPPED"}
+          {active
+            ? "NOW"
+            : finished
+              ? "DONE"
+              : stage.key === "no_results"
+                ? "NO RESULT"
+                : "STOPPED"}
         </span>
         <p className="now-label" role="status">
           {stage.label}
