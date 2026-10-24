@@ -77,6 +77,39 @@ def test_flag_and_list_hall_of_fame(tmp_path, monkeypatch):
     assert client.get("/api/hall-of-fame").json() == []
 
 
+def test_non_finite_metrics_are_saved_as_null(tmp_path, monkeypatch):
+    # A diverged run can report NaN or inf. json.dumps would store them as NaN/Infinity,
+    # which is not JSON; the column must stay valid JSON and the API must still answer.
+    client = _client(tmp_path, monkeypatch)
+    rid, cid = _scored_candidate(tmp_path)
+    conn = db.connect(tmp_path / "rewardsmith.db")
+    metrics = {"episode_reward": float("nan"), "term_spin": float("inf"), "yaw_rate": -float("inf"),
+               "fell": 0.0, "nested": {"curve": [1.0, float("nan")]}}
+    db.set_candidate(conn, cid, metrics=metrics)
+    db.flag_candidate(conn, cid, "diverged")
+
+    stored = conn.execute("SELECT metrics FROM candidates WHERE id = ?", (cid,)).fetchone()[0]
+    assert "NaN" not in stored and "Infinity" not in stored
+    want = {"episode_reward": None, "term_spin": None, "yaw_rate": None, "fell": 0.0, "nested": {"curve": [1.0, None]}}
+    detail = client.get(f"/api/requests/{rid}")
+    assert detail.status_code == 200
+    assert detail.json()["rounds"][0]["candidates"][0]["metrics"] == want
+    hall = client.get("/api/hall-of-fame")
+    assert hall.status_code == 200
+    assert hall.json()[0]["metrics"] == want
+
+
+def test_nan_saved_by_an_older_version_reads_as_null(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    rid, cid = _scored_candidate(tmp_path)
+    conn = db.connect(tmp_path / "rewardsmith.db")
+    conn.execute("UPDATE candidates SET metrics = ? WHERE id = ?", ('{"episode_reward": NaN, "fell": 0.0}', cid))
+
+    detail = client.get(f"/api/requests/{rid}")
+    assert detail.status_code == 200
+    assert detail.json()["rounds"][0]["candidates"][0]["metrics"] == {"episode_reward": None, "fell": 0.0}
+
+
 def test_flag_rejects_bad_input(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     _, cid = _scored_candidate(tmp_path)
