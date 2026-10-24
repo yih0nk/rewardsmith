@@ -51,7 +51,7 @@ export default function FlagControl({ candidate }: { candidate: Candidate }) {
     <div className="flag">
       {flagged != null ? (
         <>
-          <span>⚑ IN THE HALL OF FAME</span>
+          <span className="flag-title">⚑ IN THE HALL OF FAME</span>
           <p>{flagged}</p>
           <div className="flag-actions">
             <a href="#hall">View hall of fame</a>
@@ -62,7 +62,7 @@ export default function FlagControl({ candidate }: { candidate: Candidate }) {
         </>
       ) : editing ? (
         <form onSubmit={save}>
-          <label htmlFor={`flag-${candidate.id}`}>
+          <label htmlFor={`flag-${candidate.id}`} className="label">
             How did it game the reward?
           </label>
           <input
@@ -87,7 +87,7 @@ export default function FlagControl({ candidate }: { candidate: Candidate }) {
           </div>
         </form>
       ) : (
-        <button className="link" onClick={() => setEditing(true)}>
+        <button className="link flag-open" onClick={() => setEditing(true)}>
           ⚑ Flag as reward hacking
         </button>
       )}
