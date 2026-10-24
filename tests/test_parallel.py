@@ -56,7 +56,7 @@ def test_a_warm_process_without_a_job_waits_then_exits_when_its_parent_does(tmp_
     import sys
     import time
 
-    parent = subprocess.Popen(["sleep", "2"])
+    parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
     child = subprocess.Popen([
         sys.executable, "-m", "rewardsmith.sim.run_one", "--serve", str(tmp_path / "job.json"), "--fake",
         "--parent-pid", str(parent.pid),
@@ -69,6 +69,7 @@ def test_a_warm_process_without_a_job_waits_then_exits_when_its_parent_does(tmp_
 
 def test_a_culled_job_is_killed_and_keeps_its_last_eval(tmp_path, monkeypatch):
     import subprocess
+    import sys
     from types import SimpleNamespace
 
     from rewardsmith.sim import parallel
@@ -80,7 +81,7 @@ def test_a_culled_job_is_killed_and_keeps_its_last_eval(tmp_path, monkeypatch):
     def slow_start(source, out_dir, *args):
         parallel._prepare(source, out_dir)
         ProgressWriter(out_dir, 100).point(SimpleNamespace(steps=50, wall_s=1.0, episode_reward=2.0, terms={"a": 1.0}))
-        procs.append(subprocess.Popen(["sleep", "30"]))
+        procs.append(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"]))
         return procs[-1]
 
     monkeypatch.setattr(parallel, "_start", slow_start)
@@ -137,3 +138,17 @@ def test_resolved_simulator_options_reach_child_execution(tmp_path, monkeypatch,
         parallel._start(SOURCE, out_dir, "smoke", None, True, {}, sim_options=options)
         assert run_one.main(commands[0][3:]) == 0
     assert seen == [options]
+
+
+def test_parent_liveness_check_does_not_terminate_a_live_process():
+    import subprocess
+    import sys
+
+    parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert run_one._alive(parent.pid)
+        assert parent.poll() is None
+    finally:
+        parent.terminate()
+        parent.wait(timeout=10)
+    assert not run_one._alive(parent.pid)
