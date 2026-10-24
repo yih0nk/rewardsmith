@@ -123,7 +123,7 @@ export default function RequestDetail({
           </p>
         ) : null}
         <dl className="summary">
-          <div>
+          <div className="summary-best">
             <dt>Best score</dt>
             <dd className="num em">
               {top ? top.score.toFixed(1) : "—"}
@@ -240,15 +240,15 @@ export default function RequestDetail({
             </p>
             <p className="score-label label">Critic score</p>
             {candidate?.check_result && (
-              <p className="check-result">
+              <p
+                className={`check-result ${candidate.check_result.pass && candidate.check_result.verified !== false ? "pass" : ""}`}
+              >
                 Success check:{" "}
-                <span className="em">
-                  {candidate.check_result.verified === false
-                    ? "unavailable"
-                    : candidate.check_result.pass
-                      ? "passed"
-                      : "failed"}
-                </span>
+                {candidate.check_result.verified === false
+                  ? "unavailable"
+                  : candidate.check_result.pass
+                    ? "passed"
+                    : "failed"}
               </p>
             )}
             <dl className="metrics">

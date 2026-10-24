@@ -571,3 +571,6 @@ button.round:hover .label {
   font-size: var(--dp-typography-label);
   color: var(--dp-color-ink-muted);
 }
+.check-result.pass {
+  color: var(--dp-color-emphasis);
+}
