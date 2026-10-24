@@ -69,12 +69,17 @@ with the fake simulator.
 
 `scripts/regression.py` trains three fixed rewards (walk backwards, walk forward,
 spin in place, all in `examples/rewards/`) with the `round` preset and seed 0,
-through the same `PlaygroundSimulator.run_many` path the worker uses, one at a time.
-For each it records the final `episode_reward`, a behavior check from the rollout
-metrics (e.g. `forward_velocity < -0.3` and `fell < 0.5`), `compile_s`, `train_s`
-and wall time. A compare FAILs a case if its behavior check fails or its
-`episode_reward` is more than 5% below `regression/baseline.json`. Timings are
-printed with their change from the baseline but never fail the run.
+through the same `PlaygroundSimulator.run_many` path the worker uses. For each it
+records the final `episode_reward`, a behavior check from the rollout metrics
+(e.g. `forward_velocity < -0.3` and `fell < 0.5`), `compile_s`, `train_s` and wall
+time. A compare FAILs a case if its behavior check fails or its `episode_reward`
+is more than 5% below `regression/baseline.json`. Timings are printed with their
+change from the baseline but never fail the run.
+
+Warp training isn't bit-deterministic: the same code and seed can end 10% lower, or
+collapse outright, in a single run. So each case trains 3 times side by side
+(`--repeats`), and it is judged on the median `episode_reward` and on the behavior
+check passing in at least 2 of the 3 runs. The output lists every run's reward.
 
 To check that a branch (speed, robustness, ...) doesn't hurt quality, copy it to
 your own folder on the GPU pod and run the compare under the shared GPU lock
