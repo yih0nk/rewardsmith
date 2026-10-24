@@ -15,6 +15,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 from . import gate, go1, go1_spec, parallel, render, train  # noqa: E402
 from .base import RunResult  # noqa: E402
+from .progress import ProgressWriter  # noqa: E402
 
 
 class PlaygroundSimulator:
@@ -32,8 +33,11 @@ class PlaygroundSimulator:
         return gate.check_reward(source, impl=self.impl)
 
     def run(self, source: str, out_dir: Path) -> RunResult:
+        progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
+        progress.stage("compiling")
         env = go1.make_env(source, impl=self.impl)
-        result = train.train(env, self.preset)
+        result = train.train(env, self.preset, on_progress=progress.point)
+        progress.stage("rendering")
         video, frames, rollout = render.rollout_and_render(env, result, out_dir)
         (out_dir / "reward.py").write_text(source)
 
@@ -45,6 +49,7 @@ class PlaygroundSimulator:
             "train_s": round(result.train_s, 1),
             "compile_s": round(result.compile_s, 1),
         }
+        progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
 
     def run_many(self, jobs: list[tuple[str, Path]]) -> list[RunResult | str]:
