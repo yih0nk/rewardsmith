@@ -328,3 +328,120 @@ test("hall of fame API calls match the server routes", async () => {
     global.fetch = originalFetch;
   }
 });
+
+const progress = require("../src/components/TrainingProgress.tsx");
+const point = (steps, episode_reward) => ({
+  steps,
+  wall_s: steps / 1000,
+  episode_reward,
+  terms: { task: episode_reward == null ? null : episode_reward / 10 },
+});
+const live = (stage, fraction, curve = []) => ({
+  stage,
+  steps: Math.round(fraction * 1000),
+  total_steps: 1000,
+  fraction,
+  wall_s: 30,
+  curve,
+});
+const training = (overrides) => ({
+  ...candidate,
+  status: "training",
+  score: null,
+  critique: null,
+  metrics: null,
+  progress: null,
+  ...overrides,
+});
+
+test("stage labels follow the candidate status and its progress file", () => {
+  const label = (c) => progress.liveState(c)?.label ?? null;
+  assert.equal(label(training({ status: "written" })), "Waiting to train");
+  assert.equal(label(training()), "Starting…");
+  assert.equal(label(training({ progress: live("compiling", 0) })), "Compiling");
+  assert.equal(label(training({ progress: live("training", 0) })), "Training 0%");
+  assert.equal(label(training({ progress: live("training", 0.428) })), "Training 42%");
+  // Floor: 99.6% done is not 100% done.
+  assert.equal(label(training({ progress: live("training", 0.996) })), "Training 99%");
+  assert.equal(label(training({ progress: live("rendering", 1) })), "Rendering video");
+  assert.equal(label(training({ progress: live("done", 1) })), "Finishing up");
+  assert.equal(label(training({ status: "trained", progress: null })), "Judging");
+  assert.equal(label(training({ status: "trained", progress: live("done", 1) })), "Judging");
+  // Finished candidates have no live state, whatever a stale progress file says.
+  assert.equal(label({ ...candidate, progress: live("training", 0.5) }), null);
+  assert.equal(label(training({ status: "failed", progress: live("training", 0.5) })), null);
+  assert.equal(label(training({ status: "gate_failed" })), null);
+});
+
+test("progress bar fractions are clamped and never NaN", () => {
+  const frac = (p, status = "training") => progress.liveState(training({ status, progress: p })).fraction;
+  assert.equal(frac(null), 0);
+  assert.equal(frac(null, "written"), null);
+  assert.equal(frac(live("training", 1.7)), 1);
+  assert.equal(frac(live("training", -0.2)), 0);
+  assert.equal(frac({ ...live("training", 0), fraction: null }), 0);
+  assert.equal(frac(live("rendering", 0.9)), 1);
+});
+
+test("the sparkline skips null rewards and survives empty or flat curves", () => {
+  assert.equal(progress.sparkline(null, 100, 20), null);
+  assert.equal(progress.sparkline([], 100, 20), null);
+  assert.equal(progress.sparkline([point(0, null), point(10, null)], 100, 20), null);
+  const shape = progress.sparkline(
+    [point(0, 1), point(500, null), point(1000, 3), point(2000, 2)],
+    100,
+    20,
+    0,
+  );
+  assert.equal(shape.points.length, 3);
+  assert.equal(shape.latest, 2);
+  assert.deepEqual(shape.points[0], { x: 0, y: 20 });
+  assert.deepEqual(shape.points[1], { x: 50, y: 0 });
+  assert.deepEqual(shape.points[2], { x: 100, y: 10 });
+  // One point, or all-equal rewards, sit in the middle instead of dividing by zero.
+  assert.deepEqual(progress.sparkline([point(0, 5)], 100, 20, 0).points, [{ x: 50, y: 10 }]);
+  const flat = progress.sparkline([point(0, 5), point(10, 5)], 100, 20, 0);
+  assert.ok(flat.points.every((p) => p.y === 10 && Number.isFinite(p.x)));
+});
+
+test("a training candidate shows its stage, an accessible bar and the reward curve", () => {
+  const curve = [point(0, 0.5), point(400, null), point(800, 12.345)];
+  const detail = (c) => ({
+    ...base,
+    status: "running",
+    rounds: [{ id: 1, n: 1, status: "running", best_candidate_id: null, candidates: [c] }],
+  });
+  const starting = render(detail(training()));
+  assert.match(starting, /Starting…/);
+  assert.match(starting, /role="progressbar"[^>]*aria-valuenow="0"/);
+  assert.doesNotMatch(starting, /<polyline/);
+
+  const html = render(detail(training({ progress: live("training", 0.42, curve) })));
+  assert.match(html, /Training 42%/);
+  assert.match(html, /LIVE/);
+  assert.match(html, /role="progressbar"/);
+  assert.match(html, /aria-valuenow="42"/);
+  assert.match(html, /aria-valuetext="Training 42%"/);
+  assert.match(html, /<polyline points="/);
+  assert.match(html, /latest 12.35/);
+  assert.match(html, /420 \/ 1,000 steps/);
+  assert.doesNotMatch(html, /NaN|undefined/);
+
+  const finishing = render(detail(training({ progress: live("done", 1, curve) })));
+  assert.match(finishing, /Finishing up/);
+  assert.match(finishing, /aria-valuenow="100"/);
+});
+
+test("scored candidates keep a small learning curve and drop the bar", () => {
+  const curve = [point(0, 0.5), point(1000, 9)];
+  const html = render({
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    rounds: [scoredRound(1, 1, { ...candidate, progress: live("done", 1, curve) })],
+  });
+  assert.match(html, /8.2 \/ 10/);
+  assert.match(html, /how it learned/);
+  assert.match(html, /<polyline/);
+  assert.doesNotMatch(html, /role="progressbar"|Judging|LIVE/);
+});
