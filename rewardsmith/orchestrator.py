@@ -75,10 +75,19 @@ def run_request(
         if warm_up:
             warm_up(k)
 
-        if best is None:
-            drafts = [(src, None) for src in writer.write(text, env_doc, k)]
-        else:
-            drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
+        try:
+            if best is None:
+                drafts = [(src, None) for src in writer.write(text, env_doc, k)]
+            else:
+                drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k)
+        except Exception as exc:
+            if best is None:  # nothing to show yet: let the worker fail the request
+                raise
+            # A later round failing to draft shouldn't throw away the rounds that worked.
+            log.exception("request %s: drafting round %d failed", rid, n)
+            db.finish_round(conn, round_id, None)
+            db.log_event(conn, rid, "error", f"Stopped before round {n}: {_describe(exc)}")
+            break
 
         # Gate every draft first, then train the survivors together: on the GPU,
         # sim.run_many trains them side by side, which hides most of the JIT time.
@@ -129,10 +138,14 @@ def run_request(
 
         # One Claude call per video, all at once; each takes tens of seconds.
         with ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
-            reviews = list(pool.map(lambda t: _review(critic, critic_request, t[2], t[3]), trained))
+            reviews = list(pool.map(lambda t: _safe_review(critic, critic_request, t[2], t[3]), trained))
 
         round_best: Best | None = None
         for (cid, src, result, check), review in zip(trained, reviews):
+            if isinstance(review, Exception):  # one failed API call shouldn't cost the rest of the run
+                error = f"The critic could not score this run: {_describe(review)}"
+                db.set_candidate(conn, cid, status="failed", error=error)
+                continue
             db.set_candidate(conn, cid, status="scored", score=review.score, critique=review.critique)
             scored = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
             ranked.append(scored)
@@ -168,21 +181,40 @@ def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | 
     if scener is None:
         return scene_spec.EMPTY
 
-    spec = scener.make(text)
-    for attempt in range(SCENE_RETRIES + 1):
-        try:
-            scene = scene_spec.parse(spec)
-            break
-        except SceneError as exc:
-            db.log_event(conn, rid, "scene", f"Scene attempt {attempt + 1} rejected: {exc}")
-            if attempt == SCENE_RETRIES:
-                db.log_event(conn, rid, "scene", "Falling back to the plain flat floor")
-                scene = scene_spec.EMPTY
+    try:
+        spec = scener.make(text)
+        for attempt in range(SCENE_RETRIES + 1):
+            try:
+                scene = scene_spec.parse(spec)
                 break
-            spec = scener.fix(text, spec, str(exc))
+            except SceneError as exc:
+                db.log_event(conn, rid, "scene", f"Scene attempt {attempt + 1} rejected: {exc}")
+                if attempt == SCENE_RETRIES:
+                    db.log_event(conn, rid, "scene", "Falling back to the plain flat floor")
+                    scene = scene_spec.EMPTY
+                    break
+                spec = scener.fix(text, spec, str(exc))
+    except Exception as exc:  # the scene writer's Claude call failed: don't lose the request
+        log.exception("scene writer failed for %s", rid)
+        db.log_event(conn, rid, "scene", f"Could not write the scene ({_describe(exc)}); using the plain flat floor")
+        scene = scene_spec.EMPTY
     db.set_request(conn, rid, scene=scene.to_dict())
     db.log_event(conn, rid, "scene", scene.summary())
     return scene
+
+
+def _safe_review(critic: Critic, text: str, result: Any, check: dict[str, Any] | None):
+    """_review, but a failure comes back as the exception instead of raising: the calls run
+    in a thread pool, where one raise would cost the whole round."""
+    try:
+        return _review(critic, text, result, check)
+    except Exception as exc:
+        log.exception("critic failed")
+        return exc
+
+
+def _describe(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _review(critic: Critic, text: str, result: Any, check: dict[str, Any] | None):
@@ -247,7 +279,8 @@ def _pass_gate(
         error = sim.gate(src, scene)
         if error is not None:
             with lock:
-                db.log_event(conn, rid, "gate", f"Candidate {idx}, attempt {attempt + 1} failed: {error}")
+                # idx + 1: the board numbers candidates from 1.
+                db.log_event(conn, rid, "gate", f"Candidate {idx + 1}, attempt {attempt + 1} failed: {error}")
         if error is None:
             if attempt:
                 with lock:
@@ -255,7 +288,12 @@ def _pass_gate(
             return src
         if attempt == GATE_RETRIES:
             break
-        src = writer.fix(src, error, env_doc)
+        try:
+            src = writer.fix(src, error, env_doc)
+        except Exception as exc:  # a failed fix loses this candidate, not the round
+            log.exception("request %s: writer.fix failed on candidate %d", rid, cid)
+            error = f"{error}\n\nThe writer could not fix it: {_describe(exc)}"
+            break
     with lock:
         db.set_candidate(conn, cid, status="gate_failed", error=error)
     return None
@@ -364,8 +402,7 @@ def main() -> None:
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")
         except Exception as exc:
             log.exception("request %s failed", req["id"])
-            db.set_request(conn, req["id"], status="failed")
-            db.log_event(conn, req["id"], "error", f"{type(exc).__name__}: {exc}")
+            db.fail_request(conn, req["id"], _describe(exc))
 
 
 if __name__ == "__main__":

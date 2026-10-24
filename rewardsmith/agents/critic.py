@@ -24,7 +24,7 @@ Be calibrated, not generous. Scores must spread out so better attempts are visib
 A first attempt that merely works is a 6 or 7. Give 8 or more only if you can name what
 makes it better than merely working.
 
-Hard limits (they are also enforced in code):
+Hard limits (the first two are also enforced in code):
 - If the robot fell (metric "fell" is 1), the score is at most 3.
 - If you flag reward hacking, the score is at most 3.
 - If the measured motion contradicts the request (wrong direction, or near zero speed for a
