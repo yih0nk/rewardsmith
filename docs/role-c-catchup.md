@@ -3,6 +3,7 @@
 Role C owns `rewardsmith/server.py`, `rewardsmith/db.py`, `web/` and `tests/test_server.py`.
 Corey Dai builds the dashboard design in `web/` (branch `codex/frontend-dashboard-draft`).
 This file says what role C has changed and what other roles need to know. It is updated with every role C branch.
+For the reasoning behind these changes, open issues and what hasn't been verified, see [STATUS.md](STATUS.md).
 
 ## Status
 
