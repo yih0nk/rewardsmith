@@ -26,11 +26,25 @@ export function roundDeltas(rounds: Round[]) {
   });
 }
 
+// Every candidate's score as a character on a 0–10 strip in half-point cells:
+// "o" for a candidate, "O" for the round's winner.
+export function scoreStrip(r: Round, cells = 21): string[] {
+  const strip = Array<string>(cells).fill("·");
+  for (const c of scored(r)) {
+    const i = Math.round(
+      (Math.min(10, Math.max(0, c.score)) / 10) * (cells - 1),
+    );
+    if (c.id === r.best_candidate_id) strip[i] = "O";
+    else if (strip[i] !== "O") strip[i] = "o";
+  }
+  return strip;
+}
+
 export const formatDelta = (d: number) =>
   `${d > 0 ? "+" : d < 0 ? "−" : "±"}${Math.abs(d).toFixed(1)}`;
 
-// One column per round: the winner's score, the change since the previous
-// round and every candidate's score on a shared 0–10 track.
+// One row per round: the winner's score, the change since the previous
+// round and every candidate's score on a shared 0–10 strip.
 export default function RoundTimeline({
   rounds,
   current,
@@ -56,38 +70,30 @@ export default function RoundTimeline({
             className={`round ${active ? "active" : ""} ${best ? "best" : ""}`}
             onClick={() => onSelect(r.n)}
           >
-            <span className="round-head">
-              <span className="label">
-                Round {String(r.n).padStart(2, "0")}
-              </span>
-              {best && <span className="round-best">Best</span>}
-            </span>
+            <span className="label">Round {String(r.n).padStart(2, "0")}</span>
             <span className="round-score num">
               {score?.toFixed(1) ?? "—"}
               <small>/10</small>
+            </span>
+            <span
+              className={`delta num ${delta == null ? "" : delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat"}`}
+            >
               {delta != null && (
-                <span
-                  className={`delta ${delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat"}`}
-                >
+                <>
                   {formatDelta(delta)}
                   <span className="sr-only"> from the previous round</span>
-                </span>
+                </>
               )}
             </span>
             <span className="track" aria-hidden="true">
-              {scored(r).map((c) => (
-                <i
-                  key={c.id}
-                  className={c.id === r.best_candidate_id ? "winner" : ""}
-                  style={{
-                    left: `${Math.min(10, Math.max(0, c.score)) * 10}%`,
-                  }}
-                />
-              ))}
+              {scoreStrip(r).map((ch, i) =>
+                ch === "O" ? <b key={i}>O</b> : ch,
+              )}
             </span>
             <span className="round-meta">
               {r.candidates.length} candidates · {r.status}
             </span>
+            <span className="round-best">{best && "Best"}</span>
           </button>
         );
       })}

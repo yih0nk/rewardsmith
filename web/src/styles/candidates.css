@@ -1,52 +1,29 @@
-/* A round's candidates, their live training progress and sparklines. */
+/* A round's candidates as rows, their live progress and sparklines. */
 .candidate-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
 }
 .candidate-option {
-  flex: 1 1 200px;
-  max-width: 340px;
   position: relative;
   display: grid;
-  align-content: start;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--card);
-  transition: border-color 0.15s, box-shadow 0.15s;
-  animation: rise 0.35s var(--ease) both;
+  grid-template-columns: minmax(0, 30ch) 12ch minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--dp-spacing-column-gap);
+  padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+  color: var(--dp-color-ink);
 }
-.candidate-option:hover {
-  border-color: var(--rule-strong);
-}
-.candidate-option.winner {
-  border-color: #b9d0b8;
-}
-.candidate-option.active {
-  border-color: var(--ink);
-  box-shadow: inset 3px 0 0 var(--ink), var(--shadow);
-}
-.candidate-option.failed {
-  background: repeating-linear-gradient(
-      -45deg,
-      transparent 0 8px,
-      rgba(163, 55, 42, 0.04) 8px 9px
-    ),
-    var(--card);
-}
-.candidate-option.live {
-  border-color: #ecc6ad;
-}
-/* The button covers the card, so the whole card selects it. */
+/* The button covers the row, so the whole row selects it. */
 .candidate-select {
   display: grid;
-  gap: 6px;
+  grid-template-columns: 14ch minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--dp-spacing-cell);
   padding: 0;
   border: 0;
   background: none;
+  color: inherit;
   text-align: left;
+  line-height: var(--dp-typography-list-leading);
 }
 .candidate-select::after {
   content: "";
@@ -57,121 +34,102 @@
   outline: none;
 }
 .candidate-select:focus-visible::after {
-  outline: 2px solid var(--signal);
-  outline-offset: 2px;
-  border-radius: var(--radius);
+  outline: 2px solid var(--dp-color-emphasis);
+  outline-offset: -2px;
+}
+.candidate-option:hover .candidate-head .label {
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 .candidate-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+}
+.candidate-head .label {
+  color: inherit;
+}
+.winner-tag {
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-emphasis);
+}
+.winner-tag::before {
+  content: "* ";
+  content: "* " / "";
 }
 .candidate-score {
-  font-size: 28px;
   font-weight: 500;
-  line-height: 1.1;
 }
 .candidate-score small {
-  font-size: 12px;
+  font-size: var(--dp-typography-label);
   font-weight: 400;
-  color: var(--ink-3);
+  color: var(--dp-color-ink-muted);
 }
 .candidate-state {
-  font-family: var(--display);
-  font-size: 20px;
   font-weight: 400;
-  font-style: italic;
-  line-height: 1.3;
 }
 .candidate-state::first-letter {
   text-transform: uppercase;
 }
 .candidate-option.live .candidate-state {
-  color: var(--signal);
+  color: var(--dp-color-emphasis);
 }
 .candidate-error {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--bad);
-}
-.candidate-error::before {
-  content: "✕ ";
-}
-p.candidate-error::before {
-  content: none;
+  grid-column: 1 / -1;
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-emphasis);
 }
 .score-bar {
-  display: block;
-  height: 3px;
-  background: var(--paper-deep);
+  white-space: pre;
+  color: var(--dp-color-ink-muted);
 }
-.score-bar i {
-  display: block;
-  height: 100%;
-  background: var(--ink-3);
-  transition: width 0.5s var(--ease);
+.candidate-option > .training-progress,
+.candidate-option > .sparkline {
+  grid-column: 3;
 }
-.candidate-option.winner .score-bar i {
-  background: var(--good);
+.candidate-option.live > .training-progress {
+  grid-column: 2 / -1;
+}
+/* Selected: filled green, everything inside turns black. */
+.candidate-option.active {
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+}
+.candidate-option.active *,
+.candidate-option.active .winner-tag {
+  color: var(--dp-color-ground) !important;
 }
 
-/* ---- Training progress: bar and stage label ---- */
+/* ---- Live progress, drawn in characters from the real fraction ---- */
 .training-progress {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-column-gap);
 }
 .meter {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--paper-deep);
-  overflow: hidden;
-}
-.meter i {
-  display: block;
-  height: 100%;
-  background: repeating-linear-gradient(
-      -45deg,
-      rgba(255, 255, 255, 0.28) 0 6px,
-      transparent 6px 12px
-    ),
-    var(--signal);
-  background-size: 24px 100%, auto;
-  transition: width 0.6s var(--ease);
-  animation: march 0.8s linear infinite;
+  white-space: pre;
+  color: var(--dp-color-ink);
 }
 .training-progress.large {
+  display: grid;
   justify-items: center;
-  width: min(420px, 82%);
+  gap: var(--dp-spacing-inset);
+  padding: var(--dp-spacing-row) var(--dp-spacing-gutter);
   text-align: center;
 }
-.training-progress.large .meter {
-  width: 100%;
-  height: 6px;
-  background: rgba(214, 223, 203, 0.12);
-}
-.training-progress.large .meter i {
-  background-color: #e27d4d;
-}
 .training-stage {
-  font-family: var(--display);
-  font-size: clamp(26px, 3.4vw, 38px);
-  font-weight: 350;
-  font-style: italic;
-  color: #eef3e8;
+  font-size: var(--dp-typography-heading);
+  font-weight: 500;
+  color: var(--dp-color-emphasis);
 }
 .training-progress.large .subtle {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--scope-dim);
+  font-size: var(--dp-typography-label);
 }
 
-/* ---- Small reward sparkline on a card ---- */
+/* ---- Small reward sparkline ---- */
 .sparkline {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--dp-spacing-gutter);
 }
 .sparkline svg {
   flex-shrink: 0;
@@ -179,28 +137,21 @@ p.candidate-error::before {
 }
 .sparkline polyline {
   fill: none;
-  stroke: var(--ink-2);
+  stroke: currentColor;
   stroke-width: 1.5;
-  stroke-linejoin: round;
-  stroke-linecap: round;
 }
 .sparkline circle {
-  fill: var(--signal);
+  fill: var(--dp-color-emphasis);
 }
-.candidate-option.winner .sparkline polyline {
-  stroke: var(--good);
+.candidate-option.active .sparkline circle {
+  fill: currentColor;
 }
 .sparkline-value {
-  display: grid;
+  font-size: var(--dp-typography-label);
   white-space: nowrap;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  line-height: 1.3;
-  color: var(--ink-3);
+  color: var(--dp-color-ink-muted);
 }
 .sparkline-value strong {
-  font-size: 13px;
   font-weight: 500;
-  color: var(--ink);
+  color: var(--dp-color-ink);
 }

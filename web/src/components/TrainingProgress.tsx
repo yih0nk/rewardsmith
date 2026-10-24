@@ -38,6 +38,12 @@ export function liveState(c: Candidate): LiveState | null {
   }
 }
 
+// A fraction drawn in characters, e.g. "[#####.....]".
+export const textBar = (fraction: number, width: number) => {
+  const n = Math.round(clamp01(fraction) * width);
+  return `[${"#".repeat(n)}${".".repeat(width - n)}]`;
+};
+
 export const formatReward = (v: number) =>
   Math.abs(v) >= 100 ? String(Math.round(v)) : String(Number(v.toFixed(2)));
 
@@ -159,7 +165,7 @@ export default function TrainingProgress({
           aria-valuenow={Math.round(live.fraction * 100)}
           aria-valuetext={live.label}
         >
-          <i style={{ width: `${live.fraction * 100}%` }} />
+          <span aria-hidden="true">{textBar(live.fraction, large ? 30 : 16)}</span>
         </div>
       )}
       {large && p && p.total_steps > 0 && (
