@@ -13,7 +13,6 @@ import numpy as np
 
 from .go1 import Go1Env
 from .base import ROLLOUT_STEPS
-from .go1_spec import CTRL_DT
 
 
 def target_metrics(
@@ -55,14 +54,24 @@ def target_metrics(
         return start, dists, done  # (num_envs,), (steps, num_envs), (steps, num_envs)
 
     start, dists, done = (np.asarray(x) for x in jax.jit(run)(jax.random.PRNGKey(seed)))
-    reached = dists <= target.reach_radius
+    return _summarize(start, dists, done, target.reach_radius, env.dt)
+
+
+def _summarize(start, dists, done, reach_radius: float, dt: float) -> dict[str, float]:
+    """Only observations up to and including each episode's first terminal step count."""
+    done = np.asarray(done, dtype=bool)
+    valid = np.concatenate([np.ones_like(done[:1]), np.cumprod(~done[:-1], axis=0).astype(bool)])
+    reached = (dists <= reach_radius) & valid
     any_reached = reached.any(axis=0)
     first = reached.argmax(axis=0)
+    fell = done.any(axis=0)
+    final_index = np.where(fell, done.argmax(axis=0), len(dists) - 1)
+    final = np.take_along_axis(dists, final_index[None], axis=0)[0]
     return {
         "target_reached": float(any_reached.mean()),
         "target_start_dist": float(start.mean()),
-        "target_min_dist": float(dists.min(axis=0).mean()),
-        "target_final_dist": float(dists[-1].mean()),
-        "target_time_to_reach": float(((first[any_reached] + 1) * CTRL_DT).mean()) if any_reached.any() else -1.0,
-        "target_fell": float(done.any(axis=0).mean()),
+        "target_min_dist": float(np.where(valid, dists, np.inf).min(axis=0).mean()),
+        "target_final_dist": float(final.mean()),
+        "target_time_to_reach": float(((first[any_reached] + 1) * dt).mean()) if any_reached.any() else -1.0,
+        "target_fell": float(fell.mean()),
     }
