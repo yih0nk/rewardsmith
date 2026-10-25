@@ -996,17 +996,6 @@ def route_body(conn: sqlite3.Connection, settings: config.Settings, req: dict[st
     return body
 
 
-@contextmanager
-def on_body(sim: Simulator, body: str) -> Iterator[None]:
-    """Run the simulator on one body (sim/bodies) for one request, and put the last one back after."""
-    before = getattr(sim, "body", bodies.DEFAULT_BODY)
-    sim.body = body  # type: ignore[attr-defined]
-    try:
-        yield
-    finally:
-        sim.body = before  # type: ignore[attr-defined]
-
-
 def build_scener(settings: config.Settings, body: str | None = None) -> Scener:
     if settings.fake_llm:
         from .agents.fake import FakeScener
@@ -1145,7 +1134,10 @@ def run_turn(
     # Instant runs without the coach unless the request asked for one.
     coach = build_coach(settings, req, body) if mode.coach or req.get("coach") else None
     db.log_event(conn, req["id"], "mode", describe_run(run_settings, req, coach))
-    with training_budget(sim, mode), on_body(sim, body):
+    set_body = getattr(sim, "set_body", None)
+    if set_body is not None:  # before run_request's plan_request and describe (sim/playground.py)
+        set_body(body)
+    with training_budget(sim, mode):
         return run_request(
             conn, run_settings, req, writer, editor, critic, sim,
             ranker=ranker if run_settings.halving else None,
