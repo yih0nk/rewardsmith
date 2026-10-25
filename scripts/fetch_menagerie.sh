@@ -3,11 +3,12 @@
 # We only need the bodies' robot models, so fetch just those folders at Playground's pinned commit:
 #   unitree_go1  Go1JoystickFlatTerrain (locomotion/go1/base.py get_assets)
 #   unitree_g1   G1JoystickFlatTerrain  (locomotion/g1/base.py get_assets: *.xml + assets/)
-# MENAGERIE_MODELS="unitree_go1 unitree_g1 franka_emika_panda" adds more. Safe to run again.
+#   franka_emika_panda  PandaPickCube   (manipulation/franka_emika_panda/panda.py get_assets)
+# MENAGERIE_MODELS="..." picks others. Safe to run again.
 set -euo pipefail
 
 PY=${PY:-.venv/bin/python}
-MODELS=${MENAGERIE_MODELS:-unitree_go1 unitree_g1}
+MODELS=${MENAGERIE_MODELS:-unitree_go1 unitree_g1 franka_emika_panda}
 DEST=$("$PY" -c "from mujoco_playground._src import mjx_env; print(mjx_env.MENAGERIE_PATH)")
 SHA=$("$PY" -c "from mujoco_playground._src import mjx_env; print(mjx_env.MENAGERIE_COMMIT_SHA)")
 
