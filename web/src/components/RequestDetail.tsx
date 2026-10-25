@@ -20,6 +20,7 @@ import RoundGallery from "./RoundGallery";
 import RoundTimeline, { formatDelta, roundScore } from "./RoundTimeline";
 import RunControls from "./RunControls";
 import RunStatus from "./RunStatus";
+import Refusal from "./Refusal";
 import TrainingProgress, { RewardCurve, liveState } from "./TrainingProgress";
 
 const EVENT_KINDS: Record<string, string> = {
@@ -193,6 +194,7 @@ export default function RequestDetail({
               now={now}
             />
             <RunControls run={detail} />
+            <Refusal feasibility={detail.feasibility} />
             <CoachFeed events={detail.events} />
             <div className="success-spec">
               <span className="label">

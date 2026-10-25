@@ -92,6 +92,8 @@ export interface RequestSummary {
   success_check_error?: string | null;
   // A pause or cancel the worker will act on at its next checkpoint.
   control?: "pause" | "cancel" | null;
+  // The scene writer's verdict; a "refuse" ends the request (status "refused") before training.
+  feasibility?: Feasibility | null;
   created_at: number;
   // The task (conversation) this turn belongs to, and its place in it (1 = the task itself).
   // Older servers leave them out: every request is then its own one-turn task.
@@ -116,6 +118,13 @@ export interface TurnTarget {
   round_n: number;
   idx: number;
   score: number | null;
+}
+
+export interface Feasibility {
+  verdict: "doable" | "approximate" | "refuse";
+  reason: string;
+  simplification: string;
+  suggestion: string;
 }
 
 // One clause of the pass/fail check Claude writes before training (agents/checker.py).
