@@ -133,6 +133,9 @@ def _settings(tmp_path: Path, **kw) -> config.Settings:
     return replace(s, **kw)
 
 
+DANCE = [{"metric": "base_height", "op": ">", "value": 0.0}, checker.NO_FALL]
+
+
 class SpecChecker:
     def __init__(self, spec):
         self.spec, self.calls = spec, 0
@@ -163,10 +166,10 @@ def _run(tmp_path, checker_, critic_=None, text="walk backwards", **kw):
 def test_spec_is_stored_before_training_and_every_candidate_is_checked(tmp_path):
     critic_ = RecordingCritic()
     # A request no metric measures, so "don't fall" is a valid check that every candidate passes.
-    conn, rid, best = _run(tmp_path, SpecChecker([checker.NO_FALL]), critic_, text="do a little dance")
+    conn, rid, best = _run(tmp_path, SpecChecker(DANCE), critic_, text="do a little dance")
 
     detail = db.get_request(conn, rid)
-    assert detail["success_spec"] == [checker.NO_FALL]
+    assert detail["success_spec"] == DANCE
     kinds = [e["kind"] for e in detail["events"]]
     assert kinds.index("check") < kinds.index("train")
     cands = [c for r in detail["rounds"] for c in r["candidates"]]

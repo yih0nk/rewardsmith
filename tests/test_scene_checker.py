@@ -318,8 +318,10 @@ def test_locomotion_requests_need_their_velocity(request_text, spec):
         checker.validate_for_scene(spec + [checker.NO_FALL], request_text, None)
 
 
-def test_unmeasurable_requests_may_check_only_that_it_stays_up():
-    assert checker.validate_for_scene([checker.NO_FALL], "do a little dance", None) == [checker.NO_FALL]
+def test_staying_up_alone_never_passes_for_the_task():
+    # "stand on two legs" passed on "didn't fall" before checks needed a task clause.
+    with pytest.raises(checker.SpecError, match="at least one clause on the task itself"):
+        checker.validate_for_scene([checker.NO_FALL], "do a little dance", None)
 
 
 def test_fake_checker_checks_the_pose():
@@ -340,7 +342,8 @@ def test_a_scene_check_keeps_one_fall_criterion():
     spec = checker.validate_for_scene(both, "make robot move ball to a target destination", scene)
     assert [c["metric"] for c in spec] == ["all:reach:ball&push:ball:goal", "scene_fell"]
     # Without an episode fall bound, the video's fall clause stays.
-    assert checker.validate_for_scene([checker.NO_FALL], "do a little dance", None) == [checker.NO_FALL]
+    spin = [{"metric": "abs_yaw_rate", "op": ">", "value": 1.0}, checker.NO_FALL]
+    assert checker.validate_for_scene(spin, "spin around", None) == spin
 
 
 BALL_TO_GOAL = parse({"objects": [

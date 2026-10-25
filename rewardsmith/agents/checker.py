@@ -4,6 +4,14 @@ and scene before any candidate trains, so the target can't move once results com
 A spec is a list of clauses that must all hold:
     [{"metric": "forward_velocity", "op": "<", "value": -0.4},
      {"metric": "fell", "op": "<", "value": 0.5}]
+
+When no metric in the vocabulary measures the task (stairs climbed, poles weaved, a
+pose held, a ball dodged), the checker also writes check(traj), a small JAX function
+over each evaluation episode (sim/check_code.py), and its clauses name the results
+as check:<key>. The code passes a gate first (AST guard, jitted dry run), and a check
+that holds for a robot just standing where it starts is rejected unless standing
+still is the task. Every check needs at least one task-specific clause: not falling
+and staying upright never count as the task.
 """
 
 import json
@@ -13,6 +21,8 @@ import re
 from typing import Any
 
 import anthropic
+
+from dataclasses import dataclass, field
 
 from ..sim.go1_spec import POSE_METRICS
 from ..sim.scene import EMPTY, SceneSpec
@@ -43,6 +53,20 @@ METRICS.update(POSE_METRICS)  # feet off the floor, held time, pitch, roll: for 
 OPS = {"<": operator.lt, ">": operator.gt, "<=": operator.le, ">=": operator.ge}
 MAX_CLAUSES = 6
 NO_FALL = {"metric": "fell", "op": "<", "value": 0.5}
+CHECK_PREFIX = "check:"  # metrics computed by the checker's own check(traj) code
+# Clauses that never show the task got done on their own.
+GENERIC_METRICS = frozenset({"fell", "scene_fell", "target_fell", "upright"})
+CODE_RANGE = (-1e6, 1e6)  # a float result's sensible range; bools are fractions, 0 to 1
+
+
+@dataclass
+class Check:
+    """A validated success check: clauses, and the code behind any check:<key> clause."""
+
+    clauses: list[dict[str, Any]]
+    code: str | None = None
+    keys: dict[str, str] = field(default_factory=dict)  # check_code.CheckGate.keys
+    standing: dict[str, float] = field(default_factory=dict)  # each result on a robot standing still
 
 SYSTEM = f"""You turn a request for a simulated Unitree Go1 quadruped into a pass/fail
 success check over rollout metrics. The check is written before any training and is
@@ -88,14 +112,31 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
 - Every request that names something measurable needs a clause that measures it: a pose
   needs a pose metric, walking forward or backward needs forward_velocity, spinning needs
   yaw_rate. Staying upright and not falling never count as the task on their own.
-- If the request can't be measured with these metrics (a gait style),
-  check what can be measured: staying upright and not falling.
+- When nothing above measures the task, write code: a function check(traj) over one episode
+  (contract and keys below, with the scene), returning named bool or float scalars, and clauses
+  on them as check:<name> (bools become the fraction of episodes where they held, so
+  check:climbed >= 0.8; floats their mean). Use it for stairs climbed, a ramp walked up and stopped
+  on, poles weaved through, a ball dodged, a pose held, anything in order. Prefer the named
+  metrics and outcomes above when one fits exactly; never use code to say the same thing weaker.
+- Every check needs at least one clause on the task itself. fell, scene_fell, target_fell and
+  upright never count on their own: "stand on two legs" is not "didn't fall".
+- A code check must fail for a robot that just stands where it starts (unless standing still
+  is the task): it is tested on one, and rejected if it passes.
+- Measure over traj["valid"] steps only (jnp.where(traj["valid"] > 0, x, fallback)); for "for N
+  seconds", count consecutive steps (a cumulative sum that resets, e.g. via jax.lax.associative_scan
+  or a jnp.cumsum trick) and compare with N / 0.02. For order ("A then B"), compare the first step
+  index each holds (jnp.argmax on a bool array gives the first True).
+- Code is pure jax.numpy, run under jax.jit and vmap: no Python if/while on traced values (use
+  jnp.where), no imports beyond jax, jax.numpy and math, no I/O.
+- Only if the request is impossible to measure even with code (a mood, a style with no physical
+  sign), return unsupported_reason.
 """
 
 SCHEMA = {
     "type": "object",
     "properties": {
         "unsupported_reason": {"type": ["string", "null"]},
+        "code": {"type": ["string", "null"]},  # check(traj) source, when a clause names check:<key>
         "clauses": {
             "type": "array",
             "items": {
@@ -110,7 +151,7 @@ SCHEMA = {
             },
         }
     },
-    "required": ["clauses", "unsupported_reason"],
+    "required": ["clauses", "unsupported_reason", "code"],
     "additionalProperties": False,
 }
 
@@ -119,9 +160,18 @@ class SpecError(ValueError):
     pass
 
 
-def metric_definition(metric: str, scene: SceneSpec | None = None):
+def metric_definition(metric: str, scene: SceneSpec | None = None, check_keys: dict[str, str] | None = None):
     if metric in METRICS:
         return METRICS[metric]
+    if metric.startswith(CHECK_PREFIX):
+        key = metric[len(CHECK_PREFIX):]
+        kind = (check_keys or {}).get(key)
+        if kind is None:
+            raise SpecError(f"{metric} names no result of the check code"
+                            + (f"; it returns {', '.join(sorted(check_keys))}" if check_keys else "; write check(traj)"))
+        if kind == "bool":
+            return (f"fraction of episodes where the check's {key} held", 0.0, 1.0)
+        return (f"mean over episodes of the check's {key}", *CODE_RANGE)
     try:
         mode, names = outcomes.parts(metric, scene or EMPTY)
     except ValueError as exc:
@@ -130,7 +180,7 @@ def metric_definition(metric: str, scene: SceneSpec | None = None):
     return ("fraction of episodes completing: " + description, 0.0, 1.0)
 
 
-def validate(clauses: Any, scene: SceneSpec | None = None) -> list[dict[str, Any]]:
+def validate(clauses: Any, scene: SceneSpec | None = None, check_keys: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """Return the spec in canonical form, or raise SpecError saying what is wrong."""
     if not isinstance(clauses, list) or not 1 <= len(clauses) <= MAX_CLAUSES:
         raise SpecError(f"a spec is a list of 1 to {MAX_CLAUSES} clauses")
@@ -142,7 +192,7 @@ def validate(clauses: Any, scene: SceneSpec | None = None) -> list[dict[str, Any
         if not isinstance(metric, str):
             raise SpecError(f"unknown metric {metric!r}")
         try:
-            definition = metric_definition(metric, scene)
+            definition = metric_definition(metric, scene, check_keys)
         except SpecError as exc:
             raise SpecError(f"unknown metric {metric!r}: {exc}") from exc
         if not isinstance(op, str) or op not in OPS:
@@ -227,7 +277,12 @@ def required_actions(request: str) -> set[str]:
     return actions
 
 
+ANY_KIND = frozenset({"reach", "push", "climb", "avoid", "stand_still", "forward", "backward", "spin", "pose"})
+
+
 def _kinds(metric: str, scene: SceneSpec) -> set[str]:
+    if metric.startswith(CHECK_PREFIX):
+        return set(ANY_KIND)  # the code measures whatever it was written for; the critic reads it
     if metric == "target_reached":
         return {"reach"}
     if metric in METRICS:
@@ -256,12 +311,15 @@ def default_scene_check(scene: SceneSpec | None) -> list[dict[str, Any]] | None:
     return None
 
 
-def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> list[dict[str, Any]]:
+def validate_for_scene(
+    clauses: Any, request: str, scene: SceneSpec | None, check: "Check | None" = None,
+) -> list[dict[str, Any]]:
     """Require concrete, scene-valid outcomes and same-episode/order constraints.
     With a fall bound over the evaluation episodes, a `fell` clause on the single video
-    rollout is dropped: two fall criteria disagree on the board (37% vs 0)."""
+    rollout is dropped: two fall criteria disagree on the board (37% vs 0).
+    check carries the gated check code's result names and standing-robot values."""
     scene = scene or EMPTY
-    spec = validate(clauses, scene)
+    spec = validate(clauses, scene, check.keys if check else None)
     if any(c["metric"] in EPISODE_FALLS for c in spec):
         spec = [c for c in spec if c["metric"] != "fell"]
     target = scene.target_object
@@ -299,7 +357,9 @@ def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> l
     if durations:
         held = []
         for clause in positive:
-            if clause["metric"] not in METRICS:
+            if clause["metric"].startswith(CHECK_PREFIX):
+                held.append(math.inf)  # code measures durations itself; the critic reads the code
+            elif clause["metric"] not in METRICS:
                 _, names = outcomes.parts(clause["metric"], scene)
                 held.extend(outcomes.event(name, scene).hold_s for name in names)
         remaining = sorted(held)
@@ -307,7 +367,53 @@ def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> l
             if not remaining or remaining[-1] < duration:
                 raise SpecError("The check must measure every requested holding duration")
             remaining.pop()
+    if not any(c["metric"] not in GENERIC_METRICS for c in spec):
+        raise SpecError("The check needs at least one clause on the task itself; fell, scene_fell, target_fell and "
+                        "upright only say it didn't fall. Use a metric or outcome that measures the behavior, "
+                        "or write check(traj) code that does")
+    if check is not None and check.code:
+        _reject_trivial(spec, request, check)
     return spec
+
+
+def _reject_trivial(spec: list[dict[str, Any]], request: str, check: Check) -> None:
+    """A code check whose task clauses all hold for a robot standing still where it starts
+    proves nothing, unless standing still is what was asked."""
+    if re.search(ACTION_WORDS["stand_still"], request, re.I) or re.search(r"\b(?:stay|hold) (?:still|put)\b", request, re.I):
+        return
+    task = [c for c in spec if c["metric"] not in GENERIC_METRICS]
+    if not task or not all(c["metric"].startswith(CHECK_PREFIX) for c in task):
+        return  # a vocabulary metric carries the task
+    holds = all(OPS[c["op"]](check.standing[c["metric"][len(CHECK_PREFIX):]], c["value"]) for c in task)
+    if holds:
+        values = ", ".join(f"{k} = {v:g}" for k, v in check.standing.items())
+        raise SpecError("The check passes for a robot that just stands where it starts (its results there: "
+                        f"{values}), so it doesn't show the task was done. Make the clauses fail unless the "
+                        "behavior happens")
+
+
+def gate_code(code: str | None, scene: SceneSpec | None) -> Check:
+    """Run the check code through the gate (sim/check_code.py); raise SpecError for the checker."""
+    if not code:
+        return Check(clauses=[])
+    from ..sim import check_code
+
+    try:
+        report = check_code.gate(code, scene or EMPTY)
+    except check_code.CheckCodeError as exc:
+        raise SpecError(f"The check code was rejected: {exc}") from exc
+    return Check(clauses=[], code=code, keys=report.keys, standing=report.standing)
+
+
+def validate_check(clauses: Any, code: str | None, request: str, scene: SceneSpec | None) -> Check:
+    """Gate the code, then validate the clauses against its results."""
+    check = gate_code(code, scene)
+    uses_code = isinstance(clauses, list) and any(
+        isinstance(c, dict) and str(c.get("metric", "")).startswith(CHECK_PREFIX) for c in clauses)
+    if code and not uses_code:
+        raise SpecError("The check code is never used: name its results in clauses as check:<name>, or drop the code")
+    check.clauses = validate_for_scene(clauses, request, scene, check)
+    return check
 
 
 class ClaudeChecker:
@@ -315,18 +421,29 @@ class ClaudeChecker:
         self.client, self.model = client, model
 
     def write_spec(self, request: str, scene: SceneSpec | None = None) -> list[dict[str, Any]]:
+        return self.write_check(request, scene).clauses
+
+    def write_check(self, request: str, scene: SceneSpec | None = None) -> Check:
+        from ..sim import check_code
+
         context = scene.summary() if scene else "No scene target: the robot is alone on a flat floor."
         events = "\n".join(f"- {name}: {event.description}" for name, event in outcomes.catalog(scene or EMPTY).items())
-        prompt = f"Request: {request}\n\nScene:\n{context}\n\nAvailable episode outcomes:\n{events}\n\nWrite the success check. Use unsupported_reason=null for supported tasks."
-        schema = SCHEMA
-        for attempt in range(2):
-            out = ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], schema, effort="medium")
+        prompt = (f"Request: {request}\n\nScene:\n{context}\n\nAvailable episode outcomes:\n{events}\n\n"
+                  f"For check(traj) code, {check_code.contract(scene or EMPTY)}\n\n"
+                  "Write the success check. Use unsupported_reason=null for supported tasks, and code=null "
+                  "when no clause names check:<key>.")
+        for attempt in range(CHECK_ATTEMPTS):
+            out = ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], SCHEMA, effort="medium")
             if out.get("unsupported_reason"):
                 raise SpecError(f"Unsupported task: {out['unsupported_reason']}")
             try:
-                return validate_for_scene(out.get("clauses"), request, scene)
+                return validate_check(out.get("clauses"), out.get("code"), request, scene)
             except SpecError as exc:
-                if attempt:
+                if attempt == CHECK_ATTEMPTS - 1:
                     raise
-                prompt += f"\n\nYour last check was rejected: {exc}\nIt was: {json.dumps(out.get('clauses'))}"
+                prompt += (f"\n\nYour last check was rejected: {exc}\nIt was: {json.dumps(out.get('clauses'))}"
+                           + (f"\nwith code:\n{out['code']}" if out.get("code") else ""))
         raise AssertionError("unreachable")
+
+
+CHECK_ATTEMPTS = 3
