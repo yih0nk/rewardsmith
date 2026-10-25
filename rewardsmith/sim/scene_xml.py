@@ -29,7 +29,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from .scene import SceneObject, SceneSpec
+from .scene import Piece, SceneObject, SceneSpec, Structure
 
 PREFIX = "obj_"  # body, geom and material names: obj_<name>, so they can't clash with the robot's
 ROUGH_BUMP = 0.05  # max height of Playground's rough heightfield, m
@@ -39,6 +39,7 @@ BUMPER = "obj_bumper"
 BUMPER_HALF_SIZE = (0.27, 0.10, 0.12)  # m; trunk plus hips and head, standing: 0.10 to 0.34 m above the floor
 BUMPER_POS = (0.03, 0.0, -0.06)  # from the trunk centre
 BUMPER_MIN_TOP = 0.15  # m; objects whose top is lower don't touch the bumper
+BUMPER_MAX_BOTTOM = 0.34  # m; objects floating higher than the bumper's top pass over it
 
 # Contact budget for the warp backend, which preallocates contacts and constraint rows.
 # Playground's flat Go1 uses 4 contacts per env (the feet) and 40 constraint rows.
@@ -46,23 +47,39 @@ BASE_CONTACTS, BASE_ROWS = 4, 40
 ROUGH_CONTACTS, ROUGH_ROWS = 8, 60
 ROWS_PER_CONTACT = 4  # condim 3, pyramidal friction cone
 ENVS_PER_BUDGET = 8192  # Playground sizes naconmax for this many envs
+MAX_EXTRA_CONTACTS = 64  # per env, for everything a scene adds; the scene gate rejects bigger scenes
 
 
-def body_name(obj: SceneObject) -> str:
+def body_name(obj: SceneObject | Structure) -> str:
     return PREFIX + obj.name
+
+
+def piece_name(st: Structure, i: int) -> str:
+    return f"{PREFIX}{st.name}_{i}"
 
 
 def contact_budget(spec: SceneSpec) -> tuple[int, int]:
     """(naconmax, njmax) for the env config: room for each object's contacts."""
     contacts, rows = (ROUGH_CONTACTS, ROUGH_ROWS) if spec.terrain == "rough" else (BASE_CONTACTS, BASE_ROWS)
+    extra = extra_contacts(spec)
+    return (contacts + extra) * ENVS_PER_BUDGET, rows + ROWS_PER_CONTACT * extra
+
+
+def extra_contacts(spec: SceneSpec) -> int:
+    """Contacts per env the scene may add: feet, bumper and floor contacts of every solid piece."""
     extra = 0
     for o in spec.objects:
         if o.kind == "zone":
             continue
         extra += 4 + (2 if _hits_bumper(o) else 0)  # up to four feet, and the bumper
         if o.movable:
-            extra += 4 if o.kind == "box" else 1  # resting on the floor
-    return (contacts + extra) * ENVS_PER_BUDGET, rows + ROWS_PER_CONTACT * extra
+            extra += 4 if o.kind == "box" else (2 if o.kind == "capsule" else 1)  # resting on the floor
+            extra += sum(1 for other in spec.objects if other is not o and other.kind != "zone")  # bumping others
+    for st in spec.structures:
+        bumper = 2 if _structure_hits_bumper(st) else 0
+        # Feet are on at most a couple of pieces at once; capped so big fields stay affordable.
+        extra += min(len(st.pieces), 4) * (4 + bumper) // 2 + bumper
+    return extra
 
 
 def compile_xml(spec: SceneSpec, base_xml: str, sensor_xml: str, robot_xml: str | None = None) -> str:
@@ -74,7 +91,8 @@ def compile_xml(spec: SceneSpec, base_xml: str, sensor_xml: str, robot_xml: str 
     inlined to give the trunk its bumper.
     """
     root = ET.fromstring(base_xml)
-    if robot_xml is not None and any(_hits_bumper(o) for o in spec.objects):
+    if robot_xml is not None and (any(_hits_bumper(o) for o in spec.objects)
+                                  or any(_structure_hits_bumper(st) for st in spec.structures)):
         _inline_robot_with_bumper(root, robot_xml)
     asset = _child(root, "asset")
     world = _child(root, "worldbody")
@@ -84,11 +102,16 @@ def compile_xml(spec: SceneSpec, base_xml: str, sensor_xml: str, robot_xml: str 
         ET.SubElement(asset, "material", name=body_name(o), rgba=f"{r:.3f} {g:.3f} {b:.3f} {alpha}",
                       specular="0.3", shininess="0.3")
         world.append(_body(o, _nominal_pos(o, spec.terrain)))
+    for st in spec.structures:
+        r, g, b = st.rgb
+        ET.SubElement(asset, "material", name=body_name(st), rgba=f"{r:.3f} {g:.3f} {b:.3f} 1",
+                      specular="0.2", shininess="0.2")
+        world.append(_structure_body(st))
 
     ET.SubElement(world, "camera", name=OVERVIEW_CAMERA, mode="targetbodycom", target="trunk",
                   pos="0 -4.5 4.5", fovy="55")
 
-    _inline_sensors(root, sensor_xml, any_contact=any(o.kind != "zone" for o in spec.objects))
+    _inline_sensors(root, sensor_xml, any_contact=any(o.kind != "zone" for o in spec.objects) or bool(spec.structures))
     _extend_keyframes(root, [o for o in spec.objects if o.movable], spec.terrain)
     return ET.tostring(root, encoding="unicode")
 
@@ -145,8 +168,44 @@ def _fmt(*xs: float) -> str:
 
 
 def _hits_bumper(o: SceneObject) -> bool:
-    top = 2 * o.size[0] if o.kind == "ball" else (o.size[2] if o.kind == "box" else 0.0)
-    return top >= BUMPER_MIN_TOP
+    """Tall enough to stop the robot's body, and low enough that the body can reach it."""
+    return o.kind != "zone" and o.top_height >= BUMPER_MIN_TOP and o.elevation < BUMPER_MAX_BOTTOM
+
+
+def _structure_hits_bumper(st: Structure) -> bool:
+    """Walls and obstacle fields stop the body; stairs, ramps and gaps are walked on, feet only."""
+    return not st.walkable and st.top_height >= BUMPER_MIN_TOP
+
+
+def _quat(roll: float = 0.0, pitch: float = 0.0) -> str:
+    """wxyz quaternion of Ry(pitch) @ Rx(roll), degrees (the compiler reads angles in radians)."""
+    a, b = math.radians(roll) / 2, math.radians(pitch) / 2
+    qx = (math.cos(a), math.sin(a), 0.0, 0.0)
+    qy = (math.cos(b), 0.0, math.sin(b), 0.0)
+    w1, x1, y1, z1 = qy
+    w2, x2, y2, z2 = qx
+    return _fmt(w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2, w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2, w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2)
+
+
+def _structure_body(st: Structure) -> ET.Element:
+    """One mocap body, at the structure's near edge on the floor, holding every piece."""
+    name = body_name(st)
+    d = 0.5 * (st.distance[0] + st.distance[1])
+    a = math.radians(0.5 * (st.bearing[0] + st.bearing[1]))
+    body = ET.Element("body", name=name, pos=_fmt(d * math.cos(a), d * math.sin(a), 0.0), mocap="true")
+    contype = "3" if _structure_hits_bumper(st) else "1"
+    for i, pc in enumerate(st.pieces):
+        geom = {"name": piece_name(st, i), "material": name, "group": "0", "pos": _fmt(*pc.pos),
+                "contype": contype, "conaffinity": "0", "condim": "3", "friction": "1.0 0.02 0.01"}
+        if pc.kind == "box":
+            geom.update(type="box", size=_fmt(*pc.half))
+        else:
+            geom.update(type="capsule", size=_fmt(*pc.half))
+        if pc.pitch:
+            geom["quat"] = _quat(pitch=pc.pitch)
+        ET.SubElement(body, "geom", geom)
+    return body
 
 
 def _body(o: SceneObject, pos: tuple[float, float, float]) -> ET.Element:
@@ -157,16 +216,28 @@ def _body(o: SceneObject, pos: tuple[float, float, float]) -> ET.Element:
         geom.update(type="sphere", size=_fmt(o.size[0]))
     elif o.kind == "box":
         geom.update(type="box", size=_fmt(*(0.5 * s for s in o.size)))
+    elif o.kind == "capsule":
+        geom.update(type="capsule", size=_fmt(o.size[0], 0.5 * o.size[1]))
     else:
         geom.update(type="cylinder", size=_fmt(o.size[0], 0.003))
+    if o.tilt != (0.0, 0.0):
+        geom["quat"] = _quat(*o.tilt)
 
     contype = "3" if _hits_bumper(o) else "1"
     if o.kind == "zone":
         body.set("mocap", "true")
         geom.update(contype="0", conaffinity="0")
     elif o.movable:
-        ET.SubElement(body, "freejoint", name=name)
+        if o.speed[1] > 0:  # the Go1 file's default joint damping (0.5) would brake it within a second
+            ET.SubElement(body, "joint", name=name, type="free", damping="0", armature="0", frictionloss="0")
+        else:
+            ET.SubElement(body, "freejoint", name=name)
         geom.update(contype=contype, conaffinity="1", condim="3", mass=_fmt(o.mass), friction="0.8 0.02 0.01")
+        if o.speed[1] > 0:
+            # Go1's solver runs one iteration, which can't hold a rolling contact: a launched ball
+            # stops within 0.2 s. Frictionless contacts (condim 1, outranking the floor's) keep its
+            # speed, and the matching spin reset gives it is never braked, so it still looks rolled.
+            geom.update(priority="2", condim="1")
     else:
         body.set("mocap", "true")
         geom.update(contype=contype, conaffinity="0", condim="3", friction="0.8 0.02 0.01")
