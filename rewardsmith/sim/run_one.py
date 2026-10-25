@@ -16,7 +16,7 @@ new reward (docs/warm-start.md).
 --serve starts a warm process: it does the slow imports and a throwaway gate
 first (~30 s on the pod, overlapping the writer's Claude call), then answers
 parallel.py's messages in job.json:
-  {"kind": "gate", "seq", "source", "scene", "impl", "env"}  gate the source and write
+  {"kind": "gate", "seq", "source", "scene", "impl", "env", "body"}  gate the source and write
       {"seq", "error"} (or {"seq", "crash"} for a non-reward failure) to job.gate.json;
       then wait for the next message. The orchestrator's fix-retry loop reuses this.
   {"kind": "train", "reward", "out_dir", "preset", "impl", "init_params", "steps", ...}  run that job and exit.
@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sim-options", type=json.loads, default={}, help="resolved training and robustness flags")
     ap.add_argument("--init-params", type=Path, default=None, help="checkpoint to start training from")
     ap.add_argument("--steps", type=int, default=None, help="training steps (default: the preset's)")
+    ap.add_argument("--body", default=None, help="the robot, a bodies.BODIES key (default: REWARDSMITH_BODY or go1)")
     args = ap.parse_args(argv)
 
     if args.serve:
@@ -93,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         from .scene import parse
 
         scene = parse(args.scene.read_text()) if args.scene else None
+        if args.body:
+            args.sim_options = {**args.sim_options, "body": args.body}
         sim = _simulator(args.fake, args.preset, args.impl, args.behavior_metrics, args.sim_options)
         start = {"init_params": args.init_params, "steps": args.steps}
         result = sim.run(args.reward.read_text(), args.out_dir, scene, **{k: v for k, v in start.items() if v})
@@ -179,7 +182,9 @@ def _gate(job: dict, fake: bool) -> str | None:
         return FakeSimulator().gate(job["source"], scene)
     from . import gate
 
-    return gate.check_reward(job["source"], impl=job.get("impl"), scene=scene, env_options=job.get("env"))
+    return gate.check_reward(
+        job["source"], impl=job.get("impl"), scene=scene, env_options=job.get("env"), body=job.get("body"),
+    )
 
 
 def _wait_for_job(path: Path, parent: int) -> dict | None:

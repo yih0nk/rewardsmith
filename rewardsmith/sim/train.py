@@ -24,9 +24,10 @@ from mujoco_playground import wrapper
 from mujoco_playground.config import locomotion_params
 
 from . import checkpoints
-from .go1 import BASE_ENV, Go1Env
+from .bodies import get_body
+from .go1 import Go1Env
 
-# Overrides on top of Playground's tuned Go1 joystick PPO config.
+# Overrides on top of Playground's tuned PPO config for the body's env (the Go1 joystick's by default).
 # brax requires batch_size * num_minibatches to be a multiple of num_envs.
 PRESETS: dict[str, dict[str, Any]] = {
     "smoke": dict(
@@ -74,10 +75,26 @@ class TrainResult:
         return [p.episode_reward for p in self.curve]
 
 
-def ppo_kwargs(preset: str = "round", overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    cfg = locomotion_params.brax_ppo_config(BASE_ENV)
+def playground_ppo_config(env_name: str) -> Any:
+    """Playground's tuned brax PPO config for a locomotion or manipulation env."""
+    from mujoco_playground._src import manipulation
+
+    if env_name in manipulation.ALL_ENVS:
+        from mujoco_playground.config import manipulation_params
+
+        return manipulation_params.brax_ppo_config(env_name)
+    return locomotion_params.brax_ppo_config(env_name)
+
+
+def ppo_kwargs(
+    preset: str = "round", overrides: Mapping[str, Any] | None = None, body: str | None = None
+) -> dict[str, Any]:
+    """Playground's tuned config for the body's env, then the preset, then the body's own overrides."""
+    b = get_body(body)
+    cfg = playground_ppo_config(b.base_env)
     kwargs = {k: v for k, v in cfg.items() if k != "network_factory"}
     kwargs.update(PRESETS[preset])
+    kwargs.update(b.ppo_overrides())
     kwargs.update(json.loads(os.environ.get("REWARDSMITH_PPO_OVERRIDES") or "{}"))  # for tuning runs
     kwargs.update(overrides or {})
     if (kwargs["batch_size"] * kwargs["num_minibatches"]) % kwargs["num_envs"]:
@@ -88,62 +105,12 @@ def ppo_kwargs(preset: str = "round", overrides: Mapping[str, Any] | None = None
     return kwargs
 
 
-FLOOR_GEOM_ID = 0  # the stock and compiled scenes both put the floor first
-TORSO_BODY_ID = 1
+def randomizer(body: str | None = None) -> Callable[..., Any]:
+    """The body's domain randomizer (bodies.Body.randomizer; the Go1's is bodies.legged.legged_randomizer).
+    Called as randomizer()(mjx_model, rngs) -> (batched model, in_axes)."""
+    from .bodies import get_body
 
-
-def randomizer() -> Callable[..., Any]:
-    """A Go1 domain randomizer, one robot per env, that leaves scene objects alone.
-
-    Same ranges as Playground's Go1 randomizer: floor friction U(0.4, 1.0), joint friction
-    loss x U(0.9, 1.1), joint armature x U(1.0, 1.05), every link mass x U(0.9, 1.1), torso
-    payload +U(-1, 1) kg, torso center of mass +U(-5, 5) cm, joint zero offsets (qpos0)
-    +U(-0.05, 0.05) rad. Playground's version slices dof[6:] and qpos[7:] to the end, which
-    only fits when the robot is the only moving body: a movable scene object adds a free
-    joint (6 dofs, 7 qpos) after the robot, and the shapes stop matching. Here only the
-    robot's 12 joints are touched (go1.ROBOT_NV / ROBOT_NQ).
-    Called as randomizer()(mjx_model, rngs) -> (batched model, in_axes).
-    """
-    from .go1 import ROBOT_NQ, ROBOT_NV
-
-    def domain_randomize(model: Any, rng: jax.Array) -> tuple[Any, Any]:
-        @jax.vmap
-        def rand_dynamics(rng):
-            rng, key = jax.random.split(rng)
-            geom_friction = model.geom_friction.at[FLOOR_GEOM_ID, 0].set(
-                jax.random.uniform(key, minval=0.4, maxval=1.0)
-            )
-            rng, key = jax.random.split(rng)
-            dof_frictionloss = model.dof_frictionloss.at[6:ROBOT_NV].multiply(
-                jax.random.uniform(key, shape=(ROBOT_NV - 6,), minval=0.9, maxval=1.1)
-            )
-            rng, key = jax.random.split(rng)
-            dof_armature = model.dof_armature.at[6:ROBOT_NV].multiply(
-                jax.random.uniform(key, shape=(ROBOT_NV - 6,), minval=1.0, maxval=1.05)
-            )
-            rng, key = jax.random.split(rng)
-            body_ipos = model.body_ipos.at[TORSO_BODY_ID].add(
-                jax.random.uniform(key, (3,), minval=-0.05, maxval=0.05)
-            )
-            rng, key = jax.random.split(rng)
-            body_mass = model.body_mass * jax.random.uniform(key, shape=(model.nbody,), minval=0.9, maxval=1.1)
-            rng, key = jax.random.split(rng)
-            body_mass = body_mass.at[TORSO_BODY_ID].add(jax.random.uniform(key, minval=-1.0, maxval=1.0))
-            rng, key = jax.random.split(rng)
-            qpos0 = model.qpos0.at[7:ROBOT_NQ].add(
-                jax.random.uniform(key, shape=(ROBOT_NQ - 7,), minval=-0.05, maxval=0.05)
-            )
-            return geom_friction, body_ipos, body_mass, qpos0, dof_frictionloss, dof_armature
-
-        friction, body_ipos, body_mass, qpos0, frictionloss, armature = rand_dynamics(rng)
-        fields = {
-            "geom_friction": friction, "body_ipos": body_ipos, "body_mass": body_mass,
-            "qpos0": qpos0, "dof_frictionloss": frictionloss, "dof_armature": armature,
-        }
-        in_axes = jax.tree_util.tree_map(lambda x: None, model).tree_replace({k: 0 for k in fields})
-        return model.tree_replace(fields), in_axes
-
-    return domain_randomize
+    return get_body(body).randomizer()
 
 
 _BRAX_UNPMAP = ppo._unpmap
@@ -190,8 +157,10 @@ def train(
     checkpoint_dir: Path | None = None,
     restore_value: bool = True,
     init_noise: float | None = None,
+    body: str | None = None,
 ) -> TrainResult:
-    """Train a policy. randomize=True gives every env its own randomized robot.
+    """Train a policy on env, built by the body called body (PPO config and randomizer).
+    randomize=True gives every env its own randomized robot.
 
     brax also randomizes its eval envs then, so the curve is measured on randomized robots.
 
@@ -202,11 +171,11 @@ def train(
     at 0: num_timesteps is how many more steps to train. With checkpoint_dir, the
     params are saved there at every eval as params_<steps>.pkl.
     """
-    kwargs = ppo_kwargs(preset, overrides)
+    kwargs = ppo_kwargs(preset, overrides, body)
     if init_params is not None:
         if isinstance(init_params, (str, Path)):
             init_params = checkpoints.load(Path(init_params))
-        init_params = fit_params(env, init_params)
+        init_params = fit_params(env, init_params, body)
         kwargs["restore_params"] = checkpoints.reset_noise(init_params, init_noise) if init_noise else init_params
         kwargs["restore_value_fn"] = restore_value
     if checkpoint_dir is not None:
@@ -235,7 +204,7 @@ def train(
         make_inference_fn, params, _ = ppo.train(
             environment=env,
             wrap_env_fn=wrapper.wrap_for_brax_training,
-            randomization_fn=randomizer() if randomize else None,
+            randomization_fn=randomizer(body) if randomize else None,
             progress_fn=progress,
             seed=seed,
             **kwargs,
@@ -254,9 +223,9 @@ def train(
     )
 
 
-def fit_params(env: Any, params: Any) -> Any:
+def fit_params(env: Any, params: Any, body: str | None = None) -> Any:
     """params fitted to env's observation sizes (see checkpoints.fit)."""
-    factory = locomotion_params.brax_ppo_config(BASE_ENV).network_factory
+    factory = playground_ppo_config(get_body(body).base_env).network_factory
     sizes = {k: int(v[-1]) for k, v in env.observation_size.items()}
     return checkpoints.fit(params, sizes, {"policy": factory.policy_obs_key, "value": factory.value_obs_key})
 

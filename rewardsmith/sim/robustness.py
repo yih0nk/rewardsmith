@@ -1,7 +1,7 @@
 """Robustness score: does the trained policy still do its job on robots it has not seen?
 
 After training, the final policy is rolled out, all at once in one batch, on:
-  robots  N_ROBOTS robots from Playground's Go1 domain randomizer, with seeds training never
+  robots  N_ROBOTS robots from the body's domain randomizer (the Go1's: Playground's), with seeds training never
           used (floor friction, link masses, payload, center of mass, joint friction and offsets)
   seeds   the nominal robot from N_SEEDS other start states
   pushes  the nominal robot, shoved front, back, left and right once mid-rollout
@@ -94,11 +94,12 @@ def evaluate(
     pushes: bool = True,
     steps: int = STEPS,
     seed: int = SEED,
+    body: str | None = None,
 ) -> dict[str, float]:
     """Return robustness metrics for the candidate; also write the per-rollout detail to out_dir."""
     start = time.perf_counter()
     p = plan(n_robots, n_seeds, pushes, seed)
-    models, in_axes = models_for(env, n_robots, len(p.groups) - n_robots, p.rng_models)
+    models, in_axes = models_for(env, n_robots, len(p.groups) - n_robots, p.rng_models, body)
     _, outs = run_batch(env, result, models, in_axes, p.keys, p.push_dirs, steps)
     rows = [summarize(outs, i) for i in range(len(p.groups))]
     return report(p, rows, models, nominal, check, out_dir, start)
@@ -143,10 +144,12 @@ def summarize(outs: Mapping[str, np.ndarray], i: int) -> dict[str, float]:
     return summary
 
 
-def models_for(env: Go1Env, n_random: int, n_nominal: int, rng: jax.Array) -> tuple[Any, Any]:
-    """A batch of n_random randomized robots followed by n_nominal copies of the nominal one."""
+def models_for(
+    env: Go1Env, n_random: int, n_nominal: int, rng: jax.Array, body: str | None = None
+) -> tuple[Any, Any]:
+    """A batch of n_random randomized robots (the body's randomizer) followed by n_nominal copies of the nominal one."""
     nominal = env.mjx_model
-    models, in_axes = randomizer()(nominal, jax.random.split(rng, n_random))
+    models, in_axes = randomizer(body)(nominal, jax.random.split(rng, n_random))
     batched = {
         f.name: jnp.concatenate([
             getattr(models, f.name),
