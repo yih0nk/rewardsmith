@@ -70,8 +70,9 @@ class Body(Protocol):
         the stock terms."""
         ...
 
-    def metric_names(self) -> list[str]:
-        """Behavior metrics the checker can use for this body."""
+    def metric_names(self) -> dict[str, tuple[str, float, float]]:
+        """Behavior metrics the checker can use for this body: name -> (meaning, low, high),
+        the shape of go1_spec.POSE_METRICS. Iterating it gives the names."""
         ...
 
     def randomizer(self) -> Any:

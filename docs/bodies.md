@@ -47,7 +47,7 @@ class Body(Protocol):
     def describe(self, scene: SceneSpec | None = None) -> str: ...
         # Writer-facing doc: the state keys, their units, the action, what "fell" means, the stock terms.
 
-    def metric_names(self) -> list[str]: ...   # behavior metrics the checker can use for this body
+    def metric_names(self) -> dict[str, tuple[str, float, float]]: ...  # checker metrics: name -> (meaning, lo, hi)
     def randomizer(self): ...                  # domain randomizer that touches only the robot slice
     def ppo_overrides(self) -> dict: ...       # on top of Playground's tuned config for base_env
     camera: dict                               # render camera settings for the 720p rollout video
@@ -99,3 +99,27 @@ real request exercising the PR's change. No before/after tables, no multi-run be
   `body.base_env` (locomotion or manipulation registry), then our preset, then `body.ppo_overrides()`.
 - The robot slice: `qpos[:body.nq]`, `qvel[:body.nv]`. Scene objects (movable ones) are appended after it;
   outcomes, robustness, the randomizer and the renderer use `nq`/`nv` and never assume 19/18.
+
+### Choosing the body (simulator)
+- `PlaygroundSimulator(body=None)`: `None` means `REWARDSMITH_BODY`, else `"go1"`. `sim.set_body(name)` switches
+  it for the next request (routing calls it before `plan_request`). It re-resolves the walker
+  (the body's `skill_checkpoint`, when `skill == "walker"` and the file exists) unless one was passed explicitly.
+- `sim.body` goes to training children in `sim_options`, and to warm gates in the gate job's `"body"` field.
+- `run_one --body <name>` trains one reward on that body.
+- `gate.check_reward(..., body=)`, `train.train(..., body=)`, `train.ppo_kwargs(preset, overrides, body)`,
+  `evaluation.evaluate(..., body=)`, `render.render_rollout(..., body=)` and `robustness.models_for(..., body)` all
+  default to the Go1.
+
+### What the env must provide (duck type)
+The simulator always passes the Go1's stock options to `make_env` (`stock_profile`, `stock_weight` in tune mode,
+`walker` in steer mode), so **`make_env` must accept them as keyword options and may ignore them**. The env it
+returns is used by the gate, trainer, evaluator, renderer and robustness rollouts. They read:
+- MjxEnv basics: `reset`, `step`, `dt`, `action_size`, `observation_size` (what the base env's PPO network
+  factory expects; the Go1's is a dict with `"state"` and `"privileged_state"`; warm starts call `checkpoints.fit`,
+  which reads the factory's `policy_obs_key` / `value_obs_key`), `mj_model`, `mjx_model`, `_mjx_model`.
+- `term_names` (generated term names; the step's `metrics["reward/<term>"]` holds each term) and `scene` (a `SceneSpec`).
+- `get_local_linvel(data)`, `get_gyro(data)`, `get_upvector(data)`: rollout summary and robustness.
+- `_torso_body_id`, `_torso_mass`: robustness pushes and pose metrics. `_feet_site_id`: pose metrics
+  (`sim/pose.py` is Go1-shaped; a `pose_metrics(qpos)` method on the env overrides it, per the G1 session).
+- `_yaw(data)`, `scene_features(data)`, `_placed`: scene outcomes (`scene_eval.py`), only with scene objects.
+- `state.done` must go true when the robot falls; the rollout stops there.

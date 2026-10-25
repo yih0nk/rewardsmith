@@ -59,8 +59,8 @@ class Go1Body:
     def describe(self, scene: SceneSpec | None = None, *, mode: str = "off", **options: Any) -> str:
         return go1_spec.describe(scene or EMPTY, mode=mode, **options)
 
-    def metric_names(self) -> list[str]:
-        return list(go1_spec.POSE_METRICS)
+    def metric_names(self) -> dict[str, tuple[str, float, float]]:
+        return dict(go1_spec.POSE_METRICS)
 
     def randomizer(self):
         from .legged import legged_randomizer
