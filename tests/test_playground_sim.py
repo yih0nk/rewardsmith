@@ -31,7 +31,7 @@ def test_gates_from_threads_take_turns(monkeypatch):
 
     inside, peak, lock = [0], [0], threading.Lock()
 
-    def slow_check(source, impl=None, scene=None, stock=None):
+    def slow_check(source, impl=None, scene=None, env_options=None):
         with lock:
             inside[0] += 1
             peak[0] = max(peak[0], inside[0])
@@ -69,11 +69,11 @@ def test_children_get_the_warm_start_settings_resolved(monkeypatch, tmp_path):
     monkeypatch.delenv("REWARDSMITH_STEPS", raising=False)
     seen = {}
     monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs, jobs=jobs) or [])
-    sim = PlaygroundSimulator(preset="smoke")
+    sim = PlaygroundSimulator(preset="smoke", mode="tune")
     sim.stock_profile = "pose"
     sim.run_many([(WALK_BACKWARDS, tmp_path / "a"), (WALK_BACKWARDS, tmp_path / "b", {"steps": 5})])
     opts = seen["sim_options"]
-    assert opts["walker"] == str(walker) and opts["stock_profile"] == "pose" and opts["steps"] is None
+    assert opts["walker"] == str(walker) and opts["mode"] == "tune" and opts["stock_profile"] == "pose" and opts["steps"] is None
     assert seen["jobs"][1][2] == {"steps": 5}
     assert PlaygroundSimulator(**opts).sim_options() == opts  # a child trains exactly as the parent would
 
@@ -82,6 +82,18 @@ def test_no_walker_means_no_warm_start_and_no_stock_terms(monkeypatch, tmp_path)
     monkeypatch.setenv("REWARDSMITH_WALKER", str(tmp_path / "missing.pkl"))
     monkeypatch.delenv("REWARDSMITH_STOCK", raising=False)
     sim = PlaygroundSimulator(preset="smoke")
-    assert sim.walker == "" and sim.stock_profile == "off"
+    assert sim.walker == "" and sim.mode == "off" and sim.env_options == {}
     monkeypatch.setenv("REWARDSMITH_WARM_START", "0")
     assert PlaygroundSimulator(preset="smoke").walker == ""
+
+
+def test_modes_pick_how_the_env_uses_the_walker(monkeypatch, tmp_path):
+    walker = tmp_path / "params.pkl"
+    walker.write_bytes(b"")
+    monkeypatch.setenv("REWARDSMITH_WALKER", str(walker))
+    monkeypatch.delenv("REWARDSMITH_MODE", raising=False)
+    assert PlaygroundSimulator(preset="smoke").env_options == {"walker": str(walker)}  # steer by default
+    tune = PlaygroundSimulator(preset="smoke", mode="tune", stock_profile="pose")
+    assert tune.env_options == {"stock_profile": "pose", "stock_weight": 1.0}
+    assert "stock_" in tune.describe()
+    assert "steers a pretrained walker" in PlaygroundSimulator(preset="smoke").describe()
