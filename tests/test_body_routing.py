@@ -219,7 +219,7 @@ def test_old_rows_read_as_the_go1(tmp_path):
     conn = db.connect(path)
     db.connect(path)  # a second process migrating again changes nothing
     req = db.get_request(conn, "a1")
-    assert (req["body"], req["body_reason"]) == ("go1", None)
+    assert (req["body"], req["body_reason"], req["training_steps"]) == ("go1", None, None)  # both migrations applied
     assert db.list_conversations(conn)[0]["body"] == "go1"
     assert db.get_request(conn, db.create_request(conn, "wave"))["body"] is None  # a new task on Auto
 
@@ -242,12 +242,13 @@ def test_api_takes_a_registered_body_or_auto(tmp_path, monkeypatch, registry):
         ("go1", "Unitree Go1", "quadruped"), ("g1", "Unitree G1", "humanoid")]
     assert health["bodies"][1]["summary"].startswith("Unitree G1: humanoid")
 
-    picked = client.post("/api/requests", json={"text": "wave hello", "body": "g1"}).json()["id"]
+    picked = client.post("/api/requests", json={"text": "wave hello", "body": "g1", "training_steps": 20_000_000}).json()["id"]
     auto = client.post("/api/requests", json={"text": "trot", "body": "auto"}).json()["id"]
     omitted = client.post("/api/requests", json={"text": "trot"}).json()["id"]
     assert client.post("/api/requests", json={"text": "pick it up", "body": "panda"}).status_code == 422
     listed = {r["id"]: r["body"] for r in client.get("/api/requests").json()}
     assert (listed[picked], listed[auto], listed[omitted]) == ("g1", None, None)
+    assert client.get(f"/api/requests/{picked}").json()["training_steps"] == 20_000_000
     turn = client.post(f"/api/conversations/{picked}/turns", json={"text": "higher", "body": "go1"}).json()["id"]
     assert client.get(f"/api/requests/{turn}").json()["body"] == "g1"  # follow-ups keep the task's body
     conv = next(c for c in client.get("/api/conversations").json() if c["id"] == picked)
