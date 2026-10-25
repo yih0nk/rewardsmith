@@ -103,6 +103,9 @@ def run_request(
         scene = scene_spec.parse(req["scene"]) if req.get("scene") is not None else scene_spec.EMPTY
     else:
         scene = _make_scene(conn, req, scener)
+    plan = getattr(sim, "plan_request", None)
+    if plan:  # per-request steps and stock terms (sim/budget.py); describe() names the stock terms
+        db.log_event(conn, rid, "plan", plan(text, scene))
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
     critic_request = text if not scene.objects else f"{text}\n\nScene: {scene.summary()}"
