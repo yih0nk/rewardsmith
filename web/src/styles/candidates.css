@@ -180,3 +180,29 @@
 .candidate-option.failed .candidate-state {
   color: var(--dp-color-emphasis);
 }
+
+/* Export policy: a square outlined control, filled on the best result. It sits above the
+   card's select button, which stretches over the whole row. */
+.export-policy {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  width: max-content;
+  text-decoration: none;
+}
+.candidate-option > .export-policy {
+  grid-column: 2 / -1;
+}
+.candidate-option.active .export-policy {
+  border-color: var(--dp-color-ground);
+}
+.export-policy.primary {
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+}
+.export-policy.primary:hover {
+  background: transparent;
+  color: var(--dp-color-ink);
+}

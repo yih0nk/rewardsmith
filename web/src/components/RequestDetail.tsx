@@ -10,6 +10,7 @@ import { MODE_MODEL, modeLabel, modelLabel } from "../modes";
 import { candidateName, candidateState, isScored } from "../stages";
 import { QueuePlace, RenderReply, runAnchor } from "../thread";
 import CandidateCard from "./CandidateCard";
+import ExportPolicy from "./ExportPolicy";
 import CoachFeed from "./CoachFeed";
 import Critique, { inline } from "./Critique";
 import SuccessCheck from "./SuccessCheck";
@@ -305,6 +306,9 @@ export default function RequestDetail({
                               ? "✓ Passed the success check"
                               : "✕ Failed the success check"}
                         </p>
+                      )}
+                      {candidate && (
+                        <ExportPolicy c={candidate} primary={viewingBest} />
                       )}
                       {viewingBest &&
                         top &&

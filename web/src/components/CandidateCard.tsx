@@ -3,6 +3,7 @@ import { Candidate } from "../api";
 import { candidateAnchor } from "../thread";
 import { candidateName, candidateState } from "../stages";
 import { inline } from "./Critique";
+import ExportPolicy from "./ExportPolicy";
 import TrainingProgress, {
   Sparkline,
   liveState,
@@ -88,6 +89,7 @@ export default function CandidateCard({
         <p className="candidate-idea idea">{inline(c.idea)}</p>
       )}
       {reply && <div className="reply-slot">{reply}</div>}
+      <ExportPolicy c={c} />
     </div>
   );
 }
