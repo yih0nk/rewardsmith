@@ -9,6 +9,7 @@ import {
 import { candidateName, candidateState, isScored } from "../stages";
 import { QueuePlace, RenderReply, runAnchor } from "../thread";
 import CandidateCard from "./CandidateCard";
+import Critique, { inline } from "./Critique";
 import SuccessCheck from "./SuccessCheck";
 import DiffView from "./DiffView";
 import FlagControl from "./FlagControl";
@@ -270,6 +271,51 @@ export default function RequestDetail({
                 <RunProblem detail={detail} onRetry={onRetry} />
               ) : (
                 <div className="result-grid">
+                  <div className="verdict-row summary-best">
+                    <p
+                      className={`score ${candidate?.score == null ? "none" : ""}`}
+                    >
+                      <span className="num">
+                        {candidate?.score?.toFixed(1) ?? "—"}
+                      </span>
+                      <span className="score-of num">/ 10</span>
+                    </p>
+                    <div className="verdict-facts">
+                      <p className="score-label label">
+                        <Explain term="critic">Critic score</Explain>
+                        {candidate && candidate.score == null && (
+                          <> · {candidateState(candidate, live?.label).text}</>
+                        )}
+                      </p>
+                      {check && (
+                        <p
+                          className={`verdict-check ${check.pass && check.verified !== false ? "pass" : ""}`}
+                        >
+                          {check.verified === false
+                            ? "Success check unavailable"
+                            : check.pass
+                              ? "✓ Passed the success check"
+                              : "✕ Failed the success check"}
+                        </p>
+                      )}
+                      {viewingBest &&
+                        top &&
+                        firstScore != null &&
+                        top.round.n > 1 && (
+                          <p className="improvement">
+                            Since round 1{" "}
+                            <span
+                              className={`num delta ${top.score - firstScore > 0.05 ? "up" : ""}`}
+                            >
+                              {formatDelta(top.score - firstScore)}
+                            </span>{" "}
+                            <span className="subtle num">
+                              ({firstScore.toFixed(1)} → {top.score.toFixed(1)})
+                            </span>
+                          </p>
+                        )}
+                    </div>
+                  </div>
                   <div className="stage">
                     <div className="well">
                       {candidate?.video_path ? (
@@ -313,73 +359,43 @@ export default function RequestDetail({
                       <span>MuJoCo Playground · Unitree Go1</span>
                     </p>
                   </div>
-                  <div className="evaluation summary-best">
-                    <p
-                      className={`score ${candidate?.score == null ? "none" : ""}`}
-                    >
-                      <span className="num">
-                        {candidate?.score?.toFixed(1) ?? "—"}
-                      </span>
-                      <span className="score-of num">/ 10</span>
-                    </p>
-                    <p className="score-label label">
-                      <Explain term="critic">Critic score</Explain>
-                      {candidate && candidate.score == null && (
-                        <> · {candidateState(candidate, live?.label).text}</>
-                      )}
-                    </p>
-                    {viewingBest &&
-                      top &&
-                      firstScore != null &&
-                      top.round.n > 1 && (
-                        <p className="improvement">
-                          Since round 1{" "}
-                          <span
-                            className={`num delta ${top.score - firstScore > 0.05 ? "up" : ""}`}
-                          >
-                            {formatDelta(top.score - firstScore)}
-                          </span>{" "}
-                          <span className="subtle num">
-                            ({firstScore.toFixed(1)} → {top.score.toFixed(1)})
-                          </span>
-                        </p>
-                      )}
-                    {check && <SuccessCheck check={check} />}
-                    {candidate?.critique ? (
-                      <figure className="critic">
-                        <blockquote>{candidate.critique}</blockquote>
-                        <figcaption>— Claude, judging the video</figcaption>
-                      </figure>
-                    ) : (
-                      <p className="critic-waiting subtle">
-                        {candidate && running && candidate.score == null
-                          ? "Claude's notes appear here after it watches the video."
-                          : candidate
-                            ? "Claude left no notes for this candidate."
-                            : ""}
-                      </p>
-                    )}
-                    {(candidate?.status === "trained" ||
-                      candidate?.status === "scored") && (
-                      <FlagControl key={candidate.id} candidate={candidate} />
-                    )}
-                    {renderReply && shown && (
-                      <div className="reply-slot">
-                        {renderReply({
-                          kind: "candidate",
-                          requestId: detail.id,
-                          round: shown.round.n,
-                          candidateId: shown.c.id,
-                          idx: shown.c.idx,
-                        })}
-                      </div>
-                    )}
-                  </div>
                 </div>
               )}
             </section>
           )}
         </div>
+
+        {showResult && !nothingWorked && candidate && (
+          // Full width under the video and status: the table and Claude's notes need
+          // room to read, not a sliver beside the score.
+          <div className="evaluation" data-candidate-id={candidate.id}>
+            {check && <SuccessCheck check={check} />}
+            {candidate.critique ? (
+              <Critique text={candidate.critique} />
+            ) : (
+              <p className="critic-waiting subtle">
+                {running && candidate.score == null
+                  ? "Claude's notes appear here after it watches the video."
+                  : "Claude left no notes for this candidate."}
+              </p>
+            )}
+            {(candidate.status === "trained" ||
+              candidate.status === "scored") && (
+              <FlagControl key={candidate.id} candidate={candidate} />
+            )}
+            {renderReply && shown && (
+              <div className="reply-slot">
+                {renderReply({
+                  kind: "candidate",
+                  requestId: detail.id,
+                  round: shown.round.n,
+                  candidateId: shown.c.id,
+                  idx: shown.c.idx,
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="technical" aria-labelledby={`explore-${detail.id}`}>
           <h3 className="details-title" id={`explore-${detail.id}`}>

@@ -65,8 +65,8 @@
 }
 .result-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 38ch);
-  gap: var(--dp-spacing-column-gap-wide);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dp-spacing-row-compact);
 }
 .stage {
   min-width: 0;
@@ -204,17 +204,45 @@
   color: var(--dp-color-ink-muted);
 }
 
-/* ---- Evaluation ---- */
-.evaluation {
+/* ---- Evaluation ----
+   The score and verdict sit in one compact row over the video. The success check
+   and Claude's notes run full width under the result, each held to a reading
+   measure so long text stays readable on a wide screen. */
+.verdict-row {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-column-gap-wide);
+}
+.verdict-facts {
+  display: grid;
+  gap: 2px;
+  font-size: var(--dp-typography-label);
+}
+.verdict-facts .improvement {
+  margin-top: 0;
+}
+.verdict-check {
+  color: var(--dp-color-ink-muted);
+}
+.verdict-check.pass {
+  color: var(--dp-color-emphasis);
+}
+.evaluation {
+  display: grid;
+  /* minmax(0, …): a wide table scrolls in its own box instead of widening the page. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dp-spacing-row);
   min-width: 0;
+  margin-top: var(--dp-spacing-row);
+}
+.evaluation > * {
+  max-width: 90ch;
 }
 .score {
   display: flex;
   align-items: baseline;
   gap: var(--dp-spacing-cell);
-  margin-top: var(--dp-spacing-inset);
 }
 .score .num:first-child {
   font-size: var(--dp-typography-display);

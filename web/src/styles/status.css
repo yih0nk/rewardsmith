@@ -194,10 +194,6 @@
   .run-grid > .result {
     grid-area: result;
   }
-  .run-grid .result-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--dp-spacing-row-compact);
-  }
   .run-side .run-status-panel {
     margin-top: 0;
   }
@@ -243,24 +239,6 @@
   }
   .run-side .success-spec {
     grid-template-columns: minmax(0, 1fr);
-  }
-}
-/* Very wide panes: score and verdict beside each other under the video. */
-@container (min-width: 1100px) {
-  .run-grid .evaluation {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-auto-flow: dense;
-    column-gap: var(--dp-spacing-column-gap-wide);
-    align-items: start;
-  }
-  .run-grid .evaluation > * {
-    grid-column: 2;
-  }
-  .run-grid .evaluation > .score,
-  .run-grid .evaluation > .score-label,
-  .run-grid .evaluation > .improvement {
-    grid-column: 1;
   }
 }
 .result-who {
