@@ -5,7 +5,8 @@
 .candidate-option {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 46ch) 12ch minmax(0, 1fr);
+  /* Name and score, the score bar, then the learning curve, which needs ~200 px. */
+  grid-template-columns: minmax(0, 40ch) 12ch minmax(0, 1fr);
   align-items: center;
   column-gap: var(--dp-spacing-column-gap);
   padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
@@ -64,6 +65,7 @@
   color: var(--dp-color-ink-muted);
 }
 .candidate-state {
+  white-space: nowrap;
   font-weight: 400;
 }
 .candidate-state::first-letter {

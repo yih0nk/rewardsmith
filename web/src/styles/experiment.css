@@ -367,11 +367,13 @@
 .rounds {
   border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
 }
+/* A flex row: the fixed-width readouts line up across rows, and the counts and
+   the "Best" tag drop to a second line when the pane is narrow. */
 .round {
-  display: grid;
-  grid-template-columns: 8ch 8ch 5ch 21ch minmax(0, 1fr) 6ch;
+  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  column-gap: var(--dp-spacing-column-gap);
+  gap: 0 var(--dp-spacing-gutter);
   width: 100%;
   padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
   border: 0;
@@ -410,12 +412,23 @@ button.round:hover .label {
   font-weight: 500;
   color: var(--dp-color-emphasis);
 }
+.round > .label {
+  flex: 0 0 8ch;
+}
+.round-score {
+  flex: 0 0 8ch;
+}
+.round > .delta {
+  flex: 0 0 5ch;
+}
 .round-meta {
+  flex: 1 0 auto;
   font-size: var(--dp-typography-label);
   color: var(--dp-color-ink-muted);
+  white-space: nowrap;
 }
 .round-best {
-  justify-self: end;
+  margin-left: auto;
   font-size: var(--dp-typography-label);
   color: var(--dp-color-emphasis);
 }

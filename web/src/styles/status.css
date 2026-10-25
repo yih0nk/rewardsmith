@@ -230,12 +230,15 @@
   .run-side .lanes {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* The name on its own line, then the bar, with the state beside it when it
+     fits and under it when it doesn't. Nothing runs past the panel. */
   .run-side .lane {
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--dp-spacing-gutter);
   }
-  .run-side .lane-bar {
-    grid-row: 2;
-    grid-column: 1 / -1;
+  .run-side .lane-name {
+    flex-basis: 100%;
   }
   .run-side .success-spec {
     grid-template-columns: minmax(0, 1fr);
