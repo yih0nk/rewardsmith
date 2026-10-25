@@ -29,3 +29,4 @@ def get_body(name: str | None = None) -> Body:
 
 # One line per body.
 from . import go1  # noqa: E402, F401
+from . import g1  # noqa: E402, F401

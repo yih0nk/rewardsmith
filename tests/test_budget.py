@@ -34,3 +34,9 @@ def test_survivor_stretch_keeps_the_round_cost():
     assert survivor_stretch(4, [2], 5) == 1.6  # (4 + 2 + 2 + 2) / 4 = 2.5 runs' work for 4 runs' budget
     assert survivor_stretch(8, [4, 2], 5) == 2.0
     assert survivor_stretch(4, [4], 5) == 1.0
+
+
+def test_two_legs_is_a_pose_for_the_go1_but_the_gait_for_a_biped():
+    assert budget.plan("walk forward on two legs", scene_mod.EMPTY).family == "pose"
+    assert budget.plan("walk forward on two legs", scene_mod.EMPTY, bipedal=True).family == "gait"
+    assert budget.plan("jump on two legs", scene_mod.EMPTY, bipedal=True).family == "pose"
