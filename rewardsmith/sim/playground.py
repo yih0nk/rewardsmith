@@ -22,7 +22,8 @@ Settings (env vars):
   REWARDSMITH_RESTORE_VALUE 1 = warm starts keep the checkpoint's value network too (default 1)
   REWARDSMITH_TUNE_NOISE  tune mode resets the walker's exploration noise to this std (default 0.5;
                           0 keeps the walker's own, about 0.1, too little to leave its gait)
-  REWARDSMITH_STEPS       training steps per candidate (default: the preset's)
+  REWARDSMITH_STEPS       training steps per candidate (default: budget.py's per-request plan with a
+                          warm start, else the preset's)
 """
 
 import logging
@@ -40,7 +41,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
-from . import evaluation, gate, go1, go1_spec, parallel, train  # noqa: E402
+from . import budget, evaluation, gate, go1, go1_spec, parallel, train  # noqa: E402
 from .base import Cull, Job, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 from .scene import EMPTY, SceneSpec  # noqa: E402
@@ -104,6 +105,10 @@ class PlaygroundSimulator:
             float(os.environ.get("REWARDSMITH_STOCK_WEIGHT", go1.STOCK_WEIGHT)) if stock_weight is None else stock_weight
         )
         self.steps = steps or int(os.environ.get("REWARDSMITH_STEPS") or 0) or None  # None: the preset's
+        # plan_request may pick these per request, unless they were set explicitly.
+        self._auto_steps = self.steps is None
+        self._auto_stock = stock_profile is None and not os.environ.get("REWARDSMITH_STOCK")
+        self._auto_mode = mode is None and not os.environ.get("REWARDSMITH_MODE")
         self.restore_value = _flag("REWARDSMITH_RESTORE_VALUE", "1") if restore_value is None else restore_value
         self.tune_noise = float(os.environ.get("REWARDSMITH_TUNE_NOISE", TUNE_NOISE)) if tune_noise is None else tune_noise
         self._pool: parallel.WarmPool | None = None
@@ -217,6 +222,23 @@ class PlaygroundSimulator:
             "stock_weight": self.stock_weight, "steps": self.steps, "restore_value": self.restore_value,
             "tune_noise": self.tune_noise,
         }
+
+    def plan_request(self, text: str, scene: SceneSpec | None = None) -> str:
+        """Pick this request's mode, steps per candidate and stock profile (budget.py); return the plan for the log.
+
+        Poses fine-tune the walker (tune, pose stock terms); everything else steers it.
+        Only with a walker: the budgets were measured with one. Explicit settings win.
+        """
+        if not self.walker:
+            return "Training plan: preset steps, no warm start"
+        plan = budget.plan(text, scene or EMPTY)
+        if self._auto_mode:
+            self.mode = "tune" if plan.family == "pose" else "steer"
+        if self._auto_steps:
+            self.steps = plan.steps
+        if self._auto_stock:
+            self.stock_profile = plan.family
+        return f"{plan.summary()}, {self.mode} mode"
 
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
         self.evaluation_spec = spec
