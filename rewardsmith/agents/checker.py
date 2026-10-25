@@ -18,6 +18,7 @@ from ..sim.go1_spec import POSE_METRICS
 from ..sim.scene import EMPTY, SceneSpec
 from ..sim import outcomes
 from .claude import ask_json
+from .robot import drop_bullets, for_body, kind
 
 # name: (meaning, lowest sensible threshold, highest). The rollout metrics come from
 # sim/render.py; the abs_ ones are derived here, for behaviors with no set direction.
@@ -44,12 +45,32 @@ OPS = {"<": operator.lt, ">": operator.gt, "<=": operator.le, ">=": operator.ge}
 MAX_CLAUSES = 6
 NO_FALL = {"metric": "fell", "op": "<", "value": 0.5}
 
-SYSTEM = f"""You turn a request for a simulated Unitree Go1 quadruped into a pass/fail
+
+def body_metrics(body: str | None) -> dict[str, tuple[str, float, float]]:
+    """The metrics a check can use on one body: the shared ones, then the body's own
+    (Body.metric_names; the Go1's are the pose metrics). A body may describe its own in
+    a metric_docs dict, name: (meaning, low, high)."""
+    from ..sim import bodies
+
+    b = bodies.get_body(body)
+    docs = getattr(b, "metric_docs", {})
+    out = {name: definition for name, definition in METRICS.items() if name not in POSE_METRICS}
+    for name in b.metric_names():
+        out[name] = METRICS.get(name) or docs.get(name) or (f"measured on the {b.title}", -1e6, 1e6)
+    return out
+
+
+def _system(metrics: dict[str, tuple[str, float, float]]) -> str:
+    return SYSTEM_HEAD + "\n".join(f"- {name}: {meaning}" for name, (meaning, _, _) in metrics.items()) + SYSTEM_RULES
+
+
+SYSTEM_HEAD = """You turn a request for a simulated Unitree Go1 quadruped into a pass/fail
 success check over rollout metrics. The check is written before any training and is
 never changed afterwards, so it must capture what the user asked for, not what is easy.
 
 The robot is trained with PPO, then evaluated for up to 10 s per episode in the supplied scene. These metrics are measured over the rollout:
-{chr(10).join(f"- {name}: {meaning}" for name, (meaning, _, _) in METRICS.items())}
+"""
+SYSTEM_RULES = f"""
 
 Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" or ">=". All must hold.
 - Check the core of the behavior with a margin a decent policy reaches: walking is
@@ -91,6 +112,15 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
 - If the request can't be measured with these metrics (a gait style),
   check what can be measured: staying upright and not falling.
 """
+SYSTEM = _system(METRICS)
+
+
+def system_for(body: str | None) -> str:
+    """SYSTEM for one body: its metrics, and the quadruped pose rule only for quadrupeds."""
+    text = _system(body_metrics(body))
+    if kind(body) != "quadruped":
+        text = drop_bullets(text, "Pose requests")
+    return for_body(text, body)
 
 SCHEMA = {
     "type": "object",
@@ -122,6 +152,9 @@ class SpecError(ValueError):
 def metric_definition(metric: str, scene: SceneSpec | None = None):
     if metric in METRICS:
         return METRICS[metric]
+    own = _registered_body_metrics().get(metric)
+    if own is not None:
+        return own
     try:
         mode, names = outcomes.parts(metric, scene or EMPTY)
     except ValueError as exc:
@@ -310,9 +343,20 @@ def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> l
     return spec
 
 
+def _registered_body_metrics() -> dict[str, tuple[str, float, float]]:
+    """Every registered body's own metrics, so a stored check on any body validates."""
+    from ..sim import bodies
+
+    out: dict[str, tuple[str, float, float]] = {}
+    for name in bodies.BODIES:
+        out.update(body_metrics(name))
+    return out
+
+
 class ClaudeChecker:
-    def __init__(self, client: anthropic.Anthropic, model: str):
+    def __init__(self, client: anthropic.Anthropic, model: str, body: str | None = None):
         self.client, self.model = client, model
+        self.system = system_for(body)
 
     def write_spec(self, request: str, scene: SceneSpec | None = None) -> list[dict[str, Any]]:
         context = scene.summary() if scene else "No scene target: the robot is alone on a flat floor."
@@ -320,7 +364,7 @@ class ClaudeChecker:
         prompt = f"Request: {request}\n\nScene:\n{context}\n\nAvailable episode outcomes:\n{events}\n\nWrite the success check. Use unsupported_reason=null for supported tasks."
         schema = SCHEMA
         for attempt in range(2):
-            out = ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], schema, effort="medium")
+            out = ask_json(self.client, self.model, self.system, [{"type": "text", "text": prompt}], schema, effort="medium")
             if out.get("unsupported_reason"):
                 raise SpecError(f"Unsupported task: {out['unsupported_reason']}")
             try:

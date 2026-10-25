@@ -3,6 +3,7 @@ import anthropic
 from .base import REWARD_CONTRACT, Draft
 from .claude import ask_json
 from .references import reference
+from .robot import drop_bullets, for_body, kind
 from .stream import IdeaStream, OnIdea
 
 SYSTEM = f"""You design reward functions for reinforcement learning in MuJoCo Playground (JAX).
@@ -49,6 +50,18 @@ Recipe for object tasks (the environment notes list the objects):
   by dropping a phase.
 """
 
+
+
+def system_for(body: str | None) -> str:
+    """SYSTEM for one body. The gait and pose recipes are a quadruped's: other bodies get
+    their stock terms and poses from the environment notes (Body.describe)."""
+    if kind(body) == "quadruped":
+        return for_body(SYSTEM, body)
+    text = drop_bullets(SYSTEM, "Keep the stock gait", "Hold a pose")
+    text = text.replace("Rules:\n", "Rules:\n- Keep the stock terms the environment notes list for this robot.\n", 1)
+    return for_body(text, body)
+
+
 WRITE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -75,8 +88,9 @@ FIX_SCHEMA = {
 
 
 class ClaudeWriter:
-    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high"):
+    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high", body: str | None = None):
         self.client, self.model, self.effort = client, model, effort
+        self.system = system_for(body)
 
     def write(self, request: str, env_doc: str, k: int, on_idea: OnIdea | None = None) -> list[Draft]:
         """on_idea(i, idea) is called as each candidate's idea streams in."""
@@ -88,7 +102,7 @@ class ClaudeWriter:
             "not small weight changes of one idea."
         )
         out = ask_json(
-            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA, effort=self.effort,
+            self.client, self.model, self.system, [{"type": "text", "text": prompt}], WRITE_SCHEMA, effort=self.effort,
             on_text=IdeaStream(on_idea) if on_idea else None,
         )
         return [Draft(c["source"], idea=c["idea"]) for c in out["candidates"]][:k]
@@ -100,6 +114,6 @@ class ClaudeWriter:
             f"Error:\n{error}\n\nReturn the corrected module. Change only what the error requires."
         )
         out = ask_json(
-            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], FIX_SCHEMA, effort="medium"
+            self.client, self.model, self.system, [{"type": "text", "text": prompt}], FIX_SCHEMA, effort="medium"
         )
         return out["source"]

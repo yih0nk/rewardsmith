@@ -9,6 +9,7 @@ from ..sim.go1_spec import POSE_METRICS
 from .base import Review
 from .checker import METRICS, describe
 from .claude import ask_json
+from .robot import for_body
 
 SYSTEM = """You are a strict judge of robot learning results. You see frames from a
 simulated rollout of a Unitree Go1 quadruped (in time order), measured metrics, and the
@@ -85,8 +86,9 @@ MAX_FRAMES = 10
 
 
 class ClaudeCritic:
-    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high"):
+    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high", body: str | None = None):
         self.client, self.model, self.effort = client, model, effort
+        self.system = for_body(SYSTEM, body)
 
     def review(self, request: str, result: RunResult, check: dict[str, Any] | None = None) -> Review:
         content: list[dict] = []
@@ -108,7 +110,7 @@ class ClaudeCritic:
                 + (f"\n\nTask diagnosis (computed from the 32 episodes):\n{diagnosis}" if diagnosis else "")
             ),
         })
-        out = ask_json(self.client, self.model, SYSTEM, content, SCHEMA, effort=self.effort)
+        out = ask_json(self.client, self.model, self.system, content, SCHEMA, effort=self.effort)
         return apply_limits(float(out["score"]), bool(out["reward_hacking"]), out["critique"], result.metrics, check)
 
 
