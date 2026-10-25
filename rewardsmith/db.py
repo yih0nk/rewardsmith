@@ -91,7 +91,8 @@ def connect(path: Path) -> sqlite3.Connection:
 # Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
 # existing table alone, so a db file from an older version gets them here.
 ADDED_COLUMNS = {
-    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER", "control": "TEXT"},
+    "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER", "control": "TEXT",
+                 "coach": "TEXT"},  # the live coach's model for this request, or "off"; NULL = the worker's default
     "candidates": {
         "flagged_at": "REAL",
         "flag_note": "TEXT",
@@ -100,6 +101,8 @@ ADDED_COLUMNS = {
         "idea": "TEXT",  # what the writer or editor says this candidate tries
         "reward_hacking": "INTEGER",  # 1 when the critic suspects reward hacking
     },
+    # Which round and candidate (0-based idx) an event is about, when it is about one (coach events).
+    "events": {"round_n": "INTEGER", "candidate": "INTEGER"},
 }
 JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
 
@@ -149,12 +152,15 @@ def _decode(out: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def create_request(conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None) -> str:
-    """scene: a validated scene spec to use as is; None lets the scene writer decide."""
+def create_request(
+    conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None, coach: str | None = None
+) -> str:
+    """scene: a validated scene spec to use as is; None lets the scene writer decide.
+    coach: the live coach's model, or "off"; None leaves it to the worker's setting."""
     rid = uuid.uuid4().hex[:8]
     conn.execute(
-        "INSERT INTO requests (id, text, created_at, scene) VALUES (?, ?, ?, ?)",
-        (rid, text, time.time(), json.dumps(scene) if scene is not None else None),
+        "INSERT INTO requests (id, text, created_at, scene, coach) VALUES (?, ?, ?, ?, ?)",
+        (rid, text, time.time(), json.dumps(scene) if scene is not None else None, coach),
     )
     return rid
 
@@ -257,10 +263,14 @@ def set_candidate(conn: sqlite3.Connection, cid: int, **fields: Any) -> None:
     _update(conn, "candidates", "id", cid, fields)
 
 
-def log_event(conn: sqlite3.Connection, rid: str, kind: str, message: str) -> None:
+def log_event(
+    conn: sqlite3.Connection, rid: str, kind: str, message: str,
+    round_n: int | None = None, candidate: int | None = None,
+) -> None:
+    """candidate is the 0-based idx within round_n, for events about one candidate."""
     conn.execute(
-        "INSERT INTO events (request_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
-        (rid, kind, message, time.time()),
+        "INSERT INTO events (request_id, kind, message, created_at, round_n, candidate) VALUES (?, ?, ?, ?, ?, ?)",
+        (rid, kind, message, time.time(), round_n, candidate),
     )
 
 

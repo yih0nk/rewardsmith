@@ -37,6 +37,8 @@ class NewRequest(BaseModel):
     text: str = Field(min_length=3, max_length=300)
     # Optional scene spec (see rewardsmith/sim/scene.py). Omit it to let the scene writer decide.
     scene: dict[str, Any] | None = None
+    # The live coach that watches training: a Claude model id, or "off". Omit it for the worker's default.
+    coach: str | None = Field(default=None, pattern=r"^(off|claude-[a-z0-9-]+)$")
 
 
 @app.post("/api/requests", status_code=201)
@@ -47,7 +49,7 @@ def create_request(body: NewRequest, conn: sqlite3.Connection = Depends(get_conn
             spec = scene.parse(body.scene).to_dict()
         except scene.SceneError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-    rid = db.create_request(conn, body.text, spec)
+    rid = db.create_request(conn, body.text, spec, body.coach)
     db.log_event(conn, rid, "queued", "Request queued")
     return {"id": rid}
 
