@@ -29,7 +29,8 @@ METRICS: dict[str, tuple[str, float, float]] = {
     "abs_forward_velocity": ("absolute value of forward_velocity, m/s", 0.0, 3.0),
     "abs_lateral_velocity": ("absolute value of lateral_velocity, m/s", 0.0, 3.0),
     "abs_yaw_rate": ("absolute value of yaw_rate, rad/s (turning either way)", 0.0, 10.0),
-    "base_height": ("mean height of the body above the floor, m; about 0.28 standing", 0.0, 0.6),
+    # Up to 2 m so a humanoid's check validates; the Go1 stands at about 0.28.
+    "base_height": ("mean height of the body above the floor, m; about 0.28 standing", 0.0, 2.0),
     "upright": ("mean z of the body's up axis: 1 level, 0 on its side", -1.0, 1.0),
     "fell": ("1 if the robot flipped over during the rollout, else 0", 0.0, 1.0),
 }
@@ -54,6 +55,10 @@ def body_metrics(body: str | None) -> dict[str, tuple[str, float, float]]:
     b = bodies.get_body(body)
     own = b.metric_names()
     out = {name: definition for name, definition in METRICS.items() if name not in POSE_METRICS}
+    if b.name != bodies.DEFAULT_BODY:  # "about 0.28 standing" is the Go1's height
+        standing = getattr(b, "standing_height", None)
+        out["base_height"] = ("mean height of the body above the floor, m"
+                              + (f"; about {standing:g} standing" if standing else ""), 0.0, 2.0)
     for name in own:
         spec = own[name] if isinstance(own, dict) else None
         out[name] = tuple(spec) if spec else METRICS.get(name, (f"measured on the {b.title}", -1e6, 1e6))

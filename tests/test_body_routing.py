@@ -255,6 +255,8 @@ def test_prompts_name_the_body_and_stay_word_for_word_on_the_go1(registry):
     assert "Unitree G1 humanoid" in humanoid and "Unitree Go1" not in humanoid
     assert "- hand_height: mean height of the right hand above the floor, m" in humanoid
     assert "front_feet_off" not in humanoid and "Pose requests" not in humanoid
+    assert "about 0.28 standing" not in humanoid and "- base_height: mean height of the body above the floor, m" in humanoid
+    assert checker.validate([{"metric": "base_height", "op": ">=", "value": 0.7}])
     assert checker.metric_definition("hand_height") == ("mean height of the right hand above the floor, m", 0.0, 2.0)
     arm = writer.system_for("panda")
     assert "stock gait" not in arm and "hind legs" not in arm
