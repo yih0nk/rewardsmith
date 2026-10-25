@@ -103,3 +103,36 @@ def test_latest_checkpoint(tmp_path):
     for steps in (0, 2_000_000, 10_000_000, 400_000):
         checkpoints.save(checkpoints.step_path(tmp_path, steps), {"x": np.zeros(1)})
     assert checkpoints.latest(tmp_path).name == "params_10000000.pkl"
+
+
+def _real_walker(tmp_path):
+    """A random walker-shaped checkpoint (state 48 inputs), saved like train_walker.py does."""
+    plain = go1.make_env(WALK_BACKWARDS, impl="jax")
+    _, params = _walker_params(plain)
+    return checkpoints.save(tmp_path / "params.pkl", params), params
+
+
+def test_steer_mode_commands_the_walker(tmp_path):
+    path, params = _real_walker(tmp_path)
+    env = go1.make_env(WALK_TO_BALL, impl="jax", scene=SCENE, walker=path)
+    assert env.steers and env.action_size == 3
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    step = jax.jit(env.step)
+    for _ in range(5):
+        state = step(state, jnp.array([1.0, 0.0, -1.0]))
+    # the command eases toward (1.5, 0, -1.2) and is what the policy observes
+    expected = (1 - (1 - go1.COMMAND_SMOOTHING) ** 5) * np.array([1.5, 0.0, -1.2])
+    np.testing.assert_allclose(state.info["command"], expected, rtol=1e-5)
+    np.testing.assert_allclose(state.obs["state"][45:48], expected, rtol=1e-5)
+    # the joints got the walker's action for that observation
+    walker = go1.walker_policy(params)
+    assert state.info["last_act"].shape == (12,)
+    assert np.isfinite(float(state.reward))
+    assert walker({"state": state.obs["state"][:48]}, jax.random.PRNGKey(0))[0].shape == (12,)
+
+
+def test_steer_mode_needs_a_walker_checkpoint(tmp_path):
+    scene_env = go1.make_env(WALK_TO_BALL, impl="jax", scene=SCENE)
+    _, params = _walker_params(scene_env)
+    with pytest.raises(ValueError, match="not a walker checkpoint"):
+        go1.walker_policy(params)
