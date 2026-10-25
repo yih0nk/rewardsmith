@@ -15,6 +15,13 @@ STANDING_HEIGHT = 0.278  # base height in the home pose, m
 LEGS = ("FR", "FL", "RR", "RL")  # front right, front left, rear right, rear left
 
 
+# Steer mode: the policy's action in [-1, 1]^3 times these is the walker's command target
+# (forward m/s, left m/s, yaw rad/s): Playground's command ranges, what the walker learned to follow.
+COMMAND_LIMITS = (1.5, 0.8, 1.2)
+# Each step the command moves this fraction of the way to the target: the walker learned
+# commands held for seconds, so a jittery per-step command would be outside its training.
+COMMAND_SMOOTHING = 0.2
+
 # Playground's tuned Go1 joystick reward terms (joystick.default_config) that keep the gait clean and
 # the body steady, with their stock scales. Left out: tracking_lin_vel, tracking_ang_vel and
 # stand_still, which reward following the joystick command, and that is always 0 here.
@@ -166,8 +173,9 @@ def stock_lines(profile: str, weight: float = STOCK_WEIGHT) -> list[str]:
 
 
 def describe(
-    scene: SceneSpec = EMPTY, *, warm_start: bool = False, stock_profile: str = "off", stock_weight: float = STOCK_WEIGHT
+    scene: SceneSpec = EMPTY, *, mode: str = "off", stock_profile: str = "off", stock_weight: float = STOCK_WEIGHT
 ) -> str:
+    """The writer's notes. mode is how the policy uses the pretrained walker (playground.MODES)."""
     floor = "rough, bumpy ground" if scene.terrain == "rough" else "flat floor"
     lines = [
         f"Robot: Unitree Go1 quadruped in MuJoCo Playground (JAX/MJX), {floor}.",
@@ -217,14 +225,26 @@ def describe(
         "so keep a positive task term that outweighs the penalties (exp(-error^2 / sigma) kernels work well).",
         "- The episode ends early only if the robot flips upside down (up_z < 0).",
         "- The robot starts standing, with a random heading and small random velocities.",
-        "- There is no velocity command. Reward the behavior directly.",
     ]
-    if warm_start:
+    if mode != "steer":
+        lines.append("- There is no velocity command. Reward the behavior directly.")
+    if mode == "tune":
         lines.append(
             "- The policy starts from a pretrained walker (Playground's Go1 joystick policy), not from random "
             "weights: at the first step it already stands steadily and has a clean trot, but its command is 0, "
             "so it stands still until your terms reward motion. Your reward teaches the task; it doesn't have to "
             "teach walking or balance."
+        )
+    elif mode == "steer":
+        fwd, side, turn = COMMAND_LIMITS
+        lines.append(
+            "- The policy steers a pretrained walker (Playground's Go1 joystick policy, a clean and stable trot): "
+            f"each step it picks a velocity command, forward/backward up to {fwd:g} m/s, sideways up to {side:g} m/s "
+            f"and turning up to {turn:g} rad/s, which eases toward the pick ({COMMAND_SMOOTHING:.0%} per step), and "
+            "the walker moves the legs. At command 0 it stands still. So reward the outcome (where the robot goes "
+            "and faces, how fast, what happens to the objects); the policy cannot change how the legs move, so "
+            "gait, posture, foot and smoothness terms have no effect: leave them out. action and prev_action are "
+            "the walker's joint actions."
         )
     if scene.objects:
         lines += [
