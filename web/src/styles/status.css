@@ -1,0 +1,331 @@
+/* Run status: what is happening now, the timers, the step strip and the
+   per-candidate lanes. Then the success check sentence and the no-result panel. */
+.run-status-panel {
+  margin-top: var(--dp-spacing-row-compact);
+  padding: var(--dp-spacing-row-compact) var(--dp-spacing-gutter);
+  border: var(--dp-border-hairline) solid var(--dp-color-ink);
+}
+.run-status-panel.finished {
+  border-color: var(--dp-color-rule);
+}
+/* A run that produced nothing: emphasis border, dashed, so it never reads as "still working". */
+.run-status-panel.broken {
+  border: 2px dashed var(--dp-color-emphasis);
+}
+.now {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--dp-spacing-gutter);
+}
+.now-tag {
+  padding: 0 var(--dp-spacing-cell);
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+  font-size: var(--dp-typography-label);
+  font-weight: 500;
+}
+.finished .now-tag {
+  background: none;
+  color: var(--dp-color-ink);
+  outline: var(--dp-border-hairline) solid var(--dp-color-ink);
+}
+.broken .now-tag {
+  background: var(--dp-color-emphasis);
+}
+.now-label {
+  font-size: var(--dp-typography-heading);
+  font-weight: 500;
+  line-height: 36px;
+  color: var(--dp-color-emphasis);
+  overflow-wrap: anywhere;
+}
+.timers {
+  display: flex;
+  gap: var(--dp-spacing-column-gap);
+}
+.timers div {
+  display: grid;
+  justify-items: end;
+}
+.timers dt {
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.timers dd {
+  font-size: var(--dp-typography-heading);
+  font-weight: 500;
+  line-height: 36px;
+  color: var(--dp-color-emphasis);
+}
+.now-hint {
+  margin-top: 4px;
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-cell);
+  margin: var(--dp-spacing-row-compact) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--dp-typography-label);
+  counter-reset: step;
+}
+.step {
+  padding: 2px var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-rule);
+  color: var(--dp-color-ink-muted);
+  white-space: nowrap;
+}
+.step.done {
+  border-color: var(--dp-color-ink-muted);
+  color: var(--dp-color-ink);
+}
+.step.current {
+  border-color: var(--dp-color-ink);
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+  font-weight: 500;
+}
+.step.current .explain-term {
+  color: inherit;
+}
+.steps-round {
+  align-self: center;
+  margin-right: var(--dp-spacing-cell);
+  color: var(--dp-color-emphasis);
+}
+.steps-note {
+  margin-top: 4px;
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.steps-note strong {
+  color: var(--dp-color-ink);
+}
+/* Two lanes per row on wide screens, so four candidates take two lines. */
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 62ch), 1fr));
+  column-gap: var(--dp-spacing-column-gap-wide);
+  margin: var(--dp-spacing-inset) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--dp-typography-label);
+}
+.lane {
+  display: grid;
+  grid-template-columns: 22ch 22ch minmax(0, 1fr);
+  column-gap: var(--dp-spacing-gutter);
+  padding: 2px 0;
+  border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
+  line-height: var(--dp-typography-list-leading);
+}
+.lane-bar {
+  white-space: pre;
+}
+.lane-state {
+  color: var(--dp-color-emphasis);
+}
+.lane.failed .lane-state,
+.lane.stopped .lane-state {
+  color: var(--dp-color-ink-muted);
+}
+
+/* The pass/fail check, as a sentence. */
+.success-spec {
+  display: grid;
+  grid-template-columns: 16ch minmax(0, 1fr);
+  column-gap: var(--dp-spacing-column-gap);
+  padding: var(--dp-spacing-inset) 0;
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+}
+.success-spec p {
+  color: var(--dp-color-emphasis);
+}
+
+/* ---- Status beside the result ----
+   When the task pane is wide enough (820 px: a 1280x800 projector with the task
+   list open), the best result is on the left, large, and the live status on the
+   right, so both sit above the fold. Narrower panes stack them, status first. */
+.run-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dp-spacing-section-compact);
+}
+.result {
+  scroll-margin-top: var(--dp-spacing-inset);
+}
+.result > .cmd-title {
+  justify-content: flex-start;
+  gap: 0 var(--dp-spacing-gutter);
+}
+.result .result-who {
+  font-size: var(--dp-typography-body);
+}
+/* The score in the header too, so it is visible without scrolling past the video. */
+.who-score {
+  color: var(--dp-color-emphasis);
+  font-weight: 500;
+}
+.who-score small {
+  font-size: var(--dp-typography-label);
+  font-weight: 400;
+  color: var(--dp-color-ink-muted);
+}
+@container (min-width: 820px) {
+  .run-grid {
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+    grid-template-areas: "result side";
+    align-items: start;
+    margin-top: var(--dp-spacing-row-compact);
+    column-gap: var(--dp-spacing-column-gap-wide);
+  }
+  .run-grid > .run-side {
+    grid-area: side;
+  }
+  .run-grid.status-only {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "side";
+  }
+  .run-grid > .result {
+    grid-area: result;
+  }
+  .run-grid .result-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--dp-spacing-row-compact);
+  }
+  .run-side .run-status-panel {
+    margin-top: 0;
+  }
+  /* The side column is narrow: tag, label and timers stack, lanes take two lines. */
+  .run-side .now {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .run-side .now-tag {
+    justify-self: start;
+  }
+  .run-side .now-label {
+    margin-top: 4px;
+    font-size: var(--dp-typography-body);
+    line-height: var(--dp-typography-body-leading);
+  }
+  .run-grid.status-only .now {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .run-grid.status-only .now-label {
+    margin-top: 0;
+    font-size: var(--dp-typography-heading);
+  }
+  .run-grid.status-only .timers {
+    grid-column: auto;
+    margin-top: 0;
+  }
+  .run-side .timers {
+    grid-column: 1 / -1;
+    margin-top: var(--dp-spacing-inset);
+  }
+  .run-side .timers div {
+    justify-items: start;
+  }
+  .run-side .lanes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .run-side .lane {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .run-side .lane-bar {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .run-side .success-spec {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Very wide panes: score and verdict beside each other under the video. */
+@container (min-width: 1100px) {
+  .run-grid .evaluation {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-auto-flow: dense;
+    column-gap: var(--dp-spacing-column-gap-wide);
+    align-items: start;
+  }
+  .run-grid .evaluation > * {
+    grid-column: 2;
+  }
+  .run-grid .evaluation > .score,
+  .run-grid .evaluation > .score-label,
+  .run-grid .evaluation > .improvement {
+    grid-column: 1;
+  }
+}
+.result-who {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--dp-spacing-gutter);
+}
+.viewing-note {
+  margin-bottom: var(--dp-spacing-row-compact);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.improvement {
+  margin-top: var(--dp-spacing-inset);
+  font-size: var(--dp-typography-label);
+}
+.clauses {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.clauses li {
+  display: block;
+  padding-left: 2ch;
+  text-indent: -2ch;
+}
+.clauses li > span[aria-hidden] {
+  display: inline-block;
+  width: 2ch;
+  text-indent: 0;
+}
+.clauses li.pass {
+  color: var(--dp-color-emphasis);
+}
+.clauses li.fail {
+  color: var(--dp-color-ink-muted);
+}
+
+/* A finished run with no robot: what happened and what to do. */
+.run-problem {
+  display: grid;
+  gap: var(--dp-spacing-inset);
+  justify-items: start;
+  padding: var(--dp-spacing-row) var(--dp-spacing-gutter);
+  border: 2px dashed var(--dp-color-emphasis);
+  overflow-wrap: anywhere;
+}
+.problem-title {
+  font-size: var(--dp-typography-heading);
+  font-weight: 500;
+  line-height: 36px;
+  color: var(--dp-color-emphasis);
+}
+.run-problem code {
+  color: var(--dp-color-emphasis);
+}
+.run-problem .primary {
+  margin-top: var(--dp-spacing-inset);
+}
+.sub-title {
+  margin-top: var(--dp-spacing-row);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-emphasis);
+}
+.technical details > div > * + * {
+  margin-top: var(--dp-spacing-row-compact);
+}
