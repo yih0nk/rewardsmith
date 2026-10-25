@@ -158,6 +158,20 @@
   color: var(--dp-color-ink);
 }
 
+/* What the candidate tries, in two lines; the full text is in its in-depth panel. */
+.candidate-idea {
+  grid-column: 1 / -1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 90ch;
+  overflow: hidden;
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.candidate-option.active .candidate-idea {
+  color: var(--dp-color-ground);
+}
 /* Failed and stopped candidates read as finished, not as still working. */
 .candidate-option.failed .candidate-state,
 .candidate-option.stopped .candidate-state {

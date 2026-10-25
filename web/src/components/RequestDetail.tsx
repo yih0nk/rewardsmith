@@ -471,9 +471,18 @@ export default function RequestDetail({
             <details>
               <summary>
                 {name}, in depth{" "}
-                <span>learning curve · reward breakdown · measurements</span>
+                <span>
+                  {candidate.idea ? "the idea · " : ""}learning curve · reward
+                  breakdown · measurements
+                </span>
               </summary>
               <div>
+                {candidate.idea && (
+                  <div className="idea">
+                    <h3 className="sub-title">What this reward tries</h3>
+                    <p>{inline(candidate.idea)}</p>
+                  </div>
+                )}
                 {candidate.error && (
                   <pre className="error" role="alert">
                     {candidate.error}
