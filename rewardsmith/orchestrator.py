@@ -71,7 +71,7 @@ class Best:
 class FollowUp:
     """What a follow-up turn's first round starts from (prepare_turn)."""
     parent: Best  # the candidate to refine; its critique carries the coach's and the user's notes
-    history: list[Attempt]  # the editor's history: the parent's own turn
+    history: list[Attempt]  # the editor's history: every earlier turn's scored candidates
     init_params: Path | None = None  # the parent's latest policy, when the simulator can continue it
 
 
@@ -116,6 +116,8 @@ def run_request(
     # A resumed run picks up after its last finished round, with the same scene and check.
     # ranked: every scored candidate, best first; history: the same, in the order they were scored.
     start, best, ranked, history = _resume_state(conn, rid)
+    if follow_up is not None and not history:  # later rounds of a follow-up still see the earlier turns
+        history = list(follow_up.history)
     warm_up = getattr(sim, "warm_up", None)
     if warm_up:  # round 1's training processes warm up during the scene and check calls too
         warm_up(k)
@@ -263,7 +265,7 @@ def run_request(
                     continue
                 scored = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
                 ranked.append(scored)
-                history.append(Attempt(n, cids.index(cid), review.score, review.critique))
+                history.append(Attempt(n, cids.index(cid), review.score, review.critique, req.get("turn") or 1))
                 if round_best is None or scored.rank() > round_best.rank():
                     round_best = scored
             # Passing runs first, then by score. Stable: on a tie the earlier candidate stays ahead.
@@ -486,9 +488,10 @@ def _resume_state(
     """(first round to run, best so far, every scored candidate best first, the editor's
     history), from the rounds already in the database. A fresh request starts at round 1
     with nothing."""
-    rounds = db.get_request(conn, rid)["rounds"]
+    req = db.get_request(conn, rid)
+    rounds = req["rounds"]
     history = [
-        Attempt(r["n"], c["idx"], c["score"], c["critique"] or "")
+        Attempt(r["n"], c["idx"], c["score"], c["critique"] or "", req.get("turn") or 1)
         for r in rounds for c in r["candidates"] if c["status"] == "scored"
     ]
     ranked = [
@@ -808,8 +811,17 @@ def label(cand: dict[str, Any]) -> str:
     return name if (cand.get("turn") or 1) == 1 else f"Turn {cand['turn']} · {name}"
 
 
-def _rank(cand: dict[str, Any]) -> tuple[bool, float]:
-    return ((cand.get("check_result") or {}).get("pass", True), cand["score"])
+def _rank(cand: dict[str, Any]) -> tuple[bool, float, int, int, int, int]:
+    """How a follow-up picks its target: a run that passes the check, then the higher score.
+
+    Scores tie a lot (the critic caps a run that fails the task's criterion at 4), so on a tie the
+    run that meets more of the check wins, then the latest: it carries the last turn's fixes and
+    has a saved policy to train on from. Taking the earliest made every "keep going" revise the
+    same turn-1 run again, from scratch, and drop what the turn before it had gained.
+    """
+    check = cand.get("check_result") or {}
+    met = sum(1 for clause in check.get("clauses") or () if clause.get("pass"))
+    return (check.get("pass", True), cand["score"], met, cand.get("turn") or 1, cand["round_n"], cand["idx"])
 
 
 def prepare_turn(
@@ -830,7 +842,7 @@ def prepare_turn(
     target = db.get_candidate(conn, req["target_candidate_id"]) if req.get("target_candidate_id") else None
     if target is None:
         scored = [c for c in db.scored_candidates(conn, req["conversation_id"]) if c["request_id"] != rid]
-        target = max(scored, key=_rank) if scored else None  # max keeps the earliest on a tie
+        target = max(scored, key=_rank) if scored else None
     if target is None or target["status"] != "scored":
         # Nothing to refine yet: a fresh turn on the task plus the note, with its own scene and check.
         first = db.get_request(conn, req["conversation_id"]) or req
@@ -871,7 +883,7 @@ def prepare_turn(
     else:
         db.log_event(conn, rid, "followup", "Same scene and success check as before. " + (
             f"Training continues from its policy ({init_params.name})." if init_params is not None
-            else "Training starts from scratch (this worker can't continue a policy yet)."))
+            else "Training starts from scratch: that run saved no policy to train on from."))
 
     coach = db.coach_notes(conn, target["request_id"], target["round_n"], target["idx"])
     critique = target["critique"] or ""
@@ -883,9 +895,10 @@ def prepare_turn(
     )
     parent = Best(target["id"], target["reward_src"], target["score"], critique, target["metrics"] or {},
                   (target.get("check_result") or {}).get("pass", True))
+    # Every turn's attempts so far, oldest first, so the editor doesn't retry what an earlier turn tried.
     history = [
-        Attempt(r["n"], c["idx"], c["score"], c["critique"] or "")
-        for r in parent_req["rounds"] for c in r["candidates"] if c["status"] == "scored"
+        Attempt(c["round_n"], c["idx"], c["score"], c["critique"] or "", c.get("turn") or 1)
+        for c in db.scored_candidates(conn, req["conversation_id"]) if c["request_id"] != rid
     ]
     return db.get_request(conn, rid), FollowUp(parent, history, init_params)
 
