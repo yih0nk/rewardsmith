@@ -241,7 +241,7 @@ class PlaygroundSimulator:
         """
         if not self.walker:
             return "Training plan: preset steps, no warm start"
-        plan = budget.plan(text, scene or EMPTY)
+        plan = budget.plan(text, scene or EMPTY, get_body(self.body).capabilities.bipedal)
         if self._auto_mode:
             self.mode = "tune" if plan.family == "pose" else "steer"
         if self._auto_steps:
