@@ -449,7 +449,7 @@ test("scored candidates keep a small learning curve and drop the bar", () => {
   });
   // The score and its "/ 10" are styled apart, so markup sits between them.
   assert.match(html, />8\.2<small> \/ 10</);
-  assert.match(html, /how it learned/);
+  assert.match(html, /final reward/);
   assert.match(html, /<polyline/);
   assert.doesNotMatch(html, /role="progressbar"|Judging|LIVE/);
 });
@@ -791,7 +791,9 @@ test("each request is one conversation, newest first, with one turn", () => {
   ];
   const convos = thread.conversationsFromRequests(reqs);
   assert.deepEqual(convos.map((c) => c.id), ["b", "a"]);
-  assert.deepEqual(convos[1].turns, [{ requestId: "a", text: "walk backwards", createdAt: 10, turn: 1 }]);
+  assert.deepEqual(convos[1].turns, [
+    { requestId: "a", text: "walk backwards", createdAt: 10, turn: 1, status: "done" },
+  ]);
   assert.equal(convos[1].bestScore, 6.8);
   assert.equal(convos[0].bestScore, null);
 });
@@ -869,9 +871,19 @@ test("the task list shows status and best score, and marks the open task", () =>
   const html = renderToStaticMarkup(
     React.createElement(List, { conversations: convos, selected: "a", loading: false, onSelect: () => {} }),
   );
-  assert.match(html, /aria-current="page"[^>]*>[\s\S]*?walk backwards[\s\S]*?best 6\.8/);
-  assert.match(html, /kick the ball[\s\S]*?no result/);
-  assert.match(html, /spin[\s\S]*?queued/);
+  assert.match(html, /aria-current="page"[^>]*>[\s\S]*?Walk backwards[\s\S]*?best <\/span>6\.8/);
+  assert.match(html, /Kick the ball[\s\S]*?no result/);
+  assert.match(html, /Spin[\s\S]*?queued/);
+  // Cancelled tasks fold behind a toggle unless they are the open one.
+  const stopped = thread.conversationsFromRequests([
+    { id: "d", text: "walk", status: "done", best_score: 8, created_at: 1 },
+    { id: "e", text: "spin (cancel test)", status: "cancelled", best_score: null, created_at: 2 },
+  ]);
+  const list = (selected) =>
+    renderToStaticMarkup(React.createElement(List, { conversations: stopped, selected, loading: false, onSelect: () => {} }));
+  assert.doesNotMatch(list("d"), /cancel test/);
+  assert.match(list("d"), /Show 1 cancelled or failed/);
+  assert.match(list("e"), /cancel test/);
   const empty = (loading) =>
     renderToStaticMarkup(React.createElement(List, { conversations: [], selected: null, loading, onSelect: () => {} }));
   assert.match(empty(true), /Loading tasks…/);
@@ -884,7 +896,7 @@ test("the composer has no option controls until they are passed in", () => {
   const html = renderToStaticMarkup(React.createElement(Composer, props));
   assert.match(html, /<label for="behavior"[^>]*>What should the robot learn\?/);
   assert.match(html, /Start training/);
-  assert.match(html, /Walk to the red ball/);
+  assert.match(html, /walk sideways/);
   assert.doesNotMatch(html, /composer-controls/);
   const withControls = renderToStaticMarkup(
     React.createElement(Composer, { ...props, controls: React.createElement("span", null, "Model") }),
@@ -1169,10 +1181,10 @@ test("the mode toggle moves the model to the mode's default unless the user pick
   const element = (value) =>
     Options({ value, onChange: (next) => seen.push(next), models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], idPrefix: "t" });
   const html = renderToStaticMarkup(element({ mode: "instant", model: "claude-sonnet-5-5" }));
-  assert.match(html, /role="radio" aria-checked="true"[^>]*>Instant</);
-  assert.match(html, /role="radio" aria-checked="false"[^>]*>Effort</);
+  // One switch: off is Instant.
+  assert.match(html, /role="switch" aria-checked="false"[^>]*>[\s\S]*?Effort</);
   assert.match(html, /<option value="claude-haiku-5-5">Haiku 5\.5<\/option>/);
-  // Click Effort: the radio buttons are the first group's children.
+  // Flip the Effort switch.
   const find = (node, pred) => {
     if (!node || typeof node !== "object") return null;
     if (pred(node)) return node;
@@ -1183,7 +1195,7 @@ test("the mode toggle moves the model to the mode's default unless the user pick
     }
     return null;
   };
-  const effort = (value) => find(element(value), (n) => n.props?.role === "radio" && n.props.children === "Effort");
+  const effort = (value) => find(element(value), (n) => n.props?.role === "switch");
   effort({ mode: "instant", model: "claude-sonnet-5-5" }).props.onClick();
   effort({ mode: "instant", model: "claude-haiku-5-5", picked: true }).props.onClick();
   assert.deepEqual(seen, [
@@ -1232,4 +1244,28 @@ test("a run's time counts from when the worker picked it up, with time in line a
   const html = renderToStaticMarkup(React.createElement(RunStatus, { detail, now: (T0 + 5000) * 1000 }));
   assert.match(html, /<dt>Took<\/dt><dd class="num" data-testid="run-timer">2m 23s</);
   assert.match(html, /<dt>In line first<\/dt><dd class="num" data-testid="wait-timer">1h 15m</);
+});
+
+test("an Instant run recording its video shows one status, not two full bars", () => {
+  const html = render({
+    ...base,
+    status: "running",
+    mode: "instant",
+    rounds: [
+      {
+        id: 1,
+        n: 1,
+        status: "running",
+        best_candidate_id: null,
+        candidates: [
+          { ...candidate, score: null, critique: null, status: "training", progress: live("rendering", 1) },
+        ],
+      },
+    ],
+  });
+  assert.match(html, /Recording video/);
+  assert.match(html, /Trained for 1k steps/);
+  // The stage has no full bar, and one candidate gets no lane beside it.
+  assert.match(html, /training-progress large"><strong class="training-stage">Recording video<\/strong><span/);
+  assert.doesNotMatch(html, /class="lanes"/);
 });

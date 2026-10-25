@@ -10,7 +10,7 @@
 }
 .flag > p {
   margin: 4px 0 var(--dp-spacing-inset);
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 .flag form {
   display: grid;
