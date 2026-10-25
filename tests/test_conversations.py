@@ -285,3 +285,15 @@ def test_api_conversations_and_follow_ups(tmp_path, monkeypatch):
     assert client.get("/api/requests/" + rid).json()["mode"] == "instant"
     health = client.get("/api/health").json()
     assert health["models"] == list(modes.MODELS) and health["default_followup_mode"] == "instant"
+
+
+def test_the_idle_worker_warms_the_largest_round():
+    calls = []
+
+    class Sim:
+        def warm_up(self, n):
+            calls.append(n)
+
+    orchestrator.prewarm(Sim(), config.Settings(Path("x"), Path("y"), "m", "Go1", 3, 2, 8, True, True))
+    orchestrator.prewarm(FakeSimulator(), config.Settings(Path("x"), Path("y"), "m", "Go1", 3, 2, 8, True, True))
+    assert calls == [4]  # Effort's K, the largest of the modes

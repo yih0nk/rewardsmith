@@ -992,6 +992,19 @@ def build_checker(settings: config.Settings) -> Checker:
     return ClaudeChecker(anthropic.Anthropic(), settings.model)
 
 
+def prewarm(sim: Simulator, settings: config.Settings) -> None:
+    """Start the next request's training processes while the worker waits for one.
+
+    Their imports and env build (~20 s) used to sit between Claude's reward and the code
+    check; warmed while idle, the first gate runs on a ready process. Sized for the
+    largest round any mode runs; run_many closes the ones a smaller round doesn't use.
+    Each job gets the request's settings (steps, mode) when it is handed over, not now.
+    """
+    warm_up = getattr(sim, "warm_up", None)
+    if warm_up:
+        warm_up(modes.largest_round(settings))
+
+
 def run_turn(
     conn: sqlite3.Connection, settings: config.Settings, req: dict[str, Any], sim: Simulator, *,
     ranker: Ranker | None = None, reader: Any = None,
@@ -1032,6 +1045,7 @@ def main() -> None:
     while True:
         req = db.claim_next_request(conn)
         if req is None:
+            prewarm(sim, settings)
             time.sleep(2)
             continue
         log.info("running %s: %s", req["id"], req["text"])

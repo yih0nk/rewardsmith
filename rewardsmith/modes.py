@@ -82,6 +82,11 @@ def scene_model(settings: config.Settings, req: dict[str, Any]) -> str:
     return of(req).scene_model
 
 
+def largest_round(settings: config.Settings) -> int:
+    """The most candidates any mode trains at once (the idle worker warms this many processes)."""
+    return max(m.k or settings.candidates_per_round for m in MODES.values())
+
+
 def describe() -> dict[str, Any]:
     """The modes and models, for /api/health (the board's toggle and picker)."""
     return {
