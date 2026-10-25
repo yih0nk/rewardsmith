@@ -537,8 +537,10 @@ def _make_scene(
 
     try:
         spec = scener.make(text)
-        if FEASIBILITY not in spec and hasattr(scener, "judge"):  # a scene writer that judges separately
-            spec = {**spec, FEASIBILITY: scener.judge(text)}
+        # A scene writer that judges separately (the fake's keyword rules): not a stage of its own.
+        judge = getattr(getattr(scener, "_inner", scener), "judge", None)
+        if FEASIBILITY not in spec and judge is not None:
+            spec = {**spec, FEASIBILITY: judge(text)}
         _judge_feasibility(conn, rid, spec)
         for attempt in range(SCENE_RETRIES + 1):
             try:
