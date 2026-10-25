@@ -36,6 +36,27 @@ def main() -> None:
         stages: dict[str, float] = defaultdict(float)
         for s in req["stages"]:
             stages[s["name"]] += (s["ended_at"] or s["started_at"]) - s["started_at"]
+        # Per round: the training processes' own compile and train seconds (slowest candidate),
+        # and the rest of the training stage (rollouts, render, robustness, process handoff).
+        per_round = []
+        for rnd in req["rounds"]:
+            runs = [c["metrics"] for c in rnd["candidates"] if c["metrics"] and "compile_s" in c["metrics"]]
+            train_stage = [x for x in req["stages"] if x["name"] == "training" and x["round_n"] == rnd["n"]]
+            judging = [x for x in req["stages"] if x["name"] == "judging" and x["round_n"] == rnd["n"]]
+            writing = [x for x in req["stages"] if x["name"] == "writing" and x["round_n"] == rnd["n"]]
+            gate = [x for x in req["stages"] if x["name"] == "compiling" and x["round_n"] == rnd["n"]]
+            if not runs or not train_stage:
+                continue
+            span = lambda xs: sum((x["ended_at"] or x["started_at"]) - x["started_at"] for x in xs)
+            compile_s = max(m["compile_s"] for m in runs)
+            train_s = max(m["train_s"] for m in runs)
+            last_judged = max((x["ended_at"] or 0) for x in judging) if judging else None
+            per_round.append(
+                f"round {rnd['n']} (K={len(rnd['candidates'])}): writing {span(writing):.0f} s, gate {span(gate):.0f} s, "
+                f"PPO compile {compile_s:.0f} s, train {train_s:.0f} s, "
+                f"eval+render+handoff {span(train_stage) - compile_s - train_s:.0f} s, "
+                f"critic after last video {(last_judged - train_stage[-1]['ended_at']) if last_judged else 0:.0f} s"
+            )
         end = max([e["created_at"] for e in req["events"] if e["kind"] in ("done", "error")] or [None]) or None
         fmt = lambda t: f"{t - start:.0f} s" if t else "-"
         print(
@@ -43,7 +64,9 @@ def main() -> None:
             f"first video {fmt(min(videos, default=None))}, first score {fmt(min(scores, default=None))}, "
             f"total {fmt(end)}, best {req['best_score']}, rounds {len(req['rounds'])}"
         )
-        print("    " + ", ".join(f"{k} {v:.0f} s" for k, v in stages.items()))
+        print("    stages: " + ", ".join(f"{k} {v:.0f} s" for k, v in stages.items()))
+        for line in per_round:
+            print("    " + line)
 
 
 if __name__ == "__main__":
