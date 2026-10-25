@@ -27,7 +27,7 @@ if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
 from . import evaluation, gate, go1, go1_spec, parallel, train  # noqa: E402
-from .base import Cull, RunResult, Stopped  # noqa: E402
+from .base import Cull, OnDone, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 from .scene import EMPTY, SceneSpec  # noqa: E402
 
@@ -141,7 +141,8 @@ class PlaygroundSimulator:
             pool.close()
 
     def run_many(
-        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None,
+        on_done: OnDone | None = None,
     ) -> list[RunResult | Stopped | str]:
         pool, self._pool = self._pool, None
         # Halving compares candidates at the same eval, so they all train at once.
@@ -152,6 +153,7 @@ class PlaygroundSimulator:
                 cull=cull, behavior_metrics=cull is not None or self.behavior_metrics,
                 sim_options={"randomize": self.randomize, "push": self.push, "robustness": self.robustness,
                              "evaluation_spec": self.evaluation_spec},
+                on_done=on_done,
             )
         finally:
             if pool:

@@ -235,3 +235,13 @@ def test_a_dead_warm_process_raises_instead_of_answering(tmp_path):
         assert pool.procs == [] and pool.take() is None
     finally:
         pool.close()
+
+
+def test_on_done_hears_each_job_as_it_ends(tmp_path):
+    jobs = [(SOURCE + f"# {i}\n", tmp_path / f"c{i}") for i in range(2)]
+    heard = []
+
+    results = run_in_processes(jobs, max_parallel=1, fake=True, on_done=lambda i, r: heard.append((i, r)))
+
+    assert [i for i, _ in heard] == [0, 1]  # one slot: job 0 ends before job 1 starts
+    assert [r for _, r in heard] == results
