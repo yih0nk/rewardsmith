@@ -9,11 +9,15 @@ Settings (env vars):
   REWARDSMITH_PUSH      1 = train with random pushes (default 0)
   REWARDSMITH_ROBUSTNESS  1 = score the policy on unseen robots, seeds and pushes (default 1)
   REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
-  REWARDSMITH_WARM_START  1 = every candidate starts from the pretrained walker (default 1, when the file exists)
+  REWARDSMITH_WARM_START  1 = build on the pretrained walker (default 1, when the file exists)
   REWARDSMITH_WALKER      the walker checkpoint (default /workspace/pretrained/go1_walker/params.pkl;
                           scripts/train_walker.py makes it)
-  REWARDSMITH_STOCK       gait | pose | off: Playground's gait terms under each reward's own
-                          (default gait with a warm start, off without; see go1.STOCK_PROFILES)
+  REWARDSMITH_MODE        how a candidate uses the walker (default steer with a walker, off without):
+                          steer = the policy outputs velocity commands to the frozen walker;
+                          tune  = the policy is the walker's own network, fine-tuned on the reward;
+                          off   = random weights, the reward alone (the old behavior)
+  REWARDSMITH_STOCK       gait | pose | off: Playground's gait terms under each reward's own in tune
+                          mode (default gait; see go1.STOCK_PROFILES). Always off in steer mode.
   REWARDSMITH_STOCK_WEIGHT  multiplier on the stock terms' scales (default go1.STOCK_WEIGHT)
   REWARDSMITH_RESTORE_VALUE 1 = warm starts keep the checkpoint's value network too (default 1)
   REWARDSMITH_STEPS       training steps per candidate (default: the preset's)
@@ -42,6 +46,7 @@ from .scene import EMPTY, SceneSpec  # noqa: E402
 log = logging.getLogger("rewardsmith.sim")
 
 DEFAULT_WALKER = "/workspace/pretrained/go1_walker/params.pkl"
+MODES = ("steer", "tune", "off")
 
 
 def default_walker() -> str:
@@ -67,6 +72,7 @@ class PlaygroundSimulator:
         behavior_metrics: bool = False,
         evaluation_spec: list[dict] | None = None,
         walker: str | None = None,
+        mode: str | None = None,
         stock_profile: str | None = None,
         stock_weight: float | None = None,
         steps: int | None = None,
@@ -84,7 +90,10 @@ class PlaygroundSimulator:
         self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
         # Warm start: a checkpoint path, "" for random weights (resolved here so children get the same).
         self.walker = default_walker() if walker is None else walker
-        self.stock_profile = stock_profile or os.environ.get("REWARDSMITH_STOCK") or ("gait" if self.walker else "off")
+        self.mode = (mode or os.environ.get("REWARDSMITH_MODE") or "steer") if self.walker else "off"
+        if self.mode not in MODES:
+            raise ValueError(f"unknown mode {self.mode!r}: use one of {MODES}")
+        self.stock_profile = stock_profile or os.environ.get("REWARDSMITH_STOCK") or "gait"
         if self.stock_profile not in go1.STOCK_PROFILES:
             raise ValueError(f"unknown stock profile {self.stock_profile!r}: use one of {sorted(go1.STOCK_PROFILES)}")
         self.stock_weight = (
@@ -100,7 +109,8 @@ class PlaygroundSimulator:
 
     def describe(self, scene: SceneSpec | None = None) -> str:
         return go1_spec.describe(
-            scene or EMPTY, warm_start=bool(self.walker), stock_profile=self.stock_profile, stock_weight=self.stock_weight
+            scene or EMPTY, mode=self.mode, stock_profile=self.env_options.get("stock_profile") or "off",
+            stock_weight=self.stock_weight,
         )
 
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
@@ -114,7 +124,7 @@ class PlaygroundSimulator:
         warm = pool.reserve() if pool else None
         if warm is not None:
             try:
-                error = warm.gate(source, scene, self.impl, self.stock)
+                error = warm.gate(source, scene, self.impl, self.env_options)
             except parallel.WarmProcessError:
                 log.exception("warm gate failed; gating in the worker instead")
                 pool.discard(warm)
@@ -122,24 +132,32 @@ class PlaygroundSimulator:
                 pool.release(warm)
                 return error
         with self._gate_lock:
-            return gate.check_reward(source, impl=self.impl, scene=scene, stock=self.stock)
+            return gate.check_reward(source, impl=self.impl, scene=scene, env_options=self.env_options)
 
     @property
-    def stock(self) -> dict:
-        """go1.make_env's stock terms arguments."""
-        return {"stock_profile": self.stock_profile, "stock_weight": self.stock_weight}
+    def env_options(self) -> dict:
+        """go1.make_env's arguments for this mode: the walker to steer, or the stock terms to tune under."""
+        if self.mode == "steer":
+            return {"walker": self.walker}
+        if self.mode == "tune":
+            return {"stock_profile": self.stock_profile, "stock_weight": self.stock_weight}
+        return {}
 
     def run(
         self, source: str, out_dir: Path, scene: SceneSpec | None = None,
         init_params: str | Path | None = None, steps: int | None = None,
     ) -> RunResult:
-        """Train from init_params (default: the walker, if any) for steps (default: self.steps or the preset's)."""
+        """Train from init_params for steps (default: self.steps or the preset's).
+
+        Without init_params, tune mode starts from the walker's weights; steer and off start from random ones.
+        """
         steps = steps or self.steps or train.ppo_kwargs(self.preset)["num_timesteps"]
         progress = ProgressWriter(out_dir, steps)
         progress.stage("compiling")
         progress.start_heartbeat()  # nothing else writes during the minute of JIT compile
         try:
-            return self._run(source, out_dir, scene, progress, init_params or self.walker or None, steps)
+            start = init_params or (self.walker if self.mode == "tune" else None)
+            return self._run(source, out_dir, scene, progress, start, steps)
         finally:
             progress.stop_heartbeat()
 
@@ -147,13 +165,13 @@ class PlaygroundSimulator:
         self, source: str, out_dir: Path, scene: SceneSpec | None, progress: ProgressWriter,
         init_params: str | Path | None, steps: int,
     ) -> RunResult:
-        env = go1.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics, **self.stock)
+        env = go1.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics, **self.env_options)
         # Pushes are a training condition only: the video and metrics come from a push-free env.
         # The training env keeps the behavior metrics too: halving ranks on the training curve.
         train_env = (
             go1.make_env(
                 source, impl=self.impl, overrides=go1.PUSH_OVERRIDES, scene=scene,
-                behavior_metrics=self.behavior_metrics, **self.stock,
+                behavior_metrics=self.behavior_metrics, **self.env_options,
             )
             if self.push
             else env
@@ -179,6 +197,7 @@ class PlaygroundSimulator:
             "train_pushes": int(self.push),
             "train_steps": int(steps),
             "warm_started": int(init_params is not None),
+            "steered": int(self.mode == "steer"),
         }
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
@@ -187,7 +206,7 @@ class PlaygroundSimulator:
         """Everything a training child needs to train as this simulator would (PlaygroundSimulator(**these))."""
         return {
             "randomize": self.randomize, "push": self.push, "robustness": self.robustness,
-            "evaluation_spec": self.evaluation_spec, "walker": self.walker, "stock_profile": self.stock_profile,
+            "evaluation_spec": self.evaluation_spec, "walker": self.walker, "mode": self.mode, "stock_profile": self.stock_profile,
             "stock_weight": self.stock_weight, "steps": self.steps, "restore_value": self.restore_value,
         }
 
