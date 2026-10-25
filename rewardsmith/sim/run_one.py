@@ -16,7 +16,7 @@ new reward (docs/warm-start.md).
 --serve starts a warm process: it does the slow imports and a throwaway gate
 first (~30 s on the pod, overlapping the writer's Claude call), then answers
 parallel.py's messages in job.json:
-  {"kind": "gate", "seq", "source", "scene", "impl", "stock"}  gate the source and write
+  {"kind": "gate", "seq", "source", "scene", "impl", "env"}  gate the source and write
       {"seq", "error"} (or {"seq", "crash"} for a non-reward failure) to job.gate.json;
       then wait for the next message. The orchestrator's fix-retry loop reuses this.
   {"kind": "train", "reward", "out_dir", "preset", "impl", "init_params", "steps", ...}  run that job and exit.
@@ -179,7 +179,7 @@ def _gate(job: dict, fake: bool) -> str | None:
         return FakeSimulator().gate(job["source"], scene)
     from . import gate
 
-    return gate.check_reward(job["source"], impl=job.get("impl"), scene=scene, stock=job.get("stock"))
+    return gate.check_reward(job["source"], impl=job.get("impl"), scene=scene, env_options=job.get("env"))
 
 
 def _wait_for_job(path: Path, parent: int) -> dict | None:

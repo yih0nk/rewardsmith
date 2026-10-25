@@ -53,13 +53,15 @@ def check_reward(
     steps: int = 50,
     seed: int = 0,
     scene: SceneSpec | None = None,
-    stock: dict | None = None,
+    env_options: dict | None = None,
 ) -> str | None:
     """Return None if the reward survives a short jitted rollout, else a message for the writer.
 
-    stock is go1.make_env's stock_profile / stock_weight, so the gate runs the env training will.
+    env_options are more go1.make_env arguments (stock terms, steer mode), so the gate runs the env training will.
     """
-    return run_gate(source, impl=impl, num_envs=num_envs, steps=steps, seed=seed, scene=scene, stock=stock).error
+    return run_gate(
+        source, impl=impl, num_envs=num_envs, steps=steps, seed=seed, scene=scene, env_options=env_options
+    ).error
 
 
 def run_gate(
@@ -70,10 +72,10 @@ def run_gate(
     steps: int = 50,
     seed: int = 0,
     scene: SceneSpec | None = None,
-    stock: dict | None = None,
+    env_options: dict | None = None,
 ) -> GateReport:
     try:
-        env = go1.make_env(source, impl=impl, scene=scene, **(stock or {}))
+        env = go1.make_env(source, impl=impl, scene=scene, **(env_options or {}))
     except go1.RewardError as exc:
         where = _reward_lines(exc, source)  # make_env chains the original error; point at its line
         return GateReport(_clip(f"{exc}\n{where}" if where else str(exc)), 0.0, 0.0)
