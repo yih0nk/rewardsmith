@@ -13,25 +13,35 @@ this one ends. Each candidate is judged by the critic as soon as its own run end
 
 A run can be paused (it stops at the next round boundary and later resumes from the
 database) or cancelled (it stops at the next checkpoint). See _checkpoint.
+
+Each request is one turn of a conversation. A follow-up turn (prepare_turn) refines
+one candidate of an earlier turn: same scene and check, no scene or checker call, and
+round 1 is the editor revising that candidate with its critique, the coach's notes and
+the user's note. Its mode (modes.py) sets K, rounds, models and the training budget.
 """
 
+import importlib.util
 import inspect
+import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
-from . import config, db
+from . import config, db, modes
 from .agents import checker as check_spec
 from .agents.base import Attempt, Checker, Coach, Critic, Draft, Editor, Ranker, Scener, Writer
 from .agents.editor import unified_diff
 from .coaching import ACTED, LAST_RUNNER, QUOTA, TOO_EARLY, Call, LiveCoach
 from .search import Halving
+from .sim import progress as sim_progress
 from .sim import scene as scene_spec
 from .sim.base import RunResult, Simulator, Stopped
 from .sim.scene import SceneError, SceneSpec
@@ -54,6 +64,14 @@ class Best:
     def rank(self) -> tuple[bool, float]:
         """A run that passes the check beats any that doesn't; then the higher score wins."""
         return (self.passed, self.score)
+
+
+@dataclass
+class FollowUp:
+    """What a follow-up turn's first round starts from (prepare_turn)."""
+    parent: Best  # the candidate to refine; its critique carries the coach's and the user's notes
+    history: list[Attempt]  # the editor's history: the parent's own turn
+    init_params: Path | None = None  # the parent's latest policy, when the simulator can continue it
 
 
 class Paused(Exception):
@@ -87,8 +105,11 @@ def run_request(
     checker: Checker | None = None,
     scener: Scener | None = None,
     coach: Coach | None = None,
+    follow_up: FollowUp | None = None,
 ) -> Best | None:
-    rid, text = req["id"], req["text"]
+    """follow_up: round 1 revises its parent instead of writing from scratch (see prepare_turn)."""
+    rid = req["id"]
+    text = req.get("task") or req["text"]  # a follow-up's task carries the user's notes
     halving = settings.halving if ranker is not None else ()
     k = halving[0] if halving else settings.candidates_per_round
     # A resumed run picks up after its last finished round, with the same scene and check.
@@ -134,7 +155,9 @@ def run_request(
                 with db.stage(conn, rid, "writing", n):
                     drafts = early.collect(on_idea)  # already written while the last round trained
                     rest, on_rest = k - len(drafts), _offset(on_idea, len(drafts))
-                    if rest and best is None:
+                    if rest and best is None and follow_up is not None:
+                        drafts += _revise(editor, text, env_doc, [follow_up.parent], rest, follow_up.history, on_rest)
+                    elif rest and best is None:
                         ideas = {"on_idea": on_rest} if _accepts(writer.write, "on_idea") else {}
                         drafts += [_as_draft(d) for d in writer.write(text, env_doc, rest, **ideas)]
                     elif rest:
@@ -176,7 +199,10 @@ def run_request(
                 db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
             for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
                 db.set_candidate(conn, cid, status="training")
-            jobs = [(src, out_dir) for _, src, out_dir in ready]
+            jobs: list[tuple[Any, ...]] = [(src, out_dir) for _, src, out_dir in ready]
+            if n == start and best is None and follow_up is not None and follow_up.init_params is not None:
+                # A follow-up trains on from its parent's policy instead of from scratch.
+                jobs = [(src, out_dir, {"init_params": str(follow_up.init_params)}) for src, out_dir in jobs]
             # Each candidate is judged the moment its run ends, while the others still train.
             judge = _Judge(conn, lock, rid, n, critic, critic_request, spec, check_error, settings.artifacts_dir,
                            [cid for cid, _, _ in ready], [src for _, src, _ in ready])
@@ -184,10 +210,10 @@ def run_request(
             if halving and len(ready) > halving[-1]:
                 assert ranker is not None
                 cull = Halving(
-                    [out_dir for _, out_dir in jobs], halving[1:],
+                    [job[1] for job in jobs], halving[1:],
                     rank=lambda snapshots: ranker.rank(text, snapshots),
                     on_event=lambda msg: _locked(lock, db.log_event, conn, rid, "halving", msg),
-                    labels=[out_dir.name for _, out_dir in jobs],
+                    labels=[job[1].name for job in jobs],
                 )
             live = None
             if coach is not None and jobs:
@@ -693,6 +719,151 @@ def _relative(path: Path | None, root: Path) -> str | None:
         return str(path)
 
 
+# Notes that only ask for more of the same: the editor improves on what the critic saw.
+KEEP_GOING = re.compile(r"^\s*(keep going|continue|keep training|more|again|go on|improve( it)?)[.!]*\s*$", re.I)
+
+
+def can_continue_training() -> bool:
+    """True once the training engine's continue-from-weights interface is in: jobs take a
+    third item {"init_params": path} and sim/checkpoints.py finds a run's latest params_<steps>.pkl."""
+    return importlib.util.find_spec("rewardsmith.sim.checkpoints") is not None
+
+
+def _latest_params(out_dir: Path) -> Path | None:
+    if not can_continue_training():
+        return None
+    from .sim import checkpoints  # type: ignore[attr-defined]
+
+    return checkpoints.latest(out_dir)
+
+
+def label(cand: dict[str, Any]) -> str:
+    """How the board names a candidate: "Round 2 · Candidate 3", with its turn after turn 1."""
+    name = f"Round {cand['round_n']} · Candidate {cand['idx'] + 1}"
+    return name if (cand.get("turn") or 1) == 1 else f"Turn {cand['turn']} · {name}"
+
+
+def _rank(cand: dict[str, Any]) -> tuple[bool, float]:
+    return ((cand.get("check_result") or {}).get("pass", True), cand["score"])
+
+
+def prepare_turn(
+    conn: sqlite3.Connection, settings: config.Settings, req: dict[str, Any], reader: Any = None,
+) -> tuple[dict[str, Any], FollowUp | None]:
+    """Set up a follow-up turn before it runs: pick the candidate it refines (the one the user
+    chose, else the conversation's best), carry over that turn's scene and success check unless
+    the note changes the scene, and write the turn's task. Returns the request as stored now
+    and the FollowUp for run_request, or (req, None) for a first turn or a resumed one.
+
+    reader: a follow-up reader (agents/followup.py) that says whether a note changes the scene.
+    """
+    rid = req["id"]
+    if (req.get("turn") or 1) == 1 or db.get_request(conn, rid)["rounds"]:
+        return req, None  # a first turn, or a follow-up resuming after its first round
+    note = req["text"].strip()
+    keep_going = not note or bool(KEEP_GOING.match(note))
+    target = db.get_candidate(conn, req["target_candidate_id"]) if req.get("target_candidate_id") else None
+    if target is None:
+        scored = [c for c in db.scored_candidates(conn, req["conversation_id"]) if c["request_id"] != rid]
+        target = max(scored, key=_rank) if scored else None  # max keeps the earliest on a tie
+    if target is None or target["status"] != "scored":
+        # Nothing to refine yet: a fresh turn on the task plus the note, with its own scene and check.
+        first = db.get_request(conn, req["conversation_id"]) or req
+        base = first.get("task") or first["text"]
+        db.set_request(conn, rid, task=base if keep_going else f"{base}\nThe user's follow-up: {note}")
+        db.log_event(conn, rid, "followup", "Nothing in this task has a score yet, so Claude writes new rewards with your note.")
+        return db.get_request(conn, rid), None
+
+    parent_req = db.get_request(conn, target["request_id"])
+    base = parent_req.get("task") or parent_req["text"]
+    task = base if keep_going else f"{base}\nThe user's follow-up: {note}"
+    scene = scene_spec.parse(parent_req["scene"]) if parent_req.get("scene") is not None else scene_spec.EMPTY
+    changed, why = False, ""
+    if not keep_going and reader is not None:
+        try:
+            changed, why = reader.changes_scene(base, scene.summary(), note)
+        except Exception as exc:  # the scene stays; a note about the world still reaches the editor
+            log.exception("follow-up reader failed for %s", rid)
+            db.log_event(conn, rid, "followup", f"Could not tell whether your note changes the scene ({_describe(exc)}); keeping it.")
+    fields: dict[str, Any] = {"task": task, "target_candidate_id": target["id"], "scene_changed": int(changed)}
+    if not changed:
+        fields["scene"] = scene.to_dict()
+        fields["success_check_error"] = parent_req.get("success_check_error")
+    db.set_request(conn, rid, **fields)
+    if not changed and parent_req.get("success_spec"):
+        db.set_success_spec(conn, rid, parent_req["success_spec"])
+
+    init_params = None
+    if not changed:
+        init_params = _latest_params(
+            sim_progress.candidate_dir(settings.artifacts_dir, target["request_id"], target["round_n"], target["idx"])
+        )
+    what = "Keep going" if keep_going else f"“{note}”"
+    db.log_event(conn, rid, "followup", f"Refining {label(target)} (score {target['score']:g}). {what}.")
+    if changed:
+        db.log_event(conn, rid, "followup", f"Your note changes the scene: {why} Writing a new scene and success check; "
+                                            "training starts from scratch.")
+    else:
+        db.log_event(conn, rid, "followup", "Same scene and success check as before. " + (
+            f"Training continues from its policy ({init_params.name})." if init_params is not None
+            else "Training starts from scratch (this worker can't continue a policy yet)."))
+
+    coach = db.coach_notes(conn, target["request_id"], target["round_n"], target["idx"])
+    critique = target["critique"] or ""
+    if coach:
+        critique += "\n\nThe live training coach's notes on this run:\n" + "\n".join(f"- {c}" for c in coach)
+    critique += (
+        "\n\nThe user asked to keep going: fix what the critic saw and keep what already works." if keep_going
+        else f"\n\nThe user watched this run and asks: “{note}”. Do what they ask first, and keep what already works."
+    )
+    parent = Best(target["id"], target["reward_src"], target["score"], critique, target["metrics"] or {},
+                  (target.get("check_result") or {}).get("pass", True))
+    history = [
+        Attempt(r["n"], c["idx"], c["score"], c["critique"] or "")
+        for r in parent_req["rounds"] for c in r["candidates"] if c["status"] == "scored"
+    ]
+    return db.get_request(conn, rid), FollowUp(parent, history, init_params)
+
+
+@contextmanager
+def training_budget(sim: Simulator, mode: modes.Mode) -> Iterator[None]:
+    """Apply a mode's step budget and robustness scoring to the simulator for one run.
+
+    The training engine's simulator takes a step count (sim.steps); until then the PPO
+    override every training process reads (REWARDSMITH_PPO_OVERRIDES) carries it.
+    """
+    saved: dict[str, Any] = {}
+    key, env_before = "REWARDSMITH_PPO_OVERRIDES", os.environ.get("REWARDSMITH_PPO_OVERRIDES")
+    if hasattr(sim, "robustness") and not mode.robustness:
+        saved["robustness"] = sim.robustness
+        sim.robustness = False  # type: ignore[attr-defined]
+    if mode.steps:
+        if hasattr(sim, "steps"):
+            saved["steps"] = sim.steps
+            sim.steps = mode.steps  # type: ignore[attr-defined]
+        elif hasattr(sim, "preset"):  # the real simulator: its training processes inherit the variable
+            os.environ[key] = json.dumps({**json.loads(env_before or "{}"), "num_timesteps": mode.steps})
+    try:
+        yield
+    finally:
+        for attr, value in saved.items():
+            setattr(sim, attr, value)
+        if env_before is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = env_before
+
+
+def describe_run(settings: config.Settings, req: dict[str, Any], coach: Coach | None) -> str:
+    """One line for the board: the message's mode, model and search size."""
+    mode = modes.of(req)
+    steps = f", {mode.steps / 1e6:g}M steps each" if mode.steps else ""
+    rounds = (f"{settings.max_rounds} round" if settings.max_rounds == 1
+              else f"{settings.min_rounds}–{settings.max_rounds} rounds")
+    return (f"{mode.name.capitalize()} · {settings.model}: {settings.candidates_per_round} reward(s) a round, "
+            f"{rounds}{steps}, live coach {'on' if coach is not None else 'off'}")
+
+
 def build_scener(settings: config.Settings) -> Scener:
     if settings.fake_llm:
         from .agents.fake import FakeScener
@@ -705,27 +876,43 @@ def build_scener(settings: config.Settings) -> Scener:
     return ClaudeScener(anthropic.Anthropic(), settings.model)
 
 
-def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]:
+def build_agents(settings: config.Settings, effort: str = "high") -> tuple[Writer, Editor, Critic]:
+    """The writer, editor and critic on settings.model (a request's mode and model, see modes.py)."""
     if settings.fake_llm:
         from .agents.fake import FakeCritic, FakeEditor, FakeWriter
 
-        writer, editor, critic = FakeWriter(), FakeEditor(), FakeCritic()
+        return FakeWriter(), FakeEditor(), FakeCritic()
+    import anthropic
+
+    from .agents.critic import ClaudeCritic
+    from .agents.editor import ClaudeEditor, DroidEditor
+    from .agents.writer import ClaudeWriter
+
+    client = anthropic.Anthropic()
+    editor: Editor
+    if settings.editor == "droid":
+        droid_model = os.environ.get("REWARDSMITH_DROID_MODEL") or None
+        editor = DroidEditor(settings.artifacts_dir / "droid", model=droid_model)
     else:
-        import anthropic
+        editor = ClaudeEditor(client, settings.model, effort)
+    return ClaudeWriter(client, settings.model, effort), editor, ClaudeCritic(client, settings.model, effort)
 
-        from .agents.critic import ClaudeCritic
-        from .agents.editor import ClaudeEditor, DroidEditor
-        from .agents.writer import ClaudeWriter
 
-        client = anthropic.Anthropic()
-        writer = ClaudeWriter(client, settings.model)
-        if settings.editor == "droid":
-            droid_model = os.environ.get("REWARDSMITH_DROID_MODEL") or None
-            editor = DroidEditor(settings.artifacts_dir / "droid", model=droid_model)
-        else:
-            editor = ClaudeEditor(client, settings.model)
-        critic = ClaudeCritic(client, settings.model)
+def build_reader(settings: config.Settings) -> Any:
+    """Reads follow-up notes for scene changes (agents/followup.py)."""
+    if settings.fake_llm:
+        from .agents.followup import FakeFollowupReader
 
+        return FakeFollowupReader()
+    import anthropic
+
+    from .agents.followup import ClaudeFollowupReader
+
+    return ClaudeFollowupReader(anthropic.Anthropic())
+
+
+def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]:
+    writer, editor, critic = build_agents(settings)
     if settings.fake_sim:
         from .sim.fake import FakeSimulator
 
@@ -781,6 +968,28 @@ def build_checker(settings: config.Settings) -> Checker:
     return ClaudeChecker(anthropic.Anthropic(), settings.model)
 
 
+def run_turn(
+    conn: sqlite3.Connection, settings: config.Settings, req: dict[str, Any], sim: Simulator, *,
+    ranker: Ranker | None = None, reader: Any = None,
+) -> Best | None:
+    """One request with its own mode and model: per-request agents, budget and coach."""
+    mode = modes.of(req)
+    run_settings = modes.settings_for(settings, req)
+    writer, editor, critic = build_agents(run_settings, mode.effort)
+    scene_settings = replace(settings, model=modes.scene_model(settings, req))
+    req, follow_up = prepare_turn(conn, run_settings, req, reader)
+    # Instant runs without the coach unless the request asked for one.
+    coach = build_coach(settings, req) if mode.coach or req.get("coach") else None
+    db.log_event(conn, req["id"], "mode", describe_run(run_settings, req, coach))
+    with training_budget(sim, mode):
+        return run_request(
+            conn, run_settings, req, writer, editor, critic, sim,
+            ranker=ranker if run_settings.halving else None,
+            checker=build_checker(scene_settings), scener=build_scener(scene_settings), coach=coach,
+            follow_up=follow_up,
+        )
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     config.load_dotenv()
@@ -788,13 +997,12 @@ def main() -> None:
     conn = db.connect(settings.db_path)
     for rid in db.fail_interrupted(conn):
         log.warning("request %s was cut off by a worker restart; marked failed", rid)
-    writer, editor, critic, sim = build(settings)
+    _, _, _, sim = build(settings)
     ranker = build_ranker(settings)
-    checker = build_checker(settings)
-    scener = build_scener(settings)
+    reader = build_reader(settings)
     log.info(
         "worker up (fake_sim=%s, fake_llm=%s, editor=%s, coach=%s)",
-        settings.fake_sim, settings.fake_llm, type(editor).__name__, settings.coach,
+        settings.fake_sim, settings.fake_llm, settings.editor, settings.coach,
     )
 
     while True:
@@ -804,10 +1012,7 @@ def main() -> None:
             continue
         log.info("running %s: %s", req["id"], req["text"])
         try:
-            best = run_request(
-                conn, settings, req, writer, editor, critic, sim, ranker=ranker, checker=checker, scener=scener,
-                coach=build_coach(settings, req),
-            )
+            best = run_turn(conn, settings, req, sim, ranker=ranker, reader=reader)
             db.set_request(conn, req["id"], status="done", control=None)  # a late pause has nothing left to pause
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")
         except Paused:
