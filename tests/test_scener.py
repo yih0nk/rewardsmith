@@ -46,7 +46,7 @@ def test_claude_scener_returns_a_spec(monkeypatch):
 
     monkeypatch.setattr(scener, "ask_json", fake_ask)
     spec = scener.ClaudeScener(client=None, model="claude-opus-5-5").make("walk to the red ball")
-    assert spec == {"terrain": "flat", "objects": [BALL], "target": None, "goal": None}
+    assert spec == {"terrain": "flat", "objects": [BALL], "structures": [], "target": None, "goal": None}
     assert "walk to the red ball" in seen["prompt"]
     assert scene.parse(spec).target == "ball"
 
@@ -54,9 +54,29 @@ def test_claude_scener_returns_a_spec(monkeypatch):
 def test_scener_prompt_and_schema_match_the_validator():
     for word in [*scene.KINDS, *scene.COLORS, *scene.TERRAINS]:
         assert word in scener.SYSTEM
+    for word in scene.STRUCTURE_KINDS:
+        assert word in scener.SYSTEM
     item = scener.SCHEMA["properties"]["objects"]["items"]
     assert set(item["properties"]) == set(scene.OBJECT_KEYS)
-    assert set(scener.SCHEMA["properties"]) - {"plan"} == set(scene.SCENE_KEYS)
+    structure = scener.SCHEMA["properties"]["structures"]["items"]
+    assert set(structure["properties"]) == set(scene.STRUCTURE_KEYS)
+    assert set(scener.SCHEMA["properties"]) - {"plan", "feasibility"} == set(scene.SCENE_KEYS)
+
+
+def test_claude_scener_turns_param_pairs_into_a_dict_and_keeps_the_verdict(monkeypatch):
+    stairs = {"name": "stairs", "kind": "stairs", "color": "gray", "distance": [1.0, 1.5], "bearing": [0, 0],
+              "yaw": [0, 0], "relevant": True, "params": [{"key": "steps", "value": 5}, {"key": "rise", "value": 0.07}]}
+    verdict = {"verdict": "doable", "reason": "low steps", "simplification": "", "suggestion": ""}
+
+    def fake_ask(client, model, system, content, schema, **kw):
+        return {"plan": "", "feasibility": verdict, "terrain": "flat", "objects": [], "structures": [stairs],
+                "target": "stairs", "goal": ""}
+
+    monkeypatch.setattr(scener, "ask_json", fake_ask)
+    spec = scener.ClaudeScener(client=None, model="m").make("climb the stairs")
+    assert spec.pop(scener.FEASIBILITY) == verdict
+    parsed = scene.parse(spec)
+    assert parsed.structures[0].p("steps") == 5 and parsed.target == "stairs"
 
 
 @pytest.mark.parametrize(
@@ -69,6 +89,7 @@ def test_scener_prompt_and_schema_match_the_validator():
     ],
 )
 def test_fake_scener_reads_keywords(text, names, movable, terrain):
+    assert FakeScener().judge(text)["verdict"] == "doable"
     spec = scene.parse(FakeScener().make(text))
     assert [o.name for o in spec.objects] == names
     assert any(o.movable for o in spec.objects) == movable

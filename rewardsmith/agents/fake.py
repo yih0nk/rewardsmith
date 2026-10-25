@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from ..sim import scene
+from . import feasibility
 from ..sim.base import RunResult
 from .base import Observation, Review
 from .checker import NO_FALL, SpecError, core_intents, required_actions, requires_reach, validate_for_scene
@@ -96,15 +97,37 @@ class FakeScener:
                     value["name"] = f"{color}_{kind}"
                 objects.append(value)
         objects = objects[:scene.MAX_OBJECTS]
+        structures = _fake_structures(request)
+        if re.search(r"\bpoles?\b", request, re.I):
+            objects = [{"name": f"pole{i + 1}", "kind": "capsule", "color": "red", "size": [0.05, 1.0],
+                        "distance": [1.5 + i, 1.5 + i], "bearing": [8, 12] if i % 2 == 0 else [-12, -8]}
+                       for i in range(3)]
+        if re.search(r"\b(?:dodge|rolling|rolled)\b", request, re.I):
+            objects = [{"name": "ball", "kind": "ball", "color": "red", "size": [0.12], "distance": [4.0, 5.0],
+                        "bearing": [-30, 30], "movable": True, "mass": 0.5, "speed": [1.5, 2.5]}]
         rough = any(w in ("rough", "bumpy", "uneven", "rocky") for w in words)
+        names = [o["name"] for o in objects] + [st["name"] for st in structures]
         return {
             "terrain": "rough" if rough else "flat",
             "objects": objects,
-            "target": objects[0]["name"] if objects else None,
+            "structures": structures,
+            "target": (structures[0]["name"] if structures else names[0]) if names else None,
         }
+
+    def judge(self, request: str) -> dict[str, Any]:
+        """The feasibility verdict the Claude scene writer returns with its spec (feasibility.py)."""
+        return feasibility.classify(request)
 
     def fix(self, request: str, spec: dict[str, Any], error: str) -> dict[str, Any]:
         return self.make(request)
+
+
+def _fake_structures(request: str) -> list[dict[str, Any]]:
+    """Stairs, a ramp, a wall or a gap when the request names one, straight ahead."""
+    kinds = {"stairs": r"\b(?:stairs?|staircase|steps)\b", "ramp": r"\b(?:ramp|slope)\b",
+             "wall": r"\b(?:wall|hurdle|barrier)\b", "gap": r"\bgap\b"}
+    return [{"name": kind, "kind": kind, "color": "gray", "distance": [1.0, 1.5], "bearing": [-10, 10]}
+            for kind, pattern in kinds.items() if re.search(pattern, request, re.I)][:scene.MAX_STRUCTURES]
 
 
 def _fake_object(kind: str, color: str, movable: bool, i: int) -> dict[str, Any]:
