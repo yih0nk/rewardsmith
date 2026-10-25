@@ -140,3 +140,93 @@
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+
+/* Keep the composer compact; the per-candidate budget opens when needed. */
+.training-budget {
+  flex-basis: 100%;
+  font-size: var(--dp-typography-label);
+}
+.training-budget summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--dp-color-text);
+}
+.training-budget summary span {
+  margin-left: var(--dp-spacing-cell);
+  font-family: var(--dp-typography-readout);
+}
+.training-budget-panel {
+  margin-top: var(--dp-spacing-inset);
+  padding: var(--dp-spacing-inset);
+  border: var(--dp-border-hairline) solid var(--dp-color-rule);
+  border-radius: 8px;
+  background: var(--dp-color-surface);
+}
+.steps-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dp-spacing-cell);
+}
+.steps-pick input {
+  width: 6rem;
+  flex: 0 1 6rem;
+  min-height: 36px;
+  padding: 0 var(--dp-spacing-inset);
+  border: var(--dp-border-hairline) solid var(--dp-color-rule);
+  border-radius: 6px;
+  background: var(--dp-color-ground);
+  color: var(--dp-color-text);
+  font-family: var(--dp-typography-readout);
+}
+.steps-pick input:focus-visible,
+.training-budget summary:focus-visible {
+  outline: 2px solid var(--dp-color-emphasis);
+  outline-offset: 2px;
+}
+.training-budget-panel p {
+  margin: var(--dp-spacing-cell) 0 0;
+}
+
+/* The chevron and message number share the existing left gutter. */
+.collapsible-turn::before {
+  content: "" !important;
+}
+.collapsible-turn > .turn-collapse {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 var(--dp-spacing-cell) 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--dp-color-ink-muted);
+  font-size: var(--dp-typography-label);
+}
+.collapsible-turn > .exp-head {
+  grid-row: 1;
+}
+.turn-chevron {
+  font-size: 16px;
+}
+.turn-collapse:hover {
+  color: var(--dp-color-ink);
+}
+.turn-collapse:focus-visible {
+  outline: 2px solid var(--dp-color-emphasis);
+  outline-offset: 2px;
+}
+@media (max-width: 600px) {
+  .collapsible-turn > .turn-collapse {
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 0;
+    padding-right: 0;
+    font-size: 12px;
+    line-height: 18px;
+  }
+}

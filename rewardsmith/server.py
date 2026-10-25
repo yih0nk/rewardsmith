@@ -45,6 +45,7 @@ class NewRequest(BaseModel):
     mode: str | None = Field(default=None, pattern=f"^({modes.INSTANT}|{modes.EFFORT})$")
     # The writer/editor/critic model, one of modes.MODELS. Omit it for the mode's.
     model: str | None = Field(default=None, pattern="^(" + "|".join(modes.MODELS) + ")$")
+    training_steps: int | None = Field(default=None, strict=True, ge=modes.MIN_TRAINING_STEPS, le=modes.MAX_TRAINING_STEPS)
 
 
 @app.post("/api/requests", status_code=201)
@@ -56,7 +57,7 @@ def create_request(body: NewRequest, conn: sqlite3.Connection = Depends(get_conn
             spec = scene.parse(body.scene).to_dict()
         except scene.SceneError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-    rid = db.create_request(conn, body.text, spec, body.coach, body.mode or modes.DEFAULT_TASK_MODE, body.model)
+    rid = db.create_request(conn, body.text, spec, body.coach, body.mode or modes.DEFAULT_TASK_MODE, body.model, body.training_steps)
     db.log_event(conn, rid, "queued", "Request queued")
     return {"id": rid, "conversation_id": rid}
 
@@ -72,6 +73,7 @@ class NewTurn(BaseModel):
     # Omit it for the default: Instant for a follow-up.
     mode: str | None = Field(default=None, pattern=f"^({modes.INSTANT}|{modes.EFFORT})$")
     model: str | None = Field(default=None, pattern="^(" + "|".join(modes.MODELS) + ")$")
+    training_steps: int | None = Field(default=None, strict=True, ge=modes.MIN_TRAINING_STEPS, le=modes.MAX_TRAINING_STEPS)
 
 
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201)
@@ -80,7 +82,7 @@ def add_turn(conversation_id: str, body: NewTurn, conn: sqlite3.Connection = Dep
     try:
         rid = db.add_turn(
             conn, conversation_id, body.text or "Keep going", body.target_candidate_id, body.coach,
-            body.mode or modes.DEFAULT_FOLLOWUP_MODE, body.model,
+            body.mode or modes.DEFAULT_FOLLOWUP_MODE, body.model, body.training_steps,
         )
     except db.NotInConversation as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

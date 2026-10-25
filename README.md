@@ -82,6 +82,16 @@ To try the reward writer alone with a real API key: `.venv/bin/python scripts/tr
 
 ## Tests
 
+The message composer also accepts **Training steps (millions)** for a new task or
+follow-up. Leave it blank for the mode defaults (3M Instant, 5M Effort; continued
+policies normally get 2M). Set 1–100M to use that budget for each candidate,
+including candidates continuing a saved policy. The value overrides both the
+mode cap and the automatic scene plan. API callers can supply `training_steps`
+on either request-creation route. It is saved with the request, so pause/resume
+retains it. PPO rounds to complete training blocks and can exceed the requested
+count slightly. More steps increase GPU time and cost; they do not guarantee
+that a reward will learn the requested behavior.
+
 ```sh
 .venv/bin/python -m pytest -q
 ```
