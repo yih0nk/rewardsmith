@@ -167,15 +167,17 @@ def test_follow_up_trains_from_the_targets_weights_when_the_engine_can(tmp_path,
     conn = db.connect(s.db_path)
     rid = _first_turn(conn, s)
     target = db.scored_candidates(conn, rid)[0]
-    ckpt = s.artifacts_dir / rid / f"r{target['round_n']}c{target['idx']}" / "params_6000000.pkl"
-    monkeypatch.setattr(orchestrator, "_latest_params", lambda out_dir: ckpt if out_dir == ckpt.parent else None)
+    run_dir = s.artifacts_dir / rid / f"r{target['round_n']}c{target['idx']}"
+    for steps in (3_000_000, 6_000_000):  # the latest one counts
+        (run_dir / f"params_{steps}.pkl").write_bytes(b"")
+    ckpt = run_dir / "params_6000000.pkl"
     db.add_turn(conn, rid, "lift your feet higher", target["id"])
     req, follow = prepare_turn(conn, s, db.claim_next_request(conn), FakeFollowupReader())
     assert follow.init_params == ckpt
     sim = RecordingSim()
-    run_request(conn, replace(s, max_rounds=2, min_rounds=2), req, FakeWriter(), FakeEditor(), FakeCritic(), sim,
-                follow_up=follow)
-    assert all(job[2] == {"init_params": str(ckpt)} for job in sim.jobs[0])
+    run_request(conn, replace(s, max_rounds=2, min_rounds=2, continue_steps=2_000_000), req, FakeWriter(),
+                FakeEditor(), FakeCritic(), sim, follow_up=follow)
+    assert all(job[2] == {"init_params": str(ckpt), "steps": 2_000_000} for job in sim.jobs[0])
     assert all(len(job) == 2 for job in sim.jobs[1])  # later rounds use the simulator's default start
 
 
@@ -187,36 +189,65 @@ def test_run_turn_applies_the_mode(tmp_path):
     detail = db.get_request(conn, rid)
     assert [len(r["candidates"]) for r in detail["rounds"]] == [1]
     mode_event = next(e["message"] for e in detail["events"] if e["kind"] == "mode")
-    assert mode_event.startswith("Instant · claude-haiku-5-5: 1 reward(s) a round, 1 round, 6M steps")
+    assert mode_event.startswith("Instant · claude-haiku-5-5: 1 reward(s) a round, 1 round, 3M steps")
 
 
 def test_settings_for_each_mode():
     s = config.Settings(Path("x"), Path("y"), "claude-opus-5-5", "Go1", 4, 5, 8, True, True, min_rounds=2,
                         halving=(8, 4))
     effort = modes.settings_for(s, {"mode": "effort"})
-    assert effort == s  # Effort is the worker's own search
+    assert (effort.candidates_per_round, effort.min_rounds, effort.max_rounds, effort.model) == (4, 2, 2, modes.OPUS)
+    assert (effort.max_steps, effort.continue_steps) == (5_000_000, 2_000_000)
     assert modes.settings_for(s, {"mode": "effort", "model": modes.SONNET}).model == modes.SONNET
     instant = modes.settings_for(s, {"mode": "instant"})
     assert (instant.candidates_per_round, instant.max_rounds, instant.min_rounds, instant.model, instant.halving) == (
         1, 1, 1, modes.SONNET, ())
-    assert modes.scene_model(s, {"mode": "effort"}) == "claude-opus-5-5"
+    assert instant.max_steps == 3_000_000
     assert modes.scene_model(s, {"mode": "instant"}) == modes.SONNET
 
 
 def test_training_budget_sets_and_restores_the_step_override(monkeypatch):
     monkeypatch.setenv("REWARDSMITH_PPO_OVERRIDES", json.dumps({"num_envs": 512}))
 
-    class Sim:
+    class Sim:  # a simulator without a per-request plan: the budget goes through the override
         preset, robustness = "round", True
 
     sim = Sim()
     with training_budget(sim, modes.MODES[modes.INSTANT]):
-        assert json.loads(os.environ["REWARDSMITH_PPO_OVERRIDES"]) == {"num_envs": 512, "num_timesteps": 6_000_000}
+        assert json.loads(os.environ["REWARDSMITH_PPO_OVERRIDES"]) == {"num_envs": 512, "num_timesteps": 3_000_000}
         assert sim.robustness is False
     assert json.loads(os.environ["REWARDSMITH_PPO_OVERRIDES"]) == {"num_envs": 512}
     assert sim.robustness is True
-    with training_budget(sim, modes.MODES[modes.EFFORT]):
+
+    class Planned:  # the engine's simulator: run_request caps its plan, the budget restores it after
+        robustness, steps = True, None
+
+    planned = Planned()
+    with training_budget(planned, modes.MODES[modes.EFFORT]):
+        planned.steps = 5_000_000
         assert json.loads(os.environ["REWARDSMITH_PPO_OVERRIDES"]) == {"num_envs": 512}
+    assert planned.steps is None
+
+
+class PlanSim(FakeSimulator):
+    """A fake with the engine's per-request plan: always 20M steps."""
+
+    steps = None
+
+    def plan_request(self, text, scene=None):
+        self.steps = 20_000_000
+        return "Training plan: complex task, 20M steps per candidate"
+
+
+def test_a_mode_caps_the_simulators_plan(tmp_path):
+    s = _settings(tmp_path)
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "push the ball to the goal", mode=modes.INSTANT)
+    sim = PlanSim()
+    run_turn(conn, s, db.claim_next_request(conn), sim)
+    plan = next(e["message"] for e in db.get_request(conn, rid)["events"] if e["kind"] == "plan")
+    assert plan.endswith("this mode caps it at 3M steps")
+    assert sim.steps is None  # put back after the run
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:

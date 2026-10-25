@@ -19,6 +19,8 @@ class Settings:
     halving: tuple[int, ...] = ()  # e.g. (8, 4, 2): successive halving within a round; () = off
     editor: str = "claude"  # claude | droid: who revises rewards from round 2 on
     continue_rounds: bool = True  # round 2+ candidates train on from their parent's policy, not from scratch
+    max_steps: int | None = None  # cap on the simulator's per-request training plan (a mode's budget); None = no cap
+    continue_steps: int | None = None  # steps for a candidate that continues its parent's policy; None = the plan's
     coach: str = "off"  # the live coach's model (e.g. claude-haiku-5-5), or "off"; a request can override it
     # Let the coach stop candidates (and draft their fixes early). Off: it comments and advises only.
     # Off by default: on the ball-to-target task its stops cost quality in 2 of 2 paired runs.

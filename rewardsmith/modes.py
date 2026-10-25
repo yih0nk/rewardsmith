@@ -1,8 +1,8 @@
 """Instant and Effort: how hard one message makes the worker search.
 
-Instant is for a first video fast: one reward, one round, a fast model, a smaller
-training budget, no live coach. Effort is the full search the board always ran:
-K rewards a round, at least two rounds, the strongest model, the live coach on.
+Instant is for a first video fast: one reward, one round, a fast model, a small
+training budget, no live coach. Effort searches: four rewards, a second round that
+revises the best and trains on from their policies, Opus writing, the live coach on.
 
 Every per-mode number lives here. The worker turns a request's mode and model into
 the Settings and agents for that run (orchestrator.main).
@@ -32,19 +32,22 @@ class Mode:
     k: int | None  # rewards per round; None = the worker's REWARDSMITH_K
     min_rounds: int | None  # None = the worker's REWARDSMITH_MIN_ROUNDS
     max_rounds: int | None  # None = the worker's REWARDSMITH_ROUNDS
-    steps: int | None  # training steps per candidate; None = the simulator's preset
+    steps: int | None  # most training steps per candidate (caps the simulator's plan); None = the plan's
+    continue_steps: int | None  # steps for a candidate continuing its parent's policy; None = the plan's
     coach: bool  # the live coach watches training
     robustness: bool  # score the policy on unseen robots, seeds and pushes too
 
 
+# Targets, submit to final score on the 4090: Instant under 2 min, Effort under 5 min.
+# Steps are on the pretrained walker (steer mode), which matched 10M-step cold runs at 5M.
 MODES = {
     INSTANT: Mode(
         INSTANT, model=SONNET, effort="medium", scene_model=SONNET,
-        k=1, min_rounds=1, max_rounds=1, steps=6_000_000, coach=False, robustness=False,
+        k=1, min_rounds=1, max_rounds=1, steps=3_000_000, continue_steps=2_000_000, coach=False, robustness=False,
     ),
     EFFORT: Mode(
-        EFFORT, model=OPUS, effort="high", scene_model=OPUS,
-        k=None, min_rounds=None, max_rounds=None, steps=None, coach=True, robustness=True,
+        EFFORT, model=OPUS, effort="medium", scene_model=SONNET,
+        k=4, min_rounds=2, max_rounds=2, steps=5_000_000, continue_steps=2_000_000, coach=True, robustness=False,
     ),
 }
 
@@ -60,13 +63,9 @@ def model_of(req: dict[str, Any]) -> str:
 
 
 def settings_for(settings: config.Settings, req: dict[str, Any]) -> config.Settings:
-    """The worker's settings with the request's mode applied.
-
-    Effort keeps the worker's own (REWARDSMITH_MODEL, _K, _ROUNDS, ...), so a request
-    from before modes runs exactly as it did. A model the request picked wins in both.
-    """
+    """The worker's settings with the request's mode applied. A model the request picked wins."""
     mode = of(req)
-    out = settings if mode.name == EFFORT else replace(settings, model=mode.model)
+    out = replace(settings, model=mode.model, max_steps=mode.steps, continue_steps=mode.continue_steps)
     if req.get("model"):
         out = replace(out, model=req["model"])
     if mode.k is not None:
@@ -79,9 +78,8 @@ def settings_for(settings: config.Settings, req: dict[str, Any]) -> config.Setti
 
 
 def scene_model(settings: config.Settings, req: dict[str, Any]) -> str:
-    """The scene writer's and checker's model: Effort keeps the worker's REWARDSMITH_MODEL."""
-    mode = of(req)
-    return settings.model if mode.name == EFFORT else mode.scene_model
+    """The scene writer's and checker's model (fast in both modes: they gate everything else)."""
+    return of(req).scene_model
 
 
 def describe() -> dict[str, Any]:
@@ -89,7 +87,8 @@ def describe() -> dict[str, Any]:
     return {
         "models": list(MODELS),
         "modes": {
-            name: {"model": m.model, "k": m.k, "max_rounds": m.max_rounds, "steps": m.steps, "coach": m.coach}
+            name: {"model": m.model, "k": m.k, "max_rounds": m.max_rounds, "steps": m.steps,
+                   "continue_steps": m.continue_steps, "coach": m.coach}
             for name, m in MODES.items()
         },
         "default_task_mode": DEFAULT_TASK_MODE,
