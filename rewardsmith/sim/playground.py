@@ -9,6 +9,14 @@ Settings (env vars):
   REWARDSMITH_PUSH      1 = train with random pushes (default 0)
   REWARDSMITH_ROBUSTNESS  1 = score the policy on unseen robots, seeds and pushes (default 1)
   REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
+  REWARDSMITH_WARM_START  1 = every candidate starts from the pretrained walker (default 1, when the file exists)
+  REWARDSMITH_WALKER      the walker checkpoint (default /workspace/pretrained/go1_walker/params.pkl;
+                          scripts/train_walker.py makes it)
+  REWARDSMITH_STOCK       gait | pose | off: Playground's gait terms under each reward's own
+                          (default gait with a warm start, off without; see go1.STOCK_PROFILES)
+  REWARDSMITH_STOCK_WEIGHT  multiplier on the stock terms' scales (default go1.STOCK_WEIGHT)
+  REWARDSMITH_RESTORE_VALUE 1 = warm starts keep the checkpoint's value network too (default 1)
+  REWARDSMITH_STEPS       training steps per candidate (default: the preset's)
 """
 
 import logging
@@ -27,11 +35,24 @@ if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
 from . import evaluation, gate, go1, go1_spec, parallel, train  # noqa: E402
-from .base import Cull, OnDone, RunResult, Stopped  # noqa: E402
+from .base import Cull, Job, OnDone, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 from .scene import EMPTY, SceneSpec  # noqa: E402
 
 log = logging.getLogger("rewardsmith.sim")
+
+DEFAULT_WALKER = "/workspace/pretrained/go1_walker/params.pkl"
+
+
+def default_walker() -> str:
+    """The walker checkpoint every candidate starts from, or "" for random weights."""
+    if not _flag("REWARDSMITH_WARM_START", "1"):
+        return ""
+    path = os.environ.get("REWARDSMITH_WALKER", DEFAULT_WALKER)
+    if not Path(path).is_file():
+        log.warning("no walker checkpoint at %s: candidates start from random weights", path)
+        return ""
+    return path
 
 
 class PlaygroundSimulator:
@@ -45,6 +66,11 @@ class PlaygroundSimulator:
         robustness: bool | None = None,
         behavior_metrics: bool = False,
         evaluation_spec: list[dict] | None = None,
+        walker: str | None = None,
+        stock_profile: str | None = None,
+        stock_weight: float | None = None,
+        steps: int | None = None,
+        restore_value: bool | None = None,
     ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
@@ -56,6 +82,16 @@ class PlaygroundSimulator:
         self.robustness = _flag("REWARDSMITH_ROBUSTNESS", "1") if robustness is None else robustness
         self.evaluation_spec = evaluation_spec
         self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
+        # Warm start: a checkpoint path, "" for random weights (resolved here so children get the same).
+        self.walker = default_walker() if walker is None else walker
+        self.stock_profile = stock_profile or os.environ.get("REWARDSMITH_STOCK") or ("gait" if self.walker else "off")
+        if self.stock_profile not in go1.STOCK_PROFILES:
+            raise ValueError(f"unknown stock profile {self.stock_profile!r}: use one of {sorted(go1.STOCK_PROFILES)}")
+        self.stock_weight = (
+            float(os.environ.get("REWARDSMITH_STOCK_WEIGHT", go1.STOCK_WEIGHT)) if stock_weight is None else stock_weight
+        )
+        self.steps = steps or int(os.environ.get("REWARDSMITH_STEPS") or 0) or None  # None: the preset's
+        self.restore_value = _flag("REWARDSMITH_RESTORE_VALUE", "1") if restore_value is None else restore_value
         self._pool: parallel.WarmPool | None = None
         # The worker gates drafts in threads, but two warp rollouts at once in one
         # process crash: warp captures a CUDA graph on its first call, and any other
@@ -63,7 +99,9 @@ class PlaygroundSimulator:
         self._gate_lock = threading.Lock()
 
     def describe(self, scene: SceneSpec | None = None) -> str:
-        return go1_spec.describe(scene or EMPTY)
+        return go1_spec.describe(
+            scene or EMPTY, warm_start=bool(self.walker), stock_profile=self.stock_profile, stock_weight=self.stock_weight
+        )
 
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
         """Gate in a warm training process when one is free, else here.
@@ -76,7 +114,7 @@ class PlaygroundSimulator:
         warm = pool.reserve() if pool else None
         if warm is not None:
             try:
-                error = warm.gate(source, scene, self.impl)
+                error = warm.gate(source, scene, self.impl, self.stock)
             except parallel.WarmProcessError:
                 log.exception("warm gate failed; gating in the worker instead")
                 pool.discard(warm)
@@ -84,29 +122,46 @@ class PlaygroundSimulator:
                 pool.release(warm)
                 return error
         with self._gate_lock:
-            return gate.check_reward(source, impl=self.impl, scene=scene)
+            return gate.check_reward(source, impl=self.impl, scene=scene, stock=self.stock)
 
-    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None) -> RunResult:
-        progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
+    @property
+    def stock(self) -> dict:
+        """go1.make_env's stock terms arguments."""
+        return {"stock_profile": self.stock_profile, "stock_weight": self.stock_weight}
+
+    def run(
+        self, source: str, out_dir: Path, scene: SceneSpec | None = None,
+        init_params: str | Path | None = None, steps: int | None = None,
+    ) -> RunResult:
+        """Train from init_params (default: the walker, if any) for steps (default: self.steps or the preset's)."""
+        steps = steps or self.steps or train.ppo_kwargs(self.preset)["num_timesteps"]
+        progress = ProgressWriter(out_dir, steps)
         progress.stage("compiling")
         progress.start_heartbeat()  # nothing else writes during the minute of JIT compile
         try:
-            return self._run(source, out_dir, scene, progress)
+            return self._run(source, out_dir, scene, progress, init_params or self.walker or None, steps)
         finally:
             progress.stop_heartbeat()
 
-    def _run(self, source: str, out_dir: Path, scene: SceneSpec | None, progress: ProgressWriter) -> RunResult:
-        env = go1.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics)
+    def _run(
+        self, source: str, out_dir: Path, scene: SceneSpec | None, progress: ProgressWriter,
+        init_params: str | Path | None, steps: int,
+    ) -> RunResult:
+        env = go1.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics, **self.stock)
         # Pushes are a training condition only: the video and metrics come from a push-free env.
         # The training env keeps the behavior metrics too: halving ranks on the training curve.
         train_env = (
             go1.make_env(
-                source, impl=self.impl, overrides=go1.PUSH_OVERRIDES, scene=scene, behavior_metrics=self.behavior_metrics
+                source, impl=self.impl, overrides=go1.PUSH_OVERRIDES, scene=scene,
+                behavior_metrics=self.behavior_metrics, **self.stock,
             )
             if self.push
             else env
         )
-        result = train.train(train_env, self.preset, on_progress=progress.point, randomize=self.randomize)
+        result = train.train(
+            train_env, self.preset, {"num_timesteps": steps}, on_progress=progress.point, randomize=self.randomize,
+            init_params=init_params, checkpoint_dir=out_dir, restore_value=self.restore_value,
+        )
         progress.stage("rendering")
         # The video, target metrics and robustness rollouts, all in one batch (see evaluation.py).
         video, frames, rollout, robust = evaluation.evaluate(env, result, out_dir, robust=self.robustness, success_spec=self.evaluation_spec)
@@ -122,9 +177,19 @@ class PlaygroundSimulator:
             "compile_s": round(result.compile_s, 1),
             "train_randomized": int(self.randomize),
             "train_pushes": int(self.push),
+            "train_steps": int(steps),
+            "warm_started": int(init_params is not None),
         }
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
+
+    def sim_options(self) -> dict[str, object]:
+        """Everything a training child needs to train as this simulator would (PlaygroundSimulator(**these))."""
+        return {
+            "randomize": self.randomize, "push": self.push, "robustness": self.robustness,
+            "evaluation_spec": self.evaluation_spec, "walker": self.walker, "stock_profile": self.stock_profile,
+            "stock_weight": self.stock_weight, "steps": self.steps, "restore_value": self.restore_value,
+        }
 
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
         self.evaluation_spec = spec
@@ -141,7 +206,7 @@ class PlaygroundSimulator:
             pool.close()
 
     def run_many(
-        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None,
+        self, jobs: list[Job], scene: SceneSpec | None = None, cull: Cull | None = None,
         on_done: OnDone | None = None,
     ) -> list[RunResult | Stopped | str]:
         pool, self._pool = self._pool, None
@@ -151,8 +216,7 @@ class PlaygroundSimulator:
             return parallel.run_in_processes(
                 jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, scene=scene, pool=pool,
                 cull=cull, behavior_metrics=cull is not None or self.behavior_metrics,
-                sim_options={"randomize": self.randomize, "push": self.push, "robustness": self.robustness,
-                             "evaluation_spec": self.evaluation_spec},
+                sim_options=self.sim_options(),
                 on_done=on_done,
             )
         finally:
