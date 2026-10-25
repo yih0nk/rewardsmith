@@ -47,7 +47,7 @@ def test_custom_budget_replaces_both_mode_caps_and_restores_override(monkeypatch
         selected = modes.settings_for(settings, req)
         assert selected.max_steps == selected.continue_steps == 50_000_000
     assert modes.MODES[modes.INSTANT].steps == 3_000_000
-    assert modes.MODES[modes.EFFORT].continue_steps == 2_000_000
+    assert modes.MODES[modes.EFFORT].continue_steps == 4_000_000
     monkeypatch.setenv("REWARDSMITH_PPO_OVERRIDES", '{"num_envs":512}')
     class Sim:
         preset = "round"
