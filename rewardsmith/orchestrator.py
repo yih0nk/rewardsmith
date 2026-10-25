@@ -377,8 +377,8 @@ def _success_spec(
     pending: Future | None = None,
 ) -> list[dict[str, Any]] | None:
     """The request's success check, stored for good before any candidate trains: pending's
-    result when it was started early, else written now. Falls back to "don't fall over"
-    if the checker fails."""
+    result when it was started early, else written now. If it doesn't validate, a scene with a
+    goal or a fixed target gets its default check; otherwise it falls back to "don't fall over"."""
     rid = req["id"]
     if req.get("success_spec"):
         # Keep stored specs immutable, but do not certify an old locomotion-only
@@ -393,10 +393,19 @@ def _success_spec(
     try:
         spec = pending.result() if pending is not None else _write_spec(checker, req["text"], scene)
     except Exception as exc:
-        log.exception("success check for %s failed", rid)
-        db.log_event(conn, rid, "check", f"Could not write the success check ({type(exc).__name__}); using: don't fall")
-        spec = [check_spec.NO_FALL]
-        db.set_request(conn, rid, success_check_error=_describe(exc))
+        # A scene with a goal or a fixed target implies its check; use that when Claude's didn't
+        # validate, rather than "don't fall". Not when Claude said the task can't be measured.
+        default = (check_spec.default_scene_check(scene)
+                   if isinstance(exc, check_spec.SpecError) and not str(exc).startswith("Unsupported") else None)
+        if default is not None:
+            log.warning("success check for %s rejected (%s); using the scene's default", rid, exc)
+            db.log_event(conn, rid, "check", f"The written check was rejected ({exc}); using the scene's default")
+            spec = default
+        else:
+            log.exception("success check for %s failed", rid)
+            db.log_event(conn, rid, "check", f"Could not write the success check ({type(exc).__name__}); using: don't fall")
+            spec = [check_spec.NO_FALL]
+            db.set_request(conn, rid, success_check_error=_describe(exc))
     db.set_success_spec(conn, rid, spec)
     db.log_event(conn, rid, "check", "Success check: " + ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in spec))
     return spec

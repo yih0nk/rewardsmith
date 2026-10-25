@@ -241,6 +241,20 @@ def _kinds(metric: str, scene: SceneSpec) -> set[str]:
 EPISODE_FALLS = frozenset({"scene_fell", "target_fell"})
 
 
+def default_scene_check(scene: SceneSpec | None) -> list[dict[str, Any]] | None:
+    """The check a scene's layout implies, for when Claude's can't be validated: deliver the
+    target to its goal zone, or reach a fixed target, without falling. None for other scenes."""
+    scene = scene or EMPTY
+    target, goal = scene.target_object, scene.goal_object
+    if target is not None and goal is not None and goal.kind == "zone":
+        return [{"metric": f"push:{target.name}:{goal.name}", "op": ">=", "value": 0.8},
+                {"metric": "scene_fell", "op": "<=", "value": 0.1}]
+    if target is not None and not target.movable:
+        return [{"metric": "target_reached", "op": ">=", "value": 0.8},
+                {"metric": "target_fell", "op": "<=", "value": 0.1}]
+    return None
+
+
 def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> list[dict[str, Any]]:
     """Require concrete, scene-valid outcomes and same-episode/order constraints.
     With a fall bound over the evaluation episodes, a `fell` clause on the single video
@@ -253,6 +267,11 @@ def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> l
     if any(c["metric"] in TARGET_METRICS for c in spec) and (target is None or target.movable):
         raise SpecError("target metrics require a fixed scene target; use named outcomes for movable objects")
     actions = required_actions(request)
+    goal = scene.goal_object
+    if goal is not None and goal.kind == "zone" and "reach" in actions:
+        # "move the ball to the destination" reads as reaching, but the scene says the ball must
+        # get to its goal zone: that's a push, and target_reached can't measure a movable target.
+        actions = (actions - {"reach"}) | {"push"}
     ordered = bool(re.search(r"\b(?:then|after|before)\b", request, re.I))
     if not ordered and actions <= {"forward", "backward", "spin"}:
         actions = set()
@@ -262,7 +281,11 @@ def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> l
         if not any(actions <= _kinds(c["metric"], scene) for c in candidates):
             raise SpecError("The check needs a positive lower bound covering " + ", ".join(sorted(actions)) +
                             (" in a sequence" if ordered else " together in each episode") +
-                            "; reaching requires target_reached or reach:OBJECT")
+                            ("; moving the target to its goal is push:" + f"{scene.target}:{scene.goal}"
+                             if "push" in actions and goal is not None else
+                             "; reaching requires reach:OBJECT" + ("" if scene.target_object is not None
+                                                                     and scene.target_object.movable
+                                                                     else " or target_reached")))
         if not any(c["metric"] in ("target_fell", "scene_fell") and c["op"] in ("<", "<=") and c["value"] < 1 for c in spec):
             raise SpecError("Scene tasks require an upper bound on target_fell or scene_fell across the same episodes")
     for intent in sorted(core_intents(request)):
