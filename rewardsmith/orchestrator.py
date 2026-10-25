@@ -16,7 +16,7 @@ import os
 import sqlite3
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
@@ -99,11 +99,10 @@ def run_request(
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
     critic_request = text if not scene.objects else f"{text}\n\nScene: {scene.summary()}"
-    spec = _success_spec(conn, req, checker, scene)
-    check_error = db.get_request(conn, rid).get("success_check_error")
-    set_spec = getattr(sim, "set_evaluation_spec", None)
-    if set_spec:
-        set_spec(spec if not check_error else None)
+    # A new check needs the scene, and is written while round 1's rewards are written and
+    # gated; it is settled before anything trains, so the target can't move once results come in.
+    pending_spec = _start_success_spec(req, checker, scene)
+    spec, check_error = (None, None) if pending_spec else _settle_spec(conn, req, checker, scene, sim)
 
     for n in range(start, settings.max_rounds + 1):
         try:
@@ -157,6 +156,9 @@ def run_request(
                 for idx, (cid, src) in enumerate(zip(cids, gated))
                 if src is not None
             ]
+            if pending_spec is not None:
+                spec, check_error = _settle_spec(conn, req, checker, scene, sim, pending_spec)
+                pending_spec = None
             _checkpoint(conn, rid, round_boundary=False)  # before the GPU time
             if ready:
                 db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
@@ -340,11 +342,43 @@ def _succeeded(best: Best, settings: config.Settings) -> bool:
     return best.passed and best.score >= settings.success_score
 
 
+def _start_success_spec(req: dict[str, Any], checker: Checker | None, scene: SceneSpec) -> Future | None:
+    """Start writing a new success check in the background, or None if there is nothing to write.
+    The thread only calls Claude and validates; _success_spec stores the result."""
+    if req.get("success_spec") or checker is None:
+        return None
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(_write_spec, checker, req["text"], scene)
+    finally:
+        pool.shutdown(wait=False)
+
+
+def _write_spec(checker: Checker, text: str, scene: SceneSpec | None) -> list[dict[str, Any]]:
+    spec = checker.write_spec(text, scene=scene) if scene and not scene.is_empty else checker.write_spec(text)
+    return check_spec.validate_for_scene(spec, text, scene)
+
+
+def _settle_spec(
+    conn: sqlite3.Connection, req: dict[str, Any], checker: Checker | None, scene: SceneSpec, sim: Simulator,
+    pending: Future | None = None,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """The request's check and its error, stored, and handed to the simulator to measure."""
+    spec = _success_spec(conn, req, checker, scene, pending)
+    check_error = db.get_request(conn, req["id"]).get("success_check_error")
+    set_spec = getattr(sim, "set_evaluation_spec", None)
+    if set_spec:
+        set_spec(spec if not check_error else None)
+    return spec, check_error
+
+
 def _success_spec(
-    conn: sqlite3.Connection, req: dict[str, Any], checker: Checker | None, scene: SceneSpec | None = None
+    conn: sqlite3.Connection, req: dict[str, Any], checker: Checker | None, scene: SceneSpec | None = None,
+    pending: Future | None = None,
 ) -> list[dict[str, Any]] | None:
-    """The request's success check, written now, before any candidate trains, and stored
-    for good. Falls back to "don't fall over" if the checker fails."""
+    """The request's success check, stored for good before any candidate trains: pending's
+    result when it was started early, else written now. Falls back to "don't fall over"
+    if the checker fails."""
     rid = req["id"]
     if req.get("success_spec"):
         # Keep stored specs immutable, but do not certify an old locomotion-only
@@ -357,8 +391,7 @@ def _success_spec(
     if checker is None:
         return None
     try:
-        spec = checker.write_spec(req["text"], scene=scene) if scene and not scene.is_empty else checker.write_spec(req["text"])
-        spec = check_spec.validate_for_scene(spec, req["text"], scene)
+        spec = pending.result() if pending is not None else _write_spec(checker, req["text"], scene)
     except Exception as exc:
         log.exception("success check for %s failed", rid)
         db.log_event(conn, rid, "check", f"Could not write the success check ({type(exc).__name__}); using: don't fall")

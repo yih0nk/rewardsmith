@@ -14,6 +14,10 @@ fakes and prompts can use it.
       "target": "ball"
     }
 
+For a "move the object somewhere" task, `goal` names where the target must end up
+(usually a zone): {"target": "ball", "goal": "goal_zone"}. When a movable target
+and exactly one zone are given without a goal, the zone is taken as the goal.
+
 Objects are placed relative to where the robot starts each episode: `distance`
 metres away, at `bearing` degrees from its starting heading (positive = to its
 left). Each range is drawn fresh at every reset, so a policy learns the skill
@@ -64,7 +68,8 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,15}$")
 RESERVED_NAMES = frozenset({"base", "target", "joint", "joints", "foot", "feet", "gravity", "up", "torques", "time", "bumper"})
 
 OBJECT_KEYS = ("name", "kind", "color", "size", "distance", "bearing", "yaw", "movable", "mass")
-SCENE_KEYS = ("terrain", "objects", "target")
+SCENE_KEYS = ("terrain", "objects", "target", "goal")
+GOAL_MARGIN = 0.05  # m; a solid goal counts as reached when the target touches it, plus this
 
 
 class SceneError(ValueError):
@@ -117,6 +122,7 @@ class SceneSpec:
     terrain: str = "flat"
     objects: tuple[SceneObject, ...] = field(default_factory=tuple)
     target: str | None = None  # the object the target_* features refer to
+    goal: str | None = None  # where the target must be moved to (needs a movable target)
 
     @property
     def is_empty(self) -> bool:
@@ -127,6 +133,21 @@ class SceneSpec:
     def target_object(self) -> SceneObject | None:
         return next((o for o in self.objects if o.name == self.target), None)
 
+    @property
+    def goal_object(self) -> SceneObject | None:
+        return next((o for o in self.objects if o.name == self.goal), None)
+
+    @property
+    def goal_radius(self) -> float | None:
+        """The target is in the goal when its centre is this close (horizontally, m) to the goal's:
+        inside a zone, or touching a solid goal."""
+        target, goal = self.target_object, self.goal_object
+        if target is None or goal is None:
+            return None
+        if goal.kind == "zone":
+            return goal.size[0]
+        return goal.footprint_radius + target.footprint_radius + GOAL_MARGIN
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "terrain": self.terrain,
@@ -136,6 +157,7 @@ class SceneSpec:
                 for o in self.objects
             ],
             "target": self.target,
+            "goal": self.goal,
         }
 
     def to_json(self) -> str:
@@ -151,6 +173,9 @@ class SceneSpec:
             lines.append(f"- {o.name}: {_object_phrase(o)}")
         if self.target:
             lines.append(f"The target object is {self.target}.")
+        if self.goal:
+            lines.append(f"The task is to move {self.target} to {self.goal}: it counts as there when its centre "
+                         f"is within {self.goal_radius:.2f} m of {self.goal}'s centre.")
         return "\n".join(lines)
 
 
@@ -205,9 +230,29 @@ def parse(data: Mapping[str, Any] | str | None) -> SceneSpec:
         else:
             errors.append(f"target {target!r} is not an object name; use one of {', '.join(names)}")
 
+    goal = _goal(data.get("goal"), target, objects, names, errors)
+
     if errors:
         raise SceneError("scene spec rejected:\n" + "\n".join(f"- {e}" for e in errors))
-    return SceneSpec(terrain=terrain, objects=tuple(objects), target=target)
+    return SceneSpec(terrain=terrain, objects=tuple(objects), target=target, goal=goal)
+
+
+def _goal(goal: Any, target: str | None, objects: list[SceneObject], names: list[str], errors: list[str]) -> str | None:
+    """The goal object's name, or None. Inferred for a movable target and exactly one zone."""
+    by_name = {o.name: o for o in objects}
+    moved = by_name.get(target) if target else None
+    if goal in (None, ""):
+        zones = [o.name for o in objects if o.kind == "zone"]
+        return zones[0] if moved is not None and moved.movable and len(zones) == 1 else None
+    if goal not in names:
+        errors.append(f"goal {goal!r} is not an object name; use one of {', '.join(names) or '(no objects)'}")
+    elif goal == target:
+        errors.append(f"goal {goal!r} is the target itself; the goal is where the target must be moved to")
+    elif moved is not None and not moved.movable:
+        errors.append(f"goal {goal!r} needs a movable target, but {target!r} is fixed; set movable: true on {target!r}")
+    elif by_name[goal].movable:
+        errors.append(f"goal {goal!r} is movable; a goal must stay put (use a zone or a fixed object)")
+    return goal
 
 
 def _parse_object(i: int, raw: Any) -> tuple[SceneObject | None, list[str]]:

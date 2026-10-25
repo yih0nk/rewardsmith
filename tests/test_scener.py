@@ -42,11 +42,11 @@ def test_claude_scener_returns_a_spec(monkeypatch):
 
     def fake_ask(client, model, system, content, schema, **kw):
         seen.update(system=system, prompt=content[0]["text"], schema=schema)
-        return {"plan": "one ball", "terrain": "flat", "objects": [BALL], "target": ""}
+        return {"plan": "one ball", "terrain": "flat", "objects": [BALL], "target": "", "goal": ""}
 
     monkeypatch.setattr(scener, "ask_json", fake_ask)
     spec = scener.ClaudeScener(client=None, model="claude-opus-5-5").make("walk to the red ball")
-    assert spec == {"terrain": "flat", "objects": [BALL], "target": None}
+    assert spec == {"terrain": "flat", "objects": [BALL], "target": None, "goal": None}
     assert "walk to the red ball" in seen["prompt"]
     assert scene.parse(spec).target == "ball"
 
@@ -56,6 +56,7 @@ def test_scener_prompt_and_schema_match_the_validator():
         assert word in scener.SYSTEM
     item = scener.SCHEMA["properties"]["objects"]["items"]
     assert set(item["properties"]) == set(scene.OBJECT_KEYS)
+    assert set(scener.SCHEMA["properties"]) - {"plan"} == set(scene.SCENE_KEYS)
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,18 @@ FAKE_TOTAL_STEPS = 10_000_000  # the "round" preset's num_timesteps
 FAKE_EVALS = 20
 FAKE_COMPILE_S = 45.0  # roughly what the real first eval waits on JIT
 FAKE_EVAL_S = 9.0
+# CPython 3.11.5's parser can fail with "AST constructor recursion depth mismatch" (gh-106905,
+# fixed in 3.11.6) when threads parse at once or after an earlier parse error; the worker gates
+# drafts in threads. So parse one thread at a time, and retry once on that error.
+_PARSE_LOCK = threading.Lock()
+
+
+def _parse(source: str) -> ast.Module:
+    with _PARSE_LOCK:
+        try:
+            return ast.parse(source)
+        except SystemError:
+            return ast.parse(source)
 
 
 class FakeSimulator:
@@ -30,7 +43,7 @@ class FakeSimulator:
 
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
         try:
-            tree = ast.parse(source)
+            tree = _parse(source)
         except SyntaxError as exc:
             return f"SyntaxError: {exc}"
         if not any(isinstance(n, ast.FunctionDef) and n.name == "reward" for n in tree.body):
@@ -104,20 +117,41 @@ def _write_fake_progress(out_dir: Path, curve: list[float], terms: dict[str, flo
 
 
 def _fake_target_metrics(scene: SceneSpec | None, quality: float) -> dict[str, float]:
-    """The target_* metrics scene_eval reports, scaled so better fake runs get closer."""
+    """The metrics scene_eval reports, scaled so better fake runs get closer."""
     target = scene.target_object if scene else None
     if target is None:
         return {}
+    q = quality / 10
     start = sum(target.distance) / 2
-    final = round(start * (1 - quality / 10), 2)
-    return {
-        "target_reached": round(quality / 10, 2),
+    final = round(start * (1 - q), 2)
+    out = {
+        "target_reached": round(q, 2),
         "target_start_dist": round(start, 2),
         "target_min_dist": final,
         "target_final_dist": final,
+        "target_final_in": round(q * q, 2),
+        "target_near_frac": round(q / 2, 2),
         "target_time_to_reach": round(20 - quality, 1),
         "target_fell": 0.0,
+        "final_speed": round(0.5 * (1 - q), 2),
     }
+    if target.movable:
+        out["object_moved"] = round(2 * q, 2)
+    if scene.goal_object is not None:
+        g0 = round(max(1.0, sum(scene.goal_object.distance) / 2 - start), 2)
+        delivered = round(max(0.0, q - 0.5) * 2, 2)
+        out.update({
+            "object_goal_start_dist": g0,
+            "object_goal_min_dist": round(g0 * (1 - q), 2),
+            "object_goal_final_dist": round(g0 * (1 - q) + 0.1, 2),
+            "object_goal_reached": delivered,
+            "object_in_goal_final": delivered,
+            "object_goal_progress": round(q - 0.1, 2),
+            "phase_no_approach": round(1 - q, 2),
+            "phase_short": round(q - delivered, 2),
+            "phase_delivered": delivered,
+        })
+    return out
 
 
 def _fake_terms(source: str) -> dict[str, float]:
@@ -134,7 +168,7 @@ def _term_names(source: str) -> list[str]:
     """String keys of the first dict literal the reward returns, or task and energy."""
     fallback = ["task", "energy"]
     try:
-        tree = ast.parse(source)
+        tree = _parse(source)
     except SyntaxError:
         return fallback
     for node in ast.walk(tree):

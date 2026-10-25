@@ -1,0 +1,11 @@
+{
+  "terrain": "flat",
+  "objects": [
+    {"name": "ball", "kind": "ball", "color": "orange", "size": [0.15],
+     "distance": [1.0, 1.5], "bearing": [-30, 30], "yaw": [0, 0], "movable": true, "mass": 0.4},
+    {"name": "goal", "kind": "zone", "color": "green", "size": [0.5],
+     "distance": [2.8, 3.5], "bearing": [-20, 20], "yaw": [0, 0], "movable": false, "mass": 1.0}
+  ],
+  "target": "ball",
+  "goal": "goal"
+}

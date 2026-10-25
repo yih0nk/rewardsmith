@@ -39,6 +39,21 @@ FEATURES: tuple[Feature, ...] = (
     Feature("time", (), "seconds since the episode started"),
 )
 
+# Rollout pose metrics (sim/pose.py), for pose tasks: name -> (meaning, lowest sensible, highest).
+# All are over the rollout's steps up to the first fall.
+POSE_METRICS: dict[str, tuple[str, float, float]] = {
+    "front_feet_off": ("fraction of the rollout with BOTH front feet off the floor (e.g. standing on the hind legs)",
+                       0.0, 1.0),
+    "rear_feet_off": ("fraction of the rollout with BOTH rear feet off the floor (e.g. a handstand on the front legs)",
+                      0.0, 1.0),
+    "feet_off_mean": ("mean number of feet off the floor, 0 to 4 (about 2 in a trot, 0 standing)", 0.0, 4.0),
+    "front_off_held_s": ("longest unbroken stretch with both front feet off the floor, s", 0.0, 20.0),
+    "rear_off_held_s": ("longest unbroken stretch with both rear feet off the floor, s", 0.0, 20.0),
+    "pitch_deg": ("mean body pitch, degrees; positive = nose up (about 60 to 90 standing on the hind legs)",
+                  -90.0, 90.0),
+    "abs_roll_deg": ("mean absolute body roll, degrees (0 level, 90 on its side)", 0.0, 180.0),
+}
+
 # Per-object features: state[f"{name}_{suffix}"], and state[f"target_{suffix}"] for the target object.
 OBJECT_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
     ("rel_pos", (3,), "object centre relative to the robot base, m, in the robot's heading frame: "
@@ -50,6 +65,16 @@ OBJECT_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
 )
 MOVABLE_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
     ("vel", (3,), "object velocity in the world, m/s: [x, y, z]"),
+)
+# With a goal (move the target to it): where the goal is, seen from the target object.
+GOAL_FEATURES: tuple[Feature, ...] = (
+    Feature("target_to_goal_rel", (3,), "goal centre minus target centre, m, in the robot's heading frame: "
+                                        "[forward, left, up]; the direction the target must travel"),
+    Feature("target_to_goal_dist", (), "horizontal distance from the target object's centre to the goal's centre, m; "
+                                       "the number to drive to zero"),
+    Feature("target_to_goal_speed", (), "how fast the target object closes on the goal, m/s (minus the rate of change of "
+                                        "target_to_goal_dist): positive while it moves toward the goal, negative away. "
+                                        "Rewarding it is the potential-based progress term"),
 )
 
 
@@ -66,6 +91,8 @@ def scene_features(scene: SceneSpec) -> tuple[Feature, ...]:
         out += object_features(obj)
     if scene.target_object is not None:
         out += object_features(scene.target_object, alias="target")
+    if scene.goal_object is not None:
+        out += GOAL_FEATURES
     return tuple(out)
 
 
@@ -89,6 +116,10 @@ def describe(scene: SceneSpec = EMPTY) -> str:
         "- action, prev_action (shape (12,)): the policy's joint offsets in [-1, 1]; the motor target is "
         "the standing pose + 0.5 rad * action, joint order as above"
     )
+    lines.append(
+        "- Body pitch (nose up positive) is arcsin(-gravity[0]) and roll (left side up) is arcsin(-gravity[1]), "
+        "in radians; a foot is off the floor when its foot_contact is 0."
+    )
     if scene.terrain == "rough":
         lines.append("- On rough ground, base_height and feet_height are world z, so they vary with the bumps (up to 5 cm).")
     if scene.objects:
@@ -102,9 +133,15 @@ def describe(scene: SceneSpec = EMPTY) -> str:
                          f"refer to the target object, {target.name}")
         lines.append(f"Objects present: {', '.join(o.name for o in scene.objects)}. "
                      "Use only these names; any other key raises a KeyError.")
+        if scene.goal_object is not None:
+            for f in GOAL_FEATURES:
+                lines.append(f"- state[\"{f.name}\"] ({'scalar' if not f.shape else f'shape {f.shape}'}): {f.meaning}")
         if target is not None:
             lines.append(f"The base is within reach of {target.name} when {target.name}_dist < "
                          f"{target.reach_radius:.2f} m.")
+        if scene.goal_object is not None:
+            lines.append(f"The task is done when {target.name} is in {scene.goal}: target_to_goal_dist < "
+                         f"{scene.goal_radius:.2f} m. Success is measured on the object, not on the robot.")
     lines += [
         "",
         "How the reward is used:",

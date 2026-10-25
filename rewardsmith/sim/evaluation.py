@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from . import outcomes, render, robustness, scene_eval
+from . import outcomes, pose, render, robustness, scene_eval
 from .base import ROLLOUT_STEPS
 from .go1 import Go1Env
 from .train import TrainResult
@@ -67,9 +67,12 @@ def evaluate(
     reset, outs = robustness.run_batch(env, result, models, in_axes, keys, push_dirs, steps, **extra)
 
     summary, n = render.rollout_summary(*(outs[k][video] for k in ("qpos", "lin", "yaw", "up", "done")))
+    summary.update(pose.metrics(env, outs["qpos"][video][:n]))  # feet off the floor, pitch, roll
     robust_metrics: dict[str, float] = {}
     if robust:  # robust_s: the shared batch, which is what robustness costs on its own
-        rows = [robustness.summarize(outs, i) for i in robust_rows]
+        # With the pose metrics, so a pose task's check can pass on the robustness rollouts too.
+        rows = [{**robustness.summarize(outs, i), **pose.metrics(env, outs["qpos"][i][:pose.counted(outs["done"][i])])}
+                for i in robust_rows]
         # Every row past the robots is the nominal robot, so robustness.json's physics
         # for plan position i can be read from batch row i.
         robust_metrics = robustness.report(plan, rows, models, summary, out_dir=out_dir, start=start)
@@ -85,6 +88,8 @@ def evaluate(
             target_obj.reach_radius, env.dt,
         ))
         metrics["scene_fell"] = metrics["target_fell"]
+        task_start, task_trace = scene_eval.batch_task_samples(env, reset, outs, target)
+        metrics.update(scene_eval.summarize_task(env, task_start, task_trace, outs["done"][target].T))
     if needs_outcomes:
         initial = jax.tree_util.tree_map(lambda value: value[target], reset["scene_outcome"])
         samples = jax.tree_util.tree_map(lambda value: np.swapaxes(value[target], 0, 1), outs["scene_outcome"])

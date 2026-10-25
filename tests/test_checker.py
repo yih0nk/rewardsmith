@@ -96,7 +96,7 @@ def test_claude_checker_gives_up_after_the_retry(monkeypatch):
     ("walk backwards", "forward_velocity"),
     ("spin in place", "abs_yaw_rate"),
     ("run forward fast", "forward_velocity"),
-    ("stand on your hind legs", "upright"),
+    ("stand on your hind legs", "front_feet_off"),
 ])
 def test_fake_checker_writes_valid_specs(request_text, core):
     spec = FakeChecker().write_spec(request_text)
@@ -151,10 +151,10 @@ class RecordingCritic(FakeCritic):
         return super().review(request, result, check)
 
 
-def _run(tmp_path, checker_, critic_=None, **kw):
+def _run(tmp_path, checker_, critic_=None, text="walk backwards", **kw):
     s = _settings(tmp_path, **kw)
     conn = db.connect(s.db_path)
-    rid = db.create_request(conn, "walk backwards")
+    rid = db.create_request(conn, text)
     req = db.claim_next_request(conn)
     best = run_request(conn, s, req, FakeWriter(), FakeEditor(), critic_ or FakeCritic(), FakeSimulator(), checker=checker_)
     return conn, rid, best
@@ -162,7 +162,8 @@ def _run(tmp_path, checker_, critic_=None, **kw):
 
 def test_spec_is_stored_before_training_and_every_candidate_is_checked(tmp_path):
     critic_ = RecordingCritic()
-    conn, rid, best = _run(tmp_path, SpecChecker([checker.NO_FALL]), critic_)
+    # A request no metric measures, so "don't fall" is a valid check that every candidate passes.
+    conn, rid, best = _run(tmp_path, SpecChecker([checker.NO_FALL]), critic_, text="do a little dance")
 
     detail = db.get_request(conn, rid)
     assert detail["success_spec"] == [checker.NO_FALL]

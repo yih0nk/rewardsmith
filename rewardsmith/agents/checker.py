@@ -14,6 +14,7 @@ from typing import Any
 
 import anthropic
 
+from ..sim.go1_spec import POSE_METRICS
 from ..sim.scene import EMPTY, SceneSpec
 from ..sim import outcomes
 from .claude import ask_json
@@ -38,6 +39,7 @@ TARGET_METRICS = {
 }
 METRICS.update(TARGET_METRICS)
 METRICS["scene_fell"] = ("fraction of fresh evaluation episodes that fell or had invalid telemetry", 0.0, 1.0)
+METRICS.update(POSE_METRICS)  # feet off the floor, held time, pitch, roll: for pose tasks
 OPS = {"<": operator.lt, ">": operator.gt, "<=": operator.le, ">=": operator.ge}
 MAX_CLAUSES = 6
 NO_FALL = {"metric": "fell", "op": "<", "value": 0.5}
@@ -55,7 +57,9 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
 - Use the abs_ metrics when the request does not say which way.
 - Add a clause against the obvious way to fake it (for example spinning in place:
   abs_forward_velocity < 0.3), but don't demand more than the user asked for.
-- Include fell < 0.5 unless the request is to fall or flip.
+- Include fell < 0.5 unless the request is to fall or flip. With a scene, use only
+  scene_fell (or target_fell) instead: those count falls over the same fresh episodes as the
+  task, and a second fall clause on the one video only disagrees with them.
 - For reaching a fixed object or entering a zone, require target_reached >= 0.8 and
   target_fell <= 0.1 by default (adjust only if the request explicitly demands otherwise).
   These are rates across fresh episodes. Do not require continued forward speed:
@@ -76,7 +80,14 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
 - If the request needs a measurement outside this scene's event vocabulary, return
   unsupported_reason describing the missing measurement; do not weaken the task.
 - For a locomotion request that merely mentions scenery, keep its locomotion checks.
-- If the request can't be measured with these metrics (a gait style, a leg lifted),
+- Pose requests (stand on the hind legs, lift the front paws, a handstand, sit up) must
+  check the pose itself with the pose metrics, e.g. standing on the hind legs:
+  front_feet_off >= 0.6 and pitch_deg >= 45, plus front_off_held_s >= the seconds asked for
+  when it must hold it. Staying upright, a height or low speed is not the pose.
+- Every request that names something measurable needs a clause that measures it: a pose
+  needs a pose metric, walking forward or backward needs forward_velocity, spinning needs
+  yaw_rate. Staying upright and not falling never count as the task on their own.
+- If the request can't be measured with these metrics (a gait style),
   check what can be measured: staying upright and not falling.
 """
 
@@ -181,6 +192,29 @@ ACTION_WORDS = {
 }
 
 
+POSE_REQUEST = re.compile(
+    r"\b(?:(?:two|hind|back|rear|front|three)\s+(?:legs?|paws?|feet))\b|\brear(?:s|ing|ed)?\s+up\b"
+    r"|\b(?:lift|raise|hold\s+up)\w*\s+(?:\w+\s+){0,3}(?:paws?|legs?|feet|foot)\b|\bhandstands?\b"
+    r"|\bsit(?:s|ting)?\s+up\b|\bbeg(?:s|ging)?\b|\bwheelbarrow\b",
+    re.I,
+)
+# What a request names -> the metrics, any one of which measures it.
+CORE_METRICS = {
+    "pose": frozenset(POSE_METRICS),
+    "forward": frozenset({"forward_velocity", "abs_forward_velocity"}),
+    "backward": frozenset({"forward_velocity"}),
+    "spin": frozenset({"yaw_rate", "abs_yaw_rate"}),
+}
+
+
+def core_intents(request: str) -> set[str]:
+    """What a request names that a rollout metric can measure (pose, forward, backward, spin)."""
+    found = {name for name in ("forward", "backward", "spin") if re.search(ACTION_WORDS[name], request, re.I)}
+    if POSE_REQUEST.search(request):
+        found.add("pose")
+    return found
+
+
 def requires_reach(request: str) -> bool:
     return bool(REACH_REQUEST.search(request))
 
@@ -204,10 +238,17 @@ def _kinds(metric: str, scene: SceneSpec) -> set[str]:
     return kinds
 
 
+EPISODE_FALLS = frozenset({"scene_fell", "target_fell"})
+
+
 def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> list[dict[str, Any]]:
-    """Require concrete, scene-valid outcomes and same-episode/order constraints."""
+    """Require concrete, scene-valid outcomes and same-episode/order constraints.
+    With a fall bound over the evaluation episodes, a `fell` clause on the single video
+    rollout is dropped: two fall criteria disagree on the board (37% vs 0)."""
     scene = scene or EMPTY
     spec = validate(clauses, scene)
+    if any(c["metric"] in EPISODE_FALLS for c in spec):
+        spec = [c for c in spec if c["metric"] != "fell"]
     target = scene.target_object
     if any(c["metric"] in TARGET_METRICS for c in spec) and (target is None or target.movable):
         raise SpecError("target metrics require a fixed scene target; use named outcomes for movable objects")
@@ -224,6 +265,12 @@ def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> l
                             "; reaching requires target_reached or reach:OBJECT")
         if not any(c["metric"] in ("target_fell", "scene_fell") and c["op"] in ("<", "<=") and c["value"] < 1 for c in spec):
             raise SpecError("Scene tasks require an upper bound on target_fell or scene_fell across the same episodes")
+    for intent in sorted(core_intents(request)):
+        # A named outcome such as sequence:forward>stand_still measures it too.
+        if not any(c["metric"] in CORE_METRICS[intent] or intent in _kinds(c["metric"], scene) for c in spec):
+            raise SpecError(f"The request asks for {intent} motion, so the check needs a clause on one of "
+                            + ", ".join(sorted(CORE_METRICS[intent]))
+                            + "; staying upright, a height or low speed doesn't show it")
     durations = [float(value) for value in re.findall(r"(?:for|still)\s+(\d+(?:\.\d+)?)\s*(?:seconds?\b|s\b)", request, re.I)]
     if durations:
         held = []

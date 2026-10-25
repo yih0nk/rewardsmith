@@ -122,8 +122,8 @@ def test_objects_are_placed_afresh_within_their_ranges(scene_env, scene_states):
 def test_scene_adds_to_the_observation(env, scene_env, scene_states):
     plain = jax.jit(env.reset)(jax.random.PRNGKey(0))
     per_object = 5 * 3 + 2  # rel x, y, dist, cos, sin each; crate also has velocity
-    assert scene_states.obs["state"].shape[-1] == plain.obs["state"].shape[-1] + per_object + 1  # + time
-    assert scene_states.obs["privileged_state"].shape[-1] == plain.obs["privileged_state"].shape[-1] + per_object + 1
+    assert scene_states.obs["state"].shape[-1] == plain.obs["state"].shape[-1] + per_object  # no time: see go1.py
+    assert scene_states.obs["privileged_state"].shape[-1] == plain.obs["privileged_state"].shape[-1] + per_object
 
 
 def test_scene_env_steps_with_finite_rewards(scene_env, scene_state):
@@ -142,6 +142,11 @@ def test_rough_terrain_scene_builds():
     env = go1.make_env(WALK_BACKWARDS, scene=rough)
     assert env.mj_model.geom("floor").type == 1  # mjGEOM_HFIELD
     assert env._config.njmax > 40
+    # No objects, so no mocap bodies: reset and step must still work, with the plain observation.
+    state = jax.jit(env.step)(jax.jit(env.reset)(jax.random.PRNGKey(0)), jnp.zeros(env.action_size))
+    assert jnp.isfinite(state.reward)
+    plain = jax.jit(go1.make_env(WALK_BACKWARDS).reset)(jax.random.PRNGKey(0))
+    assert state.obs["state"].shape == plain.obs["state"].shape
 
 
 def test_reward_reading_a_missing_object_is_refused():
@@ -160,3 +165,30 @@ def test_behavior_metrics_are_reported_at_reset_and_step_only_when_asked():
     assert {f"behavior/{n}" for n in names} <= set(state.metrics)
     state = jax.jit(env.step)(state, jnp.zeros(env.action_size))
     assert float(state.metrics["behavior/upright"]) > 0.9  # standing at the start
+
+
+PUSH_SCENE = scene_mod.parse((Path(__file__).parent.parent / "examples" / "scenes" / "ball_to_zone.json").read_text())
+PUSH_TO_ZONE = (Path(__file__).parent.parent / "examples" / "rewards" / "push_to_zone.py").read_text()
+
+
+def test_goal_features_measure_the_object_against_the_goal():
+    env = go1.make_env(PUSH_TO_ZONE, scene=PUSH_SCENE)
+    state = jax.jit(env.reset)(jax.random.PRNGKey(5))
+    # Roll the ball toward the goal at 1 m/s and check the features agree.
+    ball, goal = state.data.xpos[env._placed[0].body_id], state.data.xpos[env._placed[1].body_id]
+    gap = goal[:2] - ball[:2]
+    dof = env._placed[0].dof_adr
+    data = state.data.replace(qvel=state.data.qvel.at[dof:dof + 2].set(gap / jnp.linalg.norm(gap)))
+    feats = env.features(data, state.info, jnp.zeros(4, dtype=bool))
+    assert set(feats) == {f.name for f in features_for(PUSH_SCENE)}
+    assert float(feats["target_to_goal_dist"]) == pytest.approx(float(jnp.linalg.norm(gap)), rel=1e-4)
+    assert float(feats["target_to_goal_speed"]) == pytest.approx(1.0, rel=1e-4)
+    rel = feats["target_to_goal_rel"][:2]  # in the heading frame: same length, rotated
+    assert float(jnp.linalg.norm(rel)) == pytest.approx(float(jnp.linalg.norm(gap)), rel=1e-4)
+    assert jnp.allclose(rel, feats["goal_rel_pos"][:2] - feats["ball_rel_pos"][:2], atol=1e-4)
+
+
+def test_behavior_metrics_track_the_scene_task():
+    env = go1.make_env(PUSH_TO_ZONE, scene=PUSH_SCENE, behavior_metrics=True)
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    assert {"behavior/target_dist", "behavior/target_to_goal_dist"} <= set(state.metrics)

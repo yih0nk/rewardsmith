@@ -39,6 +39,14 @@ Return a scene spec:
   - mass: kg, for movable objects 0.05-20 (a football is about 0.4); use 1.0 for fixed ones.
 - target: the name of the main object the behavior is about (its features are also given as target_*),
   or "" when there are no objects.
+- goal: for "move / push / kick / dribble the target to or into somewhere" tasks, the name of the place it
+  must end up (usually a zone; the target must be movable), else "". Success is then measured on where the
+  target object ends up relative to the goal.
+
+For a move-it-somewhere task, lay it out so a straight push can succeed in one 20 s episode: the target
+about 1-1.5 m from the robot, and the goal beyond it as seen from the robot's start (a similar bearing
+range, about 1.5-2 m farther out), with a goal zone radius of at least 0.4 m. Unrelated bearings make the
+robot walk around the object first, which is far harder to learn.
 
 Objects are placed afresh every episode within the ranges, so the policy must learn the skill, not
 a spot: prefer ranges over single values. Add only objects the behavior needs; a behavior with no
@@ -73,15 +81,17 @@ SCHEMA = {
             },
         },
         "target": {"type": "string"},
+        "goal": {"type": "string"},
     },
-    "required": ["plan", "terrain", "objects", "target"],
+    "required": ["plan", "terrain", "objects", "target", "goal"],
     "additionalProperties": False,
 }
 
 
 def to_spec(out: dict[str, Any]) -> dict[str, Any]:
-    """Claude's answer as a scene spec dict: drop the plan, and "" target means none."""
-    return {"terrain": out["terrain"], "objects": out["objects"], "target": out.get("target") or None}
+    """Claude's answer as a scene spec dict: drop the plan, and "" target or goal means none."""
+    return {"terrain": out["terrain"], "objects": out["objects"], "target": out.get("target") or None,
+            "goal": out.get("goal") or None}
 
 
 class ClaudeScener:

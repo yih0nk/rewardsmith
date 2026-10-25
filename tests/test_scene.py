@@ -199,3 +199,41 @@ def test_internal_bumper_name_is_reserved():
     from rewardsmith.sim.scene import SceneError, parse
     with pytest.raises(SceneError, match="reserved"):
         parse({"objects": [{"name": "bumper", "kind": "ball", "size": [0.15], "distance": 2}]})
+
+
+# Goals: "move the target there".
+
+PUSH_BALL = {"name": "ball", "kind": "ball", "color": "orange", "size": [0.15], "distance": [1, 1.5], "movable": True,
+        "mass": 0.4}
+GOAL_PAD = {"name": "pad", "kind": "zone", "color": "green", "size": [0.5], "distance": [2.5, 3]}
+CRATE = {"name": "crate", "kind": "box", "color": "blue", "size": [0.4, 0.4, 0.3], "distance": [2.5, 3]}
+
+
+def test_movable_target_and_one_zone_make_a_goal():
+    spec = scene.parse({"objects": [PUSH_BALL, GOAL_PAD], "target": "ball"})
+    assert spec.goal == "pad" and spec.goal_radius == 0.5
+    assert "move ball to pad" in spec.summary()
+    assert scene.parse(spec.to_json()) == spec
+
+
+def test_no_goal_is_inferred_for_a_fixed_target_or_two_zones():
+    fixed = {**PUSH_BALL, "movable": False}
+    assert scene.parse({"objects": [fixed, GOAL_PAD]}).goal is None
+    two = scene.parse({"objects": [PUSH_BALL, GOAL_PAD, {**GOAL_PAD, "name": "pad2", "bearing": 180}], "target": "ball"})
+    assert two.goal is None
+
+
+def test_a_solid_goal_counts_touching():
+    spec = scene.parse({"objects": [PUSH_BALL, CRATE], "target": "ball", "goal": "crate"})
+    assert spec.goal_radius == pytest.approx(0.5 * (0.4 ** 2 * 2) ** 0.5 + 0.15 + scene.GOAL_MARGIN)
+
+
+@pytest.mark.parametrize("data, message", [
+    ({"objects": [PUSH_BALL, GOAL_PAD], "goal": "nowhere"}, "goal 'nowhere' is not an object name"),
+    ({"objects": [PUSH_BALL, GOAL_PAD], "goal": "ball"}, "is the target itself"),
+    ({"objects": [{**PUSH_BALL, "movable": False}, GOAL_PAD], "goal": "pad"}, "needs a movable target"),
+    ({"objects": [PUSH_BALL, {**CRATE, "movable": True, "mass": 2.0}], "goal": "crate"}, "a goal must stay put"),
+])
+def test_bad_goals_explain_themselves(data, message):
+    with pytest.raises(SceneError, match=message):
+        scene.parse(data)
