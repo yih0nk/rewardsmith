@@ -196,7 +196,7 @@ def test_settings_for_each_mode():
     s = config.Settings(Path("x"), Path("y"), "claude-opus-5-5", "Go1", 4, 5, 8, True, True, min_rounds=2,
                         halving=(8, 4))
     effort = modes.settings_for(s, {"mode": "effort"})
-    assert (effort.candidates_per_round, effort.min_rounds, effort.max_rounds, effort.model) == (4, 2, 2, modes.OPUS)
+    assert (effort.candidates_per_round, effort.min_rounds, effort.max_rounds, effort.model) == (4, 1, 1, modes.OPUS)
     assert (effort.max_steps, effort.continue_steps) == (5_000_000, 2_000_000)
     assert modes.settings_for(s, {"mode": "effort", "model": modes.SONNET}).model == modes.SONNET
     instant = modes.settings_for(s, {"mode": "instant"})

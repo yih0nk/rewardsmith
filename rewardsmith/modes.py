@@ -1,8 +1,13 @@
 """Instant and Effort: how hard one message makes the worker search.
 
 Instant is for a first video fast: one reward, one round, a fast model, a small
-training budget, no live coach. Effort searches: four rewards, a second round that
-revises the best and trains on from their policies, Opus writing, the live coach on.
+training budget, no live coach. Effort searches wider: four rewards written by Opus,
+trained side by side with the live coach watching. More rounds are follow-ups ("keep
+going"), which revise the best and train on from its policy.
+
+Why Effort is one round: on the 4090 every round pays a fixed ~90 s PPO compile (four
+compiling at once on ~10 CPUs) plus ~50 s of Opus writing, so two rounds took 537 s on
+the ball task (round 2 alone ~260 s, no better score). One round fits under 5 min.
 
 Every per-mode number lives here. The worker turns a request's mode and model into
 the Settings and agents for that run (orchestrator.main).
@@ -47,7 +52,7 @@ MODES = {
     ),
     EFFORT: Mode(
         EFFORT, model=OPUS, effort="medium", scene_model=SONNET,
-        k=4, min_rounds=2, max_rounds=2, steps=5_000_000, continue_steps=2_000_000, coach=True, robustness=False,
+        k=4, min_rounds=1, max_rounds=1, steps=5_000_000, continue_steps=2_000_000, coach=True, robustness=False,
     ),
 }
 
