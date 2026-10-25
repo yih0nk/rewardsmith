@@ -78,12 +78,14 @@ def main() -> None:
         req = db.get_request(conn, rid)
         row = {"label": args.label, "request": rid, "text": text, "wall_s": round(time.time() - t0, 1),
                "scene": req.get("scene"), "success_spec": req.get("success_spec"), "candidates": []}
+        checked = {c["metric"] for c in req.get("success_spec") or []}
         for cand in _candidates(conn, rid):
             m = cand["metrics"] or {}
             check = cand.get("check_result") or {}
             row["candidates"].append({
                 "id": cand["label"], "score": cand["score"], "check": check.get("pass"), "status": cand["status"],
-                "video": cand["video_path"], **{k: m[k] for k in m if k in COLUMNS or k.startswith("phase_")},
+                "video": cand["video_path"],
+                **{k: m[k] for k in m if k in COLUMNS or k in checked or k.startswith("phase_")},
             })
         results.append(row)
         out_path.write_text(json.dumps(results, indent=2))
@@ -97,7 +99,8 @@ def _candidates(conn, rid: str) -> list[dict]:
 
 def _print(row: dict) -> None:
     print("spec:", ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in row["success_spec"] or []))
-    cols = [c for c in COLUMNS if any(c in cand for cand in row["candidates"])]
+    checked = [c["metric"] for c in row["success_spec"] or [] if c["metric"] not in COLUMNS]
+    cols = [c for c in (*checked, *COLUMNS) if any(c in cand for cand in row["candidates"])]
     print("cand   score  check  " + "  ".join(f"{c[:14]:>14}" for c in cols))
     for cand in row["candidates"]:
         vals = "  ".join(f"{cand[c]:>14.3f}" if isinstance(cand.get(c), (int, float)) else f"{'-':>14}" for c in cols)
