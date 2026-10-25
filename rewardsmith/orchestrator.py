@@ -45,6 +45,7 @@ from .sim import progress as sim_progress
 from .sim import scene as scene_spec
 from .sim import checkpoints
 from .sim.base import RunResult, Simulator, Stopped
+from .agents.scener import FEASIBILITY
 from .sim.scene import SceneError, SceneSpec
 
 log = logging.getLogger("rewardsmith.worker")
@@ -81,6 +82,14 @@ class Paused(Exception):
 
 class Cancelled(Exception):
     """A cancel was requested and the run reached a checkpoint."""
+
+
+class Refused(Exception):
+    """The scene writer judged the request impossible for this robot; nothing was trained."""
+
+    def __init__(self, feasibility: dict[str, Any]):
+        super().__init__(feasibility.get("reason") or "refused")
+        self.feasibility = feasibility
 
 
 def _checkpoint(conn: sqlite3.Connection, rid: str, *, round_boundary: bool) -> None:
@@ -126,7 +135,13 @@ def run_request(
         db.log_event(conn, rid, "control", f"Resuming at round {start}")
         scene = scene_spec.parse(req["scene"]) if req.get("scene") is not None else scene_spec.EMPTY
     else:
-        scene = _make_scene(conn, req, scener, sim)
+        try:
+            scene = _make_scene(conn, req, scener, sim)
+        except Refused:  # nothing will train: the processes warm_up started would outlive the run
+            close_pool = getattr(sim, "close_warm_pool", None)
+            if close_pool:
+                close_pool()
+            raise
     plan = getattr(sim, "plan_request", None)
     if plan:  # per-request steps and stock terms (sim/budget.py); describe() names the stock terms
         message = plan(text, scene)
@@ -522,6 +537,9 @@ def _make_scene(
 
     try:
         spec = scener.make(text)
+        if FEASIBILITY not in spec and hasattr(scener, "judge"):  # a scene writer that judges separately
+            spec = {**spec, FEASIBILITY: scener.judge(text)}
+        _judge_feasibility(conn, rid, spec)
         for attempt in range(SCENE_RETRIES + 1):
             try:
                 scene = scene_spec.parse(spec)
@@ -536,6 +554,9 @@ def _make_scene(
                     scene = scene_spec.EMPTY
                     break
                 spec = scener.fix(text, spec, str(exc))
+                spec.pop(FEASIBILITY, None)  # judged once, on the first answer
+    except Refused:
+        raise
     except Exception as exc:  # the scene writer's Claude call failed: don't lose the request
         log.exception("scene writer failed for %s", rid)
         db.log_event(conn, rid, "scene", f"Could not write the scene ({_describe(exc)}); using the plain flat floor")
@@ -543,6 +564,21 @@ def _make_scene(
     db.set_request(conn, rid, scene=scene.to_dict())
     db.log_event(conn, rid, "scene", scene.summary())
     return scene
+
+
+def _judge_feasibility(conn: sqlite3.Connection, rid: str, spec: dict[str, Any]) -> None:
+    """Store the scene writer's verdict. A refusal ends the request here; an approximation
+    is announced so the user knows what was simplified."""
+    verdict = spec.pop(FEASIBILITY, None)
+    if not isinstance(verdict, dict) or verdict.get("verdict") not in ("doable", "approximate", "refuse"):
+        return
+    db.set_request(conn, rid, feasibility=verdict)
+    if verdict["verdict"] == "refuse":
+        db.log_event(conn, rid, "refusal", f"Can't train this: {verdict.get('reason', '')}"
+                     + (f" Try instead: {verdict['suggestion']}" if verdict.get("suggestion") else ""))
+        raise Refused(verdict)
+    if verdict["verdict"] == "approximate":
+        db.log_event(conn, rid, "approximate", f"Simplified: {verdict.get('simplification') or verdict.get('reason', '')}")
 
 
 def _scene_gate(sim: Simulator | None, scene: SceneSpec) -> str | None:
@@ -1123,6 +1159,9 @@ def main() -> None:
         except Cancelled:
             log.info("request %s cancelled", req["id"])
             db.finish_cancelled(conn, req["id"])
+        except Refused as exc:
+            log.info("request %s refused: %s", req["id"], exc)
+            db.set_request(conn, req["id"], status="refused", control=None)
         except Exception as exc:
             log.exception("request %s failed", req["id"])
             db.fail_request(conn, req["id"], _describe(exc))

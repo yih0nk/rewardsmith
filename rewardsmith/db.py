@@ -19,7 +19,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
     id          TEXT PRIMARY KEY,
     text        TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | paused | done | failed | cancelled
+    status      TEXT NOT NULL DEFAULT 'queued',  -- queued | running | paused | done | failed | cancelled | refused
     best_score  REAL,
     best_candidate_id INTEGER,
     created_at  REAL NOT NULL,
@@ -107,7 +107,9 @@ ADDED_COLUMNS = {
                  "mode": "TEXT",  # instant | effort (modes.py); NULL = effort, what every run was before modes
                  "model": "TEXT",  # writer/editor/critic model; NULL = the mode's default
                  "target_candidate_id": "INTEGER",  # a follow-up's candidate to refine; NULL = the best, when it starts
-                 "scene_changed": "INTEGER"},  # 1 when a follow-up's note changed the scene (it trains from scratch)
+                 "scene_changed": "INTEGER",  # 1 when a follow-up's note changed the scene (it trains from scratch)
+                 # JSON {verdict: doable | approximate | refuse, reason, simplification, suggestion} from the scene writer
+                 "feasibility": "TEXT"},
     "candidates": {
         "flagged_at": "REAL",
         "flag_note": "TEXT",
@@ -119,7 +121,7 @@ ADDED_COLUMNS = {
     # Which round and candidate (0-based idx) an event is about, when it is about one (coach events).
     "events": {"round_n": "INTEGER", "candidate": "INTEGER"},
 }
-JSON_COLUMNS = ("scene", "success_spec", "check_result")  # metrics is decoded in _row
+JSON_COLUMNS = ("scene", "success_spec", "check_result", "feasibility")  # metrics is decoded in _row
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -330,8 +332,9 @@ def claim_next_request(conn: sqlite3.Connection) -> dict[str, Any] | None:
 
 
 def set_request(conn: sqlite3.Connection, rid: str, **fields: Any) -> None:
-    if fields.get("scene") is not None:
-        fields["scene"] = json.dumps(fields["scene"])
+    for key in ("scene", "feasibility"):
+        if fields.get(key) is not None:
+            fields[key] = json.dumps(fields[key])
     _update(conn, "requests", "id", rid, fields)
 
 
