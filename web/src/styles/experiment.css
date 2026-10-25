@@ -322,6 +322,12 @@
 .critique-full li + li {
   margin-top: 4px;
 }
+.critique-heading {
+  margin-top: var(--dp-spacing-row-compact);
+  font-size: var(--dp-typography-body);
+  font-weight: 500;
+  color: var(--dp-color-emphasis);
+}
 .critique-full strong {
   color: var(--dp-color-emphasis);
 }

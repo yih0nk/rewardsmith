@@ -3,12 +3,16 @@ import { metricInfo } from "../explain";
 
 // Claude's notes on a video: a short lead, then the full text, formatted.
 //
-// The critic writes plain text: the 2-3 numbers its score rests on, what the frames
-// show, then what to change, often as "- " or "1. " lists. apply_limits may put
-// "Capped at 3: the robot fell." and "Reward hacking suspected." in front.
+// The critic writes plain text or light Markdown: the 2-3 numbers its score rests on,
+// what the frames show, then what to change, often under **Heading** lines and as
+// "- " or "1. " lists. apply_limits may put "Capped at 3: the robot fell." and
+// "Reward hacking suspected." in front.
 
 export type CritiqueBlock =
-  { kind: "p"; text: string } | { kind: "ul" | "ol"; items: string[] };
+  | { kind: "p"; text: string }
+  | { kind: "h"; text: string }
+  | { kind: "ul"; items: string[] }
+  | { kind: "ol"; items: string[] };
 
 export interface ParsedCritique {
   flags: string[];
@@ -25,6 +29,9 @@ const FLAGS = [
 ];
 const BULLET = /^\s*[-•*]\s+/;
 const NUMBERED = /^\s*\d+[.)]\s+/;
+// A line that is only a heading: "**What the frames show**" or "## Reward terms".
+const HEADING = /^\s*(?:#{1,4}\s+(.+?)|\*\*([^*]+?)\*\*:?)\s*$/;
+const plain = (text: string) => text.replace(/\*\*(.+?)\*\*/g, "$1");
 const LEAD_MAX = 320;
 const NUMBERS = /^(?:key numbers|(?:the )?score rests on|numbers)\b/i;
 // "What the frames show: the robot walks…" → "The robot walks…"
@@ -73,8 +80,13 @@ export function parseCritique(raw: string): ParsedCritique {
       cur.list = null;
     };
     for (const line of chunk.split("\n")) {
+      const heading = line.match(HEADING);
       const kind = BULLET.test(line) ? "ul" : NUMBERED.test(line) ? "ol" : null;
-      if (kind) {
+      if (heading) {
+        flushPara();
+        flushList();
+        blocks.push({ kind: "h", text: (heading[1] ?? heading[2]).trim() });
+      } else if (kind) {
         flushPara();
         if (cur.list?.kind !== kind) {
           flushList();
@@ -99,7 +111,7 @@ export function parseCritique(raw: string): ParsedCritique {
 
   // The lead: two sentences of prose, skipping list items and the numbers the critic
   // is told to open with ("Key numbers: …"), which the score row already sums up.
-  const paras = blocks.filter((b) => b.kind === "p").map((b) => b.text);
+  const paras = blocks.flatMap((b) => (b.kind === "p" ? [b.text] : []));
   // A sentence that introduces a list ("…should change:") leads nowhere on its own.
   const usable = (list: string[]) => list.filter((x) => !x.endsWith(":"));
   const first = paras.length ? sentences(paras[0]) : [];
@@ -112,6 +124,13 @@ export function parseCritique(raw: string): ParsedCritique {
         : [...usable(first.slice(1)), ...rest]
       : [...usable(first), ...rest]
   ).map(withoutLabel);
+  // Little prose outside the lists (Markdown critiques): lead with the first bullet
+  // list, which is what the frames show; numbered lists are the fixes.
+  if (prose.length < 2) {
+    const shown = blocks.find((b) => b.kind === "ul");
+    if (shown && shown.kind === "ul") prose.push(...shown.items);
+  }
+  prose.splice(0, prose.length, ...prose.map(plain));
   let lead = prose.slice(0, 2).join(" ");
   if (lead.length > LEAD_MAX && prose.length) lead = prose[0];
   if (lead.length > LEAD_MAX)
@@ -124,9 +143,10 @@ export function parseCritique(raw: string): ParsedCritique {
   return { flags, lead, blocks, words, more };
 }
 
-// Metric and reward-term names (term_bipedal_hold, base_height) as code, with the
-// plain name on hover when the board knows it. A short "Key numbers:" opener is bold.
-const NAME = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g;
+// Metric and reward-term names (term_bipedal_hold, base_height) and `backticks` as
+// code, with the plain name on hover when the board knows it; **bold** as bold. A
+// short "Key numbers:" opener is bold too.
+const TOKEN = /\*\*(.+?)\*\*|`([^`]+)`|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g;
 
 export function inline(text: string, opener = false): ReactNode {
   const out: ReactNode[] = [];
@@ -137,16 +157,22 @@ export function inline(text: string, opener = false): ReactNode {
     rest = rest.slice(head[0].length);
   }
   let last = 0;
-  for (const m of rest.matchAll(NAME)) {
+  for (const m of rest.matchAll(TOKEN)) {
     out.push(rest.slice(last, m.index));
-    const info = metricInfo(m[0]);
-    const plain =
-      info.label !== m[0].replaceAll("_", " ") ? info.label : undefined;
-    out.push(
-      <code key={`${m.index}-${m[0]}`} title={plain}>
-        {m[0]}
-      </code>,
-    );
+    const key = `${m.index}-${m[0]}`;
+    if (m[1] != null) {
+      out.push(<strong key={key}>{inline(m[1])}</strong>);
+    } else {
+      const name = m[2] ?? m[0];
+      const info = metricInfo(name);
+      const hint =
+        info.label !== name.replaceAll("_", " ") ? info.label : undefined;
+      out.push(
+        <code key={key} title={hint}>
+          {name}
+        </code>,
+      );
+    }
     last = m.index! + m[0].length;
   }
   out.push(rest.slice(last));
@@ -173,7 +199,11 @@ export default function Critique({ text }: { text: string }) {
             <span className="num">{parsed.words} words</span>
           </summary>
           {parsed.blocks.map((block, i) =>
-            block.kind === "p" ? (
+            block.kind === "h" ? (
+              <h4 key={i} className="critique-heading">
+                {inline(block.text)}
+              </h4>
+            ) : block.kind === "p" ? (
               <p key={i}>{inline(block.text, true)}</p>
             ) : block.kind === "ul" ? (
               <ul key={i}>
