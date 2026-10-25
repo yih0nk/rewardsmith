@@ -20,7 +20,7 @@ names them check:<key>, e.g. {"metric": "check:climbed", "op": ">=", "value": 0.
 
 gate() guards the source the way the reward gate guards rewards, plus an AST check: only
 jax, jnp and math, no imports, no dunder access, no I/O builtins. It runs the check jitted
-on synthetic episodes (a robot standing still where it starts, and one drifting with noise)
+on synthetic episodes (a robot standing still where it starts, and one drifting)
 and reports, for each key, whether it holds for the standing robot, so a check that passes
 without the task (trivially true) can be caught before any training.
 """
@@ -126,18 +126,17 @@ def _importer(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A
 
 def synthetic_traj(scene: SceneSpec, steps: int = GATE_STEPS, drift: bool = False, seed: int = 0) -> dict[str, Any]:
     """An episode of the robot standing still where it starts (objects 1 m ahead, as in
-    go1.dummy_state), or with drift=True one where every value wanders with noise."""
-    import jax
+    go1.dummy_state), or with drift=True one where every value wanders."""
     import jax.numpy as jnp
 
     from .go1 import dummy_state
 
     state = dummy_state(scene)
     traj = {k: jnp.broadcast_to(v, (steps, *jnp.shape(v))) for k, v in state.items()}
-    if drift:
-        keys = jax.random.split(jax.random.PRNGKey(seed), len(traj))
-        traj = {k: v + 0.3 * jnp.cumsum(jax.random.normal(key, v.shape), axis=0) / jnp.sqrt(steps)
-                for (k, v), key in zip(traj.items(), keys)}
+    if drift:  # deterministic wander, so the gate compiles no random-number kernels
+        t = jnp.arange(steps, dtype=jnp.float32)[:, None]
+        traj = {k: v + 0.3 * jnp.sin(t * (0.05 + 0.01 * i) + seed + i).reshape((steps,) + (1,) * (v.ndim - 1))
+                for i, (k, v) in enumerate(traj.items())}
     traj["t"] = jnp.arange(steps, dtype=jnp.float32) * CTRL_DT
     traj["time"] = traj["t"]
     traj["valid"] = jnp.ones(steps, dtype=jnp.float32)
