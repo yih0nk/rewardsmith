@@ -85,6 +85,8 @@ def evaluate(
             target_obj.reach_radius, env.dt,
         ))
         metrics["scene_fell"] = metrics["target_fell"]
+        task_start, task_trace = scene_eval.batch_task_samples(env, reset, outs, target)
+        metrics.update(scene_eval.summarize_task(env, task_start, task_trace, outs["done"][target].T))
     if needs_outcomes:
         initial = jax.tree_util.tree_map(lambda value: value[target], reset["scene_outcome"])
         samples = jax.tree_util.tree_map(lambda value: np.swapaxes(value[target], 0, 1), outs["scene_outcome"])

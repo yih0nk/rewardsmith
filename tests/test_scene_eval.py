@@ -134,3 +134,105 @@ def test_movable_object_rollout_does_not_credit_an_idle_policy(tmp_path):
                for episode in evidence["episodes"] for metric in metrics)
     batched = _shared_evaluation(env, tmp_path, metrics)
     assert all(batched[metric] == 0 for metric in metrics)
+
+
+# --- task metrics: where the object ended up, and which phase each episode got stuck at ---
+
+def _task(start_dist, dists, done, **kw):
+    """summarize_task_arrays with base-to-target distances; the base stands still."""
+    import numpy as np
+
+    dists = np.asarray(dists, dtype=float)
+    trace = {"dist": dists, "speed": np.zeros_like(dists), "obj_xy": np.zeros(dists.shape + (2,))}
+    trace.update(kw.pop("trace", {}))
+    start = {"dist": np.asarray(start_dist, dtype=float), "obj_xy": np.zeros((dists.shape[1], 2))}
+    start.update(kw.pop("start", {}))
+    return scene_eval.summarize_task_arrays(start, trace, np.asarray(done), **{"dt": 0.02, **kw})
+
+
+def test_reach_phases_ignore_sliding_after_the_first_fall():
+    import numpy as np
+
+    dists = np.array([[3.0, 3.0], [2.0, 0.1], [0.1, 3.0], [0.0, 4.0]])
+    done = np.array([[0, 0], [1, 0], [0, 0], [0, 0]])
+    result = _task([3.0, 3.0], dists, done, reach_radius=0.5)
+    assert result["phase_no_approach"] == 0.5 and result["phase_left"] == 0.5 and result["phase_arrived"] == 0.0
+
+
+def test_arriving_and_stopping_counts_as_arrived():
+    import numpy as np
+
+    dists = np.array([[2.0], [1.0], [0.3], [0.3]])
+    speed = np.array([[1.0], [1.0], [0.0], [0.0]])
+    result = _task([2.5], dists, np.zeros((4, 1)), reach_radius=0.5, trace={"speed": speed})
+    assert result["target_final_in"] == 1.0 and result["phase_arrived"] == 1.0
+    assert result["target_near_frac"] == 0.5
+    assert result["final_speed"] == pytest.approx(0.5)  # 1 s tail is 50 steps: all 4 here
+
+
+def _goal_episode(goal_dists, obj_moved, base_dists, goal_start):
+    """One push episode: object-to-goal distance per step, the object's final displacement
+    along x, base-to-object distance per step, and the object-to-goal distance at the start."""
+    import numpy as np
+
+    obj = np.zeros((len(goal_dists), 2))
+    obj[-1, 0] = obj_moved
+    return np.asarray(goal_dists, float), obj, np.asarray(base_dists, float), goal_start
+
+
+def test_push_task_phases_say_where_each_episode_got_stuck():
+    import numpy as np
+
+    far, near = [1.5, 1.5, 1.5], [1.5, 0.4, 0.4]
+    episodes = (
+        _goal_episode([2.0, 2.0, 2.0], 0.0, far, 2.0),   # never went to the ball
+        _goal_episode([2.0, 2.0, 2.0], 0.05, near, 2.0),  # got there, ball barely moved
+        _goal_episode([2.0, 2.4, 2.6], 0.6, near, 2.0),   # pushed it away from the goal
+        _goal_episode([2.0, 1.5, 1.2], 0.8, near, 2.0),   # pushed toward, stopped short
+        _goal_episode([2.0, 0.3, 0.9], 1.5, near, 2.0),   # in the goal, then out again
+        _goal_episode([2.0, 1.0, 0.2], 1.8, near, 2.0),   # delivered
+    )
+    g, obj, base = (np.stack([e[i] for e in episodes], axis=1) for i in range(3))
+    result = _task(np.full(6, 1.5), base, np.zeros_like(base), reach_radius=0.5, goal_radius=0.5, movable=True,
+                   trace={"goal_dist": g, "obj_xy": obj}, start={"goal_dist": np.array([e[3] for e in episodes])})
+    for p in scene_eval.GOAL_PHASES:
+        assert result[f"phase_{p}"] == pytest.approx(1 / 6), p
+    assert result["object_goal_reached"] == pytest.approx(2 / 6)
+    assert result["object_in_goal_final"] == pytest.approx(1 / 6)
+    assert result["object_goal_start_dist"] == 2.0
+    assert result["object_goal_min_dist"] == pytest.approx((2 + 2 + 2 + 1.2 + 0.3 + 0.2) / 6)
+    assert result["object_goal_progress"] == pytest.approx(((0 + 0 - 0.6 + 0.8 + 1.1 + 1.8) / 2) / 6)
+    assert result["object_moved"] == pytest.approx((0 + 0.05 + 0.6 + 0.8 + 1.5 + 1.8) / 6)
+
+
+PUSH_SCENE = {
+    "objects": [
+        {"name": "ball", "kind": "ball", "color": "orange", "size": [0.15], "distance": [1.0, 1.5],
+         "bearing": [-20, 20], "movable": True, "mass": 0.4},
+        {"name": "pad", "kind": "zone", "color": "green", "size": [0.5], "distance": [2.5, 3.0],
+         "bearing": [-20, 20]},
+    ],
+    "target": "ball",
+}
+
+
+def test_push_scene_reports_object_metrics_on_both_paths(tmp_path):
+    spec = scene.parse(PUSH_SCENE)
+    assert spec.goal == "pad"
+    env = go1.make_env((ROOT / "rewards" / "push_to_zone.py").read_text(), scene=spec)
+    m = scene_eval.target_metrics(env, standing_policy, None, num_envs=4, steps=20)
+    assert m["object_moved"] < 0.05
+    assert m["object_in_goal_final"] == 0.0 and m["phase_no_approach"] == 1.0
+    assert 0.5 < m["object_goal_start_dist"] < 4.5
+
+    from rewardsmith.sim import evaluation, render
+    from rewardsmith.sim.train import TrainResult
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(evaluation, "TARGET_ENVS", 4)
+        patch.setattr(render, "render_rollout", lambda env, qpos, path, **kw: (path / "rollout.mp4", []))
+        _, _, batched, _ = evaluation.evaluate(
+            env, TrainResult(make_inference_fn=standing_policy, params=None), tmp_path, robust=False, steps=20)
+    assert batched["object_moved"] < 0.05 and batched["phase_no_approach"] == 1.0
+    assert batched["object_goal_start_dist"] == pytest.approx(m["object_goal_start_dist"], abs=1.5)
+    assert set(m) - {"scene_fell"} <= set(batched) | {"scene_fell"}
