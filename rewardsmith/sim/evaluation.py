@@ -44,6 +44,9 @@ def evaluate(
 ) -> tuple[Path, list[bytes], dict[str, float], dict[str, float]]:
     """Return (mp4 path, critic PNGs, rollout + target metrics + eval_s, robust_* metrics or {}).
     body names the body env was built from (its randomizer and camera)."""
+    own = getattr(env, "evaluate_rollouts", None)
+    if own is not None:  # a body with its own task metrics (the arm, sim/panda.py)
+        return own(result, out_dir, steps=steps, body=body)
     start = time.perf_counter()
     target_obj = env.scene.target_object
     selected = outcomes.requested(success_spec, env.scene)

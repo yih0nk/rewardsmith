@@ -111,7 +111,7 @@ class PlaygroundSimulator:
         # Warm start: a checkpoint path, "" for random weights (resolved here so children get the same).
         self._auto_walker, self._mode_arg = walker is None, mode
         self.walker = default_walker(self.body) if walker is None else walker
-        self.mode = (mode or os.environ.get("REWARDSMITH_MODE") or "steer") if self.walker else "off"
+        self.mode = (mode or os.environ.get("REWARDSMITH_MODE") or "steer") if self._can_steer() else "off"
         if self.mode not in MODES:
             raise ValueError(f"unknown mode {self.mode!r}: use one of {MODES}")
         self.stock_profile = stock_profile or os.environ.get("REWARDSMITH_STOCK") or "gait"
@@ -292,7 +292,13 @@ class PlaygroundSimulator:
         self._body = get_body(name or os.environ.get("REWARDSMITH_BODY") or DEFAULT_BODY).name
         if self._auto_walker:
             self.walker = default_walker(self.body)
-        self.mode = (self._mode_arg or os.environ.get("REWARDSMITH_MODE") or "steer") if self.walker else "off"
+        self.mode = (self._mode_arg or os.environ.get("REWARDSMITH_MODE") or "steer") if self._can_steer() else "off"
+
+    def _can_steer(self) -> bool:
+        """Steer mode needs the body's skill: the walker's checkpoint, or none for a skill that
+        needs no training (the arm's end-effector IK)."""
+        b = get_body(self.body)
+        return bool(self.walker) or (b.skill is not None and b.skill_checkpoint is None)
 
     def warm_up(self, n: int) -> None:
         """Start n training processes now, so their imports overlap the writer's Claude call."""
