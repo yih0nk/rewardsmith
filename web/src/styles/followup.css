@@ -2,46 +2,84 @@
    and the line under a turn's message that says how it ran. */
 
 .message-options {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--dp-spacing-inset) var(--dp-spacing-column-gap);
 }
-.mode-toggle {
+/* The Effort switch: a pill track with a knob; lime when on. */
+.toggle {
   display: inline-flex;
-}
-.mode-option {
+  align-items: center;
+  gap: var(--dp-spacing-cell);
   min-height: 36px;
-  padding: 0 var(--dp-spacing-gutter);
-  border: var(--dp-border-hairline) solid var(--dp-color-ink-muted);
-  background: var(--dp-color-ground);
-  color: var(--dp-color-ink);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dp-color-text);
 }
-.mode-option + .mode-option {
-  border-left: 0;
+.toggle-track {
+  position: relative;
+  flex-shrink: 0;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--dp-color-rule);
+  transition: background 0.15s;
 }
-.mode-option.on {
+.toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--dp-color-text);
+  transition: transform 0.15s;
+}
+.toggle[aria-checked="true"] .toggle-track {
   background: var(--dp-color-ink);
-  border-color: var(--dp-color-ink);
-  color: var(--dp-color-ground);
 }
-.mode-option:not(.on):hover {
-  color: var(--dp-color-emphasis);
+.toggle[aria-checked="true"] .toggle-track::after {
+  transform: translateX(16px);
+  background: var(--dp-color-ground);
+}
+.toggle:focus-visible {
+  outline: none;
+}
+.toggle:focus-visible .toggle-track {
+  outline: 2px solid var(--dp-color-emphasis);
+  outline-offset: 2px;
 }
 .model-pick {
   display: inline-flex;
   align-items: center;
   gap: var(--dp-spacing-cell);
+  margin-left: auto;
 }
+/* Plain text with a caret, not a boxed field. */
 .model-pick select {
+  appearance: none;
   min-height: 36px;
-  padding: 0 var(--dp-spacing-cell);
-  border: var(--dp-border-hairline) solid var(--dp-color-ink-muted);
-  background: var(--dp-color-ground);
-  color: var(--dp-color-emphasis);
+  padding: 0 18px 0 0;
+  border: 0;
+  background-color: transparent;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dp-color-ink-muted) 50%),
+    linear-gradient(135deg, var(--dp-color-ink-muted) 50%, transparent 50%);
+  background-position: right 5px center, right 0 center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--dp-color-text);
+  font-family: var(--dp-typography-readout);
+  cursor: pointer;
 }
-.model-pick select:focus {
-  border-color: var(--dp-color-ink);
+.model-pick select:focus-visible {
+  outline: 2px solid var(--dp-color-emphasis);
+}
+.model-pick option {
+  background: var(--dp-color-surface);
 }
 .mode-hint {
   font-size: var(--dp-typography-label);
@@ -108,12 +146,7 @@
   max-width: 18ch;
 }
 .body-tag {
-  padding: 0 var(--dp-spacing-cell);
-  border: var(--dp-border-hairline) solid var(--dp-color-rule);
-  font-size: var(--dp-typography-label);
-  line-height: var(--dp-typography-list-leading);
-  color: var(--dp-color-ink-muted);
-  white-space: nowrap;
+  white-space: nowrap; /* the rest is .tag (experiment.css) */
 }
 .conversation .body-tag {
   margin-left: auto;

@@ -14,6 +14,7 @@ import ConversationView from "./components/ConversationView";
 import HallOfFame from "./components/HallOfFame";
 import MessageOptions from "./components/MessageOptions";
 import NewTask from "./components/NewTask";
+import Showcase, { showcasePicks } from "./components/Showcase";
 import { FOLLOWUP_OPTIONS, TASK_OPTIONS, bodiesOf, modelsOf } from "./modes";
 import { candidateName } from "./stages";
 import { ReplyTarget, conversationsFromRequests, runAnchor } from "./thread";
@@ -158,12 +159,22 @@ export default function App() {
   const hall = route === "hall";
   const current = conversations.find((c) => c.id === route) ?? null;
 
-  // A new task starts with an empty follow-up box aimed at its best candidate.
+  // A new task starts with an empty follow-up box aimed at its best candidate. The
+  // follow-up is Instant, on the model the task's latest turn used, so the box never
+  // names a different model than the run above it.
+  const lastModel = current
+    ? runs
+        .filter((r) => (r.conversation_id ?? r.id) === current.id)
+        .sort((a, b) => (b.turn ?? 1) - (a.turn ?? 1))[0]?.model
+    : null;
   useEffect(() => {
     setFollowText("");
     setTarget(null);
     setFollowError("");
-    setFollowOptions(FOLLOWUP_OPTIONS);
+    setFollowOptions(
+      lastModel ? { ...FOLLOWUP_OPTIONS, model: lastModel, picked: true } : FOLLOWUP_OPTIONS,
+    );
+    // Only when the task changes: a model picked for this follow-up stays picked.
   }, [current?.id]);
 
   async function followUp(note: string) {
@@ -257,7 +268,8 @@ export default function App() {
       onSubmit={followUp}
       examples={false}
       allowEmpty
-      placeholder="Get behind the ball before pushing… (empty = keep going)"
+      compact={!target}
+      placeholder="Follow up, e.g. “go faster” (empty = keep going)"
       submitLabel={followText.trim() ? "Send" : "Keep going"}
       context={
         <p className="refine-target">
@@ -379,6 +391,9 @@ export default function App() {
               )}
               <NewTask
                 busyWith={running}
+                showcase={
+                  <Showcase picks={showcasePicks(conversations, runs)} onOpen={go} />
+                }
                 composer={
                   <Composer
                     label="What should the robot learn?"

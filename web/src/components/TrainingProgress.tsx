@@ -152,10 +152,12 @@ export default function TrainingProgress({
   const live = liveState(c);
   if (!live) return null;
   const p = c.progress;
+  // Training is over (recording, judging): a full bar beside it would look stuck.
+  const trained = large && live.fraction === 1;
   return (
     <div className={`training-progress ${large ? "large" : ""}`}>
       {large && <strong className="training-stage">{live.label}</strong>}
-      {live.fraction != null && (
+      {live.fraction != null && !trained && (
         <div
           className="meter"
           role="progressbar"
@@ -172,8 +174,14 @@ export default function TrainingProgress({
         <span className="subtle">
           {/* No seconds here: wall_s stands still while JAX compiles. The run
               status above has the ticking timer. */}
-          {Math.min(p.steps, p.total_steps).toLocaleString("en-US")} /{" "}
-          {p.total_steps.toLocaleString("en-US")} training steps
+          {trained ? (
+            <>Trained for {formatSteps(p.total_steps)} steps</>
+          ) : (
+            <>
+              {Math.min(p.steps, p.total_steps).toLocaleString("en-US")} /{" "}
+              {p.total_steps.toLocaleString("en-US")} training steps
+            </>
+          )}
         </span>
       )}
       {!large && <Sparkline curve={p?.curve} width={90} height={28} />}

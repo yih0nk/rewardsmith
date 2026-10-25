@@ -6,12 +6,12 @@
   position: relative;
   display: grid;
   /* Name and score, the score bar, then the learning curve, which needs ~200 px. */
-  grid-template-columns: minmax(0, 40ch) 12ch minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 12ch auto;
   align-items: center;
   column-gap: var(--dp-spacing-column-gap);
   padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
   border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 /* The button covers the row, so the whole row selects it. */
 .candidate-select {
@@ -99,6 +99,12 @@
 .candidate-option.active .winner-tag {
   color: var(--dp-color-ground) !important;
 }
+/* Its Refine this stays a black button on the green row, not black on black. */
+.candidate-option.active .refine {
+  border-color: var(--dp-color-ground);
+  background: var(--dp-color-ground);
+  color: var(--dp-color-ink) !important;
+}
 
 /* ---- Live progress, drawn in characters from the real fraction ---- */
 .training-progress {
@@ -109,7 +115,7 @@
 }
 .meter {
   white-space: pre;
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 .training-progress.large {
   display: grid;
@@ -155,7 +161,7 @@
 }
 .sparkline-value strong {
   font-weight: 500;
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 
 /* What the candidate tries, in two lines; the full text is in its in-depth panel. */
@@ -179,4 +185,30 @@
 }
 .candidate-option.failed .candidate-state {
   color: var(--dp-color-emphasis);
+}
+
+/* Export policy: a square outlined control, filled on the best result. It sits above the
+   card's select button, which stretches over the whole row. */
+.export-policy {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  width: max-content;
+  text-decoration: none;
+}
+.candidate-option > .export-policy {
+  grid-column: 2 / -1;
+}
+.candidate-option.active .export-policy {
+  border-color: var(--dp-color-ground);
+}
+.export-policy.primary {
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+}
+.export-policy.primary:hover {
+  background: transparent;
+  color: var(--dp-color-ink);
 }

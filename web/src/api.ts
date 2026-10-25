@@ -64,6 +64,8 @@ export interface Candidate {
   robustness?: Record<string, { passed: number; total: number }> | null;
   // Server seconds when the candidate's draft was stored (before its code check).
   created_at?: number;
+  // Its policy is on disk, so /api/candidates/{id}/export can zip it. Absent on hall of fame entries.
+  exportable?: boolean;
 }
 
 export interface HallEntry extends Candidate {

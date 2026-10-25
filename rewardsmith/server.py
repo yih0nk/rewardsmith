@@ -6,14 +6,16 @@ On Runpod, expose port 8000; the pod's proxy URL is the board link judges open.
 from collections.abc import Iterator
 from pathlib import Path
 import sqlite3
+import tempfile
 import time
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import config, db, modes
+from . import config, db, export, modes
 from .sim import bodies, progress, scene
 
 config.load_dotenv()  # here, not in main(): the console script imports this module first
@@ -138,6 +140,7 @@ def get_request(rid: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
         for cand in rnd["candidates"]:
             out_dir = progress.candidate_dir(settings.artifacts_dir, rid, rnd["n"], cand["idx"])
             cand["progress"] = progress.read_progress(out_dir)
+            cand["exportable"] = export.policy_file(out_dir) is not None  # GET /api/candidates/{id}/export
             cand["robustness"] = robustness_summary(cand.get("metrics"))
     return req
 
@@ -173,6 +176,31 @@ def unflag_candidate(cid: int, conn: sqlite3.Connection = Depends(get_conn)) -> 
     if not db.unflag_candidate(conn, cid):
         raise HTTPException(status_code=404, detail="No candidate with that id")
     return {"ok": True}
+
+
+@app.get("/api/candidates/{cid}/export")
+def export_candidate(cid: int, conn: sqlite3.Connection = Depends(get_conn)) -> StreamingResponse:
+    """A zip of the candidate's policy, task and a script that runs it (see export.py)."""
+    cand = db.get_candidate(conn, cid)
+    if cand is None:
+        raise HTTPException(status_code=404, detail="No candidate with that id")
+    buf = tempfile.SpooledTemporaryFile(max_size=32 << 20)  # a bundle is ~5 MB, most of it the video
+    try:
+        name = export.write_zip(buf, cand, db.get_request(conn, cand["request_id"]), settings.artifacts_dir)
+    except export.NotExportable as exc:
+        buf.close()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    size = buf.tell()
+    buf.seek(0)
+
+    def chunks() -> Iterator[bytes]:
+        with buf:
+            while chunk := buf.read(1 << 20):
+                yield chunk
+
+    return StreamingResponse(chunks(), media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}.zip"', "Content-Length": str(size),
+    })
 
 
 @app.get("/api/hall-of-fame")

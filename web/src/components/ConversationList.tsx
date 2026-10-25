@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Health } from "../api";
 import { bodyLabel } from "../modes";
-import { Conversation } from "../thread";
+import { Conversation, titleCase } from "../thread";
 
 const STATUS: Record<Conversation["status"], string> = {
   queued: "queued",
@@ -31,6 +31,13 @@ export default function ConversationList({
   useEffect(() => {
     current.current?.scrollIntoView?.({ block: "nearest" });
   }, [selected]);
+  // Cancelled and failed tasks fold away (the open one always shows), so the list
+  // leads with robots that trained.
+  const [showAll, setShowAll] = useState(false);
+  const stopped = (c: Conversation) =>
+    (c.status === "cancelled" || c.status === "failed") && c.id !== selected;
+  const hidden = conversations.filter(stopped).length;
+  const listed = showAll ? conversations : conversations.filter((c) => !stopped(c));
   return (
     <nav aria-label="Tasks" className="conversations">
       {conversations.length === 0 && (
@@ -41,9 +48,14 @@ export default function ConversationList({
         </p>
       )}
       <ul>
-        {conversations.map((c) => {
-          const status =
-            c.status === "done" && c.bestScore == null
+        {listed.map((c) => {
+          // A follow-up still working on a finished task: say it is the follow-up, not the task.
+          const followUp =
+            c.turns.length > 1 &&
+            (c.status === "running" || c.status === "queued");
+          const status = followUp
+            ? `follow-up ${STATUS[c.status]}`
+            : c.status === "done" && c.bestScore == null
               ? "no result"
               : STATUS[c.status];
           return (
@@ -54,14 +66,15 @@ export default function ConversationList({
                 aria-current={c.id === selected ? "page" : undefined}
                 onClick={() => onSelect(c.id)}
               >
-                <span className="conversation-title">{c.title}</span>
+                <span className="conversation-title">{titleCase(c.title)}</span>
                 <span className="conversation-meta">
                   <span className={`run-status ${c.status}`}>{status}</span>
-                  <span className="body-tag">{bodyLabel(c.body, health)}</span>
+                  <span className="tag body-tag">{bodyLabel(c.body, health)}</span>
                   <span className="num">
                     {c.bestScore != null ? (
                       <>
-                        best {c.bestScore.toFixed(1)}
+                        <span className="sr-only">best </span>
+                        {c.bestScore.toFixed(1)}
                         <span aria-hidden="true">/10</span>
                         <span className="sr-only"> out of 10</span>
                       </>
@@ -73,6 +86,18 @@ export default function ConversationList({
           );
         })}
       </ul>
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="link show-stopped"
+          aria-expanded={showAll}
+          onClick={() => setShowAll((v) => !v)}
+        >
+          {showAll
+            ? "Hide cancelled and failed"
+            : `Show ${hidden} cancelled or failed`}
+        </button>
+      )}
     </nav>
   );
 }

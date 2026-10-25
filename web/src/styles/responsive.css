@@ -12,7 +12,8 @@
   .session > .error,
   .thread > .error,
   .main-pane > .error,
-  .composer-dock {
+  .composer-dock,
+  .showcase {
     margin-left: calc(var(--gutter-width) + var(--dp-spacing-gutter));
   }
   .round-best:empty {
@@ -60,6 +61,13 @@
   :root {
     --gutter-width: 2ch;
   }
+  .intro-title {
+    font-size: var(--dp-typography-display-narrow);
+  }
+  /* On a phone the visitor already has the board open: no QR code. */
+  .intro-qr {
+    display: none;
+  }
   .run-status-panel {
     padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
   }
@@ -92,17 +100,24 @@
   .session > .error,
   .thread > .error,
   .main-pane > .error,
-  .composer-dock {
+  .composer-dock,
+  .showcase {
     margin-left: calc(var(--gutter-width) + var(--dp-spacing-cell));
+  }
+  /* A new task on a phone: the composer sits in the page right after the pitch,
+     not pinned over half the screen, and the finished robots follow it. */
+  .composer-dock:not(.compact) {
+    position: static;
+    margin-top: var(--dp-spacing-row);
+  }
+  .thread > .showcase {
+    order: 1;
   }
   .cmd-title {
     line-height: 30px;
   }
   .composer-row .primary {
     flex: 1 1 100%;
-  }
-  .prompt {
-    display: none;
   }
   .stage-foot span:last-child {
     display: none;
