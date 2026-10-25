@@ -83,6 +83,15 @@ const METRICS: Record<string, MetricInfo> = {
     help: "1 = level, 0 = on its side",
   },
   fell: { label: "Fell over", format: yesNo },
+  abs_forward_velocity: {
+    label: "Speed forwards or backwards",
+    format: unit("m/s"),
+  },
+  abs_lateral_velocity: {
+    label: "Sideways speed, either way",
+    format: unit("m/s"),
+  },
+  abs_yaw_rate: { label: "Turning rate, either way", format: unit("rad/s") },
   episode_reward: {
     label: "Training reward",
     format: (v) => `${num(v)} pts`,
