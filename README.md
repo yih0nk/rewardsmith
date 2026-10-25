@@ -72,13 +72,18 @@ To try the reward writer alone with a real API key: `.venv/bin/python scripts/tr
 
 ## Run it on Runpod
 
-1. Start a GPU pod with a CUDA 12 image and expose HTTP port 8000.
-2. Clone the repo, then `bash scripts/runpod_setup.sh`. It should print `jax backend: gpu`.
-3. Build the board once: `cd web && npm install && npm run build`. The server serves `web/dist`.
-4. `export REWARDSMITH_FAKE_SIM=0 REWARDSMITH_FAKE_LLM=0 ANTHROPIC_API_KEY=...` (or put them in `.env`).
-   For demos, also set `REWARDSMITH_SUCCESS_SCORE=11` so every round runs instead of stopping at the first score of 8.
-5. Run `rewardsmith-server` and `rewardsmith-worker` (tmux keeps them alive).
-6. Open `https://<pod-id>-8000.proxy.runpod.net`.
+The fresh-pod runbook, step by step with timings: [docs/deploy.md](docs/deploy.md). In short, on an
+RTX 4090 pod with HTTP port 8000 exposed and the repo cloned under `/workspace`:
+
+```sh
+bash scripts/runpod_setup.sh      # prints `jax backend: gpu`
+bash scripts/fetch_walkers.sh     # pretrained Go1 + G1 walkers into /workspace/pretrained
+bash scripts/pod/build_web.sh     # Node + web/dist
+# .env: ANTHROPIC_API_KEY=...
+bash scripts/pod/start_live.sh    # server + worker, real sim and Claude
+```
+
+Then open `https://<pod-id>-8000.proxy.runpod.net`.
 
 ## Tests
 
