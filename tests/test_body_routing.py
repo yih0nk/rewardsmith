@@ -40,9 +40,10 @@ PANDA = FakeBody("panda", "Franka Panda", Capabilities(
 
 @pytest.fixture
 def registry(monkeypatch):
-    """Register fake bodies for one test: registry(G1, PANDA)."""
+    """The Go1 plus these fake bodies, for one test: registry(G1, PANDA). registry() is the Go1
+    alone, whatever else is registered for real."""
     def add(*extra):
-        monkeypatch.setattr(bodies, "BODIES", {**bodies.BODIES, **{b.name: b for b in extra}})
+        monkeypatch.setattr(bodies, "BODIES", {"go1": bodies.get_body("go1"), **{b.name: b for b in extra}})
         return bodies.BODIES
     return add
 
@@ -113,7 +114,8 @@ class Spy:
         return self._pick
 
 
-def test_go1_alone_routes_without_a_call_or_an_event(tmp_path):
+def test_go1_alone_routes_without_a_call_or_an_event(tmp_path, registry):
+    registry()
     conn = db.connect(tmp_path / "t.db")
     rid = db.create_request(conn, "pick up the cube")
     spy = Spy()
