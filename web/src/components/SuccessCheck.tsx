@@ -44,7 +44,7 @@ export default function SuccessCheck({ check }: { check: CheckResult }) {
         Success check: {verified ? (check.pass ? "passed" : "failed") : "unavailable"}
       </p>
       {check.error && <p className="subtle">{check.error}</p>}
-      {check.clauses.length > 0 && (
+      {check.clauses?.length > 0 && (
         <table className="check-criteria" aria-label="Success check criteria">
           <thead>
             <tr><th>Criterion</th><th>Measured</th><th>Required</th><th>Result</th></tr>
@@ -55,7 +55,10 @@ export default function SuccessCheck({ check }: { check: CheckResult }) {
                 <th scope="row">{label(clause.metric)}</th>
                 <td>{value(clause.metric, clause.actual)}</td>
                 <td>{clause.op} {value(clause.metric, clause.value)}</td>
-                <td>{verified ? (clause.pass ? "Pass" : "Fail") : "Unverified"}</td>
+                <td className={verified ? (clause.pass ? "pass" : "fail") : ""}>
+                  {verified && <span aria-hidden="true">{clause.pass ? "✓ " : "✕ "}</span>}
+                  {verified ? (clause.pass ? "Pass" : "Fail") : "Unverified"}
+                </td>
               </tr>
             ))}
           </tbody>

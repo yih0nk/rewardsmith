@@ -5,7 +5,6 @@ import {
   isListedMetric,
   metricInfo,
   successSentence,
-  describeClause,
 } from "../explain";
 import { candidateName, candidateState, isScored } from "../stages";
 import { QueuePlace, RenderReply, runAnchor } from "../thread";
