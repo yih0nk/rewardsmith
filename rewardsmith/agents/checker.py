@@ -378,7 +378,8 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
   and lift_held_s >= the seconds asked for when it must hold it.
 - Moving the block to a spot on the table (push, slide, place): placed >= 0.8 or at_target >= 0.8
   (placed when it must be let go), and final_target_dist <= 0.05.
-- Lifting to a point: at_target >= 0.8 or final_target_dist <= 0.05.
+- Lifting to a point the user names: at_target >= 0.8 or final_target_dist <= 0.05. The scene's target
+  point is only where the reward can aim: for a plain "pick it up" or "lift it", don't check at_target.
 - Include fell <= 0.1, and dropped <= 0.2 when the block must stay held.
 - Rates are fractions of episodes, 0 to 1; distances are metres.
 """
