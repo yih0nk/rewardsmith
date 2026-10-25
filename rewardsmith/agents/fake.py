@@ -6,7 +6,7 @@ from typing import Any
 from ..sim import scene
 from ..sim.base import RunResult
 from .base import Review
-from .checker import NO_FALL, validate
+from .checker import NO_FALL, SpecError, required_actions, requires_reach, validate_for_scene
 from .editor import unified_diff
 
 TEMPLATE = '''\
@@ -71,21 +71,31 @@ _PUSH_WORDS = ("push", "kick", "dribble", "shove", "nudge", "roll")
 
 
 class FakeScener:
-    """Keyword scene writer: one object per kind named in the request, in its colour."""
+    """Keyword scene writer: distinguish named colours and use low boxes for steps."""
 
     def make(self, request: str) -> dict[str, Any]:
         words = re.findall(r"[a-z]+", request.lower())
-        movable = any(w.startswith(_PUSH_WORDS) for w in words)
         objects = []
         for kind, names in _KIND_WORDS.items():
-            # A noun, not a verb ("circle it"): an article or a colour comes just before it.
             hits = [i for i, w in enumerate(words) if w.rstrip("s") in names
                     and set(words[max(0, i - 2):i]) & ({"the", "a", "an"} | set(scene.COLORS))]
-            if not hits:
-                continue
-            before = words[max(0, hits[0] - 2):hits[0]]
-            color = next((w for w in before if w in scene.COLORS), "red" if kind == "ball" else "blue")
-            objects.append(_fake_object(kind, color, movable and kind != "zone", len(objects)))
+            colored = {}
+            for hit in hits:
+                before = words[max(0, hit - 2):hit]
+                color = next((w for w in before if w in scene.COLORS), "red" if kind == "ball" else "blue")
+                if color in colored:
+                    continue  # mentioning the same coloured object again is not a new body
+                prefix = " ".join(words[max(0, hit - 5):hit])
+                movable = kind != "zone" and bool(re.search(r"\b(?:push\w*|kick\w*|dribbl\w*|shov\w*|nudg\w*)\b", prefix))
+                value = _fake_object(kind, color, movable, len(objects) + len(colored))
+                if kind == "box" and words[hit] == "step":
+                    value["size"] = [0.6, 0.6, 0.1]
+                colored[color] = value
+            for color, value in colored.items():
+                if len(colored) > 1:
+                    value["name"] = f"{color}_{kind}"
+                objects.append(value)
+        objects = objects[:scene.MAX_OBJECTS]
         rough = any(w in ("rough", "bumpy", "uneven", "rocky") for w in words)
         return {
             "terrain": "rough" if rough else "flat",
@@ -101,15 +111,90 @@ def _fake_object(kind: str, color: str, movable: bool, i: int) -> dict[str, Any]
     size = {"ball": [0.15], "box": [0.4, 0.4, 0.3], "zone": [0.5]}[kind]
     return {
         "name": kind, "kind": kind, "color": color, "size": size,
-        "distance": [1.5, 3.0], "bearing": [-180 + 120 * i, -60 + 120 * i], "yaw": [0, 0],
+        "distance": [1.5, 3.0], "bearing": [-180 + 60 * i, -120 + 60 * i], "yaw": [0, 0],
         "movable": movable, "mass": 0.5 if movable else 1.0,
     }
+
+
+def _scene_plan(request: str, scene_spec: scene.SceneSpec | None):
+    """Offline parser for the same named event vocabulary the real checker sees."""
+    world = scene_spec or scene.EMPTY
+    ordered = bool(re.search(r"\b(?:then|after|before)\b", request, re.I))
+    actions = required_actions(request)
+    if not ordered and actions <= {"reach", "forward", "backward", "spin"}:
+        return None
+    if not actions and not ordered:
+        return None
+
+    def choose(text, predicate):
+        choices = [obj for obj in world.objects if predicate(obj)]
+        if not choices:
+            raise SpecError("The scene is missing an object required by this task")
+        return max(choices, key=lambda obj: (3 * bool(re.search(r"\b" + re.escape(obj.name.replace("_", " ")) + r"\b", text))
+                                             + 2 * bool(re.search(r"\b" + obj.color + r"\b", text))))
+
+    segments = re.split(r"\b(?:then|after|before)\b", request.lower())
+    if re.search(r"\bafter\b", request, re.I) and len(segments) == 2:
+        segments.reverse()
+    events = []
+    previous_climb = None
+    for text in segments:
+        kinds = required_actions(text)
+        stage = []
+        if "push" in kinds:
+            obj = choose(text, lambda obj: obj.movable)
+            zone = choose(text, lambda obj: obj.kind == "zone")
+            stage.append(f"push:{obj.name}:{zone.name}")
+        if "climb" in kinds:
+            box = choose(text, lambda obj: obj.kind == "box" and not obj.movable)
+            previous_climb = box.name
+            stage.append(f"climb:{box.name}")
+        if "stand_still" in kinds:
+            if "stand on" in text:
+                previous_climb = choose(text, lambda obj: obj.kind == "box" and not obj.movable).name
+            stage.append(f"stand_on:{previous_climb}" if previous_climb else "stand_still")
+        obstacle = None
+        if "avoid" in kinds:
+            phrase = re.split(r"\b(?:avoid\w*|around|without touching|without hitting)\b", text)[-1]
+            phrase = re.split(r"\b(?:to|towards|while|and)\b", phrase)[0]
+            obstacle = choose(phrase, lambda obj: obj.kind != "zone")
+            stage.append(f"avoid:{obstacle.name}")
+        if "reach" in kinds:
+            goal_text = re.split(r"\b(?:to|toward|towards|enter|reach)\b", text)[-1]
+            goal = choose(goal_text, lambda obj: obj is not obstacle)
+            stage.append(f"reach:{goal.name}")
+        if not stage:
+            if "backward" in text:
+                stage = ["backward"]
+            elif "spin" in text or "turn" in text:
+                stage = ["spin"]
+            elif "walk" in text or "forward" in text or "move" in text:
+                stage = ["forward"]
+            else:
+                raise SpecError("This task stage has no measurable event")
+        duration = re.search(r"(?:for|still)\s+(\d+(?:\.\d+)?)\s*(?:s\b|seconds?\b)", text)
+        if duration:
+            stage = [name + "@" + duration[1] if name.startswith(("stand_still", "stand_on:")) else name for name in stage]
+        if ordered and len(stage) != 1:
+            raise SpecError("Use one explicit measurable action per ordered stage in fake mode")
+        events.extend(stage)
+    metric = ("sequence:" + ">".join(events)) if ordered else ("all:" + "&".join(events) if len(events) > 1 else events[0])
+    return validate_for_scene([{"metric": metric, "op": ">=", "value": 0.8},
+                               {"metric": "scene_fell", "op": "<=", "value": 0.1}], request, world)
 
 
 class FakeChecker:
     """Keyword rules, so offline runs get a plausible spec."""
 
-    def write_spec(self, request: str) -> list[dict[str, Any]]:
+    def write_spec(self, request: str, scene: scene.SceneSpec | None = None) -> list[dict[str, Any]]:
+        planned = _scene_plan(request, scene)
+        if planned is not None:
+            return planned
+        if requires_reach(request):
+            return validate_for_scene([
+                {"metric": "target_reached", "op": ">=", "value": 0.8},
+                {"metric": "target_fell", "op": "<=", "value": 0.1},
+            ], request, scene)
         text = request.lower()
         if "backward" in text:
             core = [{"metric": "forward_velocity", "op": "<", "value": -0.3}]
@@ -120,7 +205,7 @@ class FakeChecker:
             core = [{"metric": "forward_velocity", "op": ">", "value": 0.3}]
         else:
             core = [{"metric": "upright", "op": ">", "value": 0.8}]
-        return validate(core + [NO_FALL])
+        return validate_for_scene(core + [NO_FALL], request, scene)
 
 
 class FakeCritic:

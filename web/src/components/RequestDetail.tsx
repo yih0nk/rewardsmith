@@ -5,11 +5,11 @@ import {
   isListedMetric,
   metricInfo,
   successSentence,
-  describeClause,
 } from "../explain";
 import { candidateName, candidateState, isScored } from "../stages";
 import { QueuePlace, RenderReply, runAnchor } from "../thread";
 import CandidateCard from "./CandidateCard";
+import SuccessCheck from "./SuccessCheck";
 import DiffView from "./DiffView";
 import FlagControl from "./FlagControl";
 import RewardTerms from "./RewardTerms";
@@ -344,49 +344,7 @@ export default function RequestDetail({
                           </span>
                         </p>
                       )}
-                    {check && (
-                      <div
-                        className={`check-result ${check.pass && check.verified !== false ? "pass" : ""}`}
-                      >
-                        <p>
-                          Success check:{" "}
-                          {check.verified === false
-                            ? "unavailable"
-                            : check.pass
-                              ? "passed"
-                              : "failed"}
-                        </p>
-                        {check.verified !== false &&
-                          check.clauses?.length > 0 && (
-                            <ul className="clauses">
-                              {check.clauses.map((cl, i) => (
-                                <li
-                                  key={i}
-                                  className={cl.pass ? "pass" : "fail"}
-                                >
-                                  <span aria-hidden="true">
-                                    {cl.pass ? "✓" : "✕"}
-                                  </span>
-                                  <span className="sr-only">
-                                    {cl.pass ? "Passed: " : "Failed: "}
-                                  </span>
-                                  {describeClause(cl)}
-                                  {cl.actual != null && (
-                                    <span className="subtle">
-                                      {" "}
-                                      (measured{" "}
-                                      {metricInfo(
-                                        cl.metric.replace(/^abs_/, ""),
-                                      ).format(cl.actual)}
-                                      )
-                                    </span>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                      </div>
-                    )}
+                    {check && <SuccessCheck check={check} />}
                     {candidate?.critique ? (
                       <figure className="critic">
                         <blockquote>{candidate.critique}</blockquote>

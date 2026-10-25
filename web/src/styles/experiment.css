@@ -540,6 +540,29 @@ button.round:hover .label {
   color: var(--dp-color-emphasis);
 }
 
+.check-criteria {
+  width: 100%;
+  margin-top: var(--dp-spacing-inset);
+  border-collapse: collapse;
+  font-size: var(--dp-typography-label);
+  table-layout: fixed;
+}
+.check-criteria th,
+.check-criteria td {
+  padding: var(--dp-spacing-inset) var(--dp-spacing-cell) var(--dp-spacing-inset) 0;
+  border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.check-criteria thead th {
+  color: var(--dp-color-ink-muted);
+  font-weight: normal;
+}
+.check-criteria td.pass {
+  color: var(--dp-color-emphasis);
+}
+
 /* ---- Pause, resume and cancel ---- */
 .badge.paused,
 .badge.cancelled {

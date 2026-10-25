@@ -86,6 +86,54 @@ To try the reward writer alone with a real API key: `.venv/bin/python scripts/tr
 .venv/bin/python -m pytest -q
 ```
 
+## Scene-aware success checks
+
+The checker sees the generated scene before training. For reaching a fixed object
+or entering a zone, checks use `target_reached` and `target_fell`, measured across
+32 fresh episodes of up to 10 seconds. The default criteria are at least 80%
+reaching the target and at most 10% falling. Inclusive comparisons (`>=`, `<=`)
+make those thresholds explicit. A robot may reach the target and stop; continued
+forward speed is not required. Missing or non-finite measurements fail their clauses.
+
+The fixed spec is used for candidate ranking, early stopping and the stored success
+result. The board displays each clause's measured value, threshold and outcome.
+Checks remain immutable; an old spec missing the scene objective is retained but
+marked unverified. Checker errors and unsupported tasks also remain unverified.
+
+Scene success also supports named per-episode outcomes:
+
+- `push:box:zone`: a movable object starts outside, moves at least 0.1 m while the
+  robot is nearby, settles fully inside the zone for 0.5 s and remains inside at
+  termination. Containment includes object size; merely touching it is insufficient.
+- `climb:step`: the upright robot is above the box top with at least two feet in
+  contact on its top surface, sustained for 0.5 s.
+- `stand_on:step`: supported on the step and stationary for 1 s.
+- `avoid:obstacle`: conservative swept planar clearance of the robot/feet around
+  an obstacle throughout the episode, plus at least 0.5 m progress. Standing still
+  cannot pass. This uses geometry, not contact-force measurement; pushing likewise
+  uses proximity and displacement evidence rather than force attribution.
+- `all:reach:goal&avoid:obstacle`: both objectives must hold in the same episodes.
+- `sequence:reach:ball>climb:step>stand_on:step`: stages must complete in order,
+  with fresh holding intervals after each preceding stage. `@SECONDS` specifies
+  an explicit hold up to 10 s, e.g. `stand_on:step@2`. Evaluation is up to 10 s total,
+  so the sequence must fit within that window.
+
+Named objects are validated against the generated scene. Only movable objects can
+be pushed into zones; only fixed boxes can be climbed. Event rates default to
+`>= 0.8` with `scene_fell <= 0.1`. Measurements after the first termination never
+count, and invalid telemetry fails closed. Each candidate gets a small
+`scene_evaluation.json` with per-episode results and completion times. Plans are
+sent to cold and warm training processes; the fake simulator synthesizes rates
+for UI development and does not demonstrate real task performance.
+
+The checker no longer rejects task classes using a keyword blacklist. Claude gets
+an event catalog for the scene and composes checks; the fake checker handles common
+English action phrases. Requests beyond the event vocabulary remain unverified
+rather than being weakened. Real MuJoCo contact tests validate scripted pushing,
+platform support, avoidance and goal ordering. GPU rollout checks cover JAX and Warp in separate processes,
+matching worker isolation. These checks validate measurements, not learned-policy
+reliability; a verification-on/off performance comparison remains future work.
+
 ## Benchmark
 
 `scripts/benchmark.py` runs the team plan's behaviors through the full loop (Claude and

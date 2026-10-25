@@ -6,7 +6,7 @@ separate rollouts took ~37 s per candidate on the 4090; one batch of all of them
 costs about as much as the largest alone. The batch is
 
     env 0                the board's video (render.py): the nominal robot from seed 0
-    the next TARGET_ENVS the target episodes (scene_eval.py), when the scene has a target
+    the next TARGET_ENVS the scene episodes, when there is a target or an outcome plan
     the rest             robustness.py's rollouts, when robustness is on
 
 Each env runs the rollout it ran on its own before: the same robot, reset key and
@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from . import render, robustness, scene_eval
+from . import outcomes, render, robustness, scene_eval
 from .base import ROLLOUT_STEPS
 from .go1 import Go1Env
 from .train import TrainResult
@@ -39,11 +39,14 @@ def evaluate(
     *,
     robust: bool = True,
     steps: int = ROLLOUT_STEPS,
+    success_spec: list[dict] | None = None,
 ) -> tuple[Path, list[bytes], dict[str, float], dict[str, float]]:
     """Return (mp4 path, critic PNGs, rollout + target metrics + eval_s, robust_* metrics or {})."""
     start = time.perf_counter()
     target_obj = env.scene.target_object
-    n_target = TARGET_ENVS if target_obj is not None else 0
+    selected = outcomes.requested(success_spec, env.scene)
+    needs_outcomes = bool(selected) or any(c["metric"] == "scene_fell" for c in success_spec or [])
+    n_target = TARGET_ENVS if target_obj is not None or needs_outcomes else 0
     plan = robustness.plan() if robust else robustness.plan(n_robots=0, n_seeds=0, pushes=False)
     n_robots = plan.groups.count("robots")
 
@@ -60,7 +63,8 @@ def evaluate(
         models, in_axes = robustness.models_for(env, n_robots, len(keys) - n_robots, plan.rng_models)
     else:
         models, in_axes = env.mjx_model, None
-    reset, outs = robustness.run_batch(env, result, models, in_axes, keys, push_dirs, steps)
+    extra = {"observe": scene_eval.observer(env)} if needs_outcomes else {}
+    reset, outs = robustness.run_batch(env, result, models, in_axes, keys, push_dirs, steps, **extra)
 
     summary, n = render.rollout_summary(*(outs[k][video] for k in ("qpos", "lin", "yaw", "up", "done")))
     robust_metrics: dict[str, float] = {}
@@ -80,5 +84,11 @@ def evaluate(
             reset["target_dist"][target], outs["target_dist"][target].T, outs["done"][target].T,
             target_obj.reach_radius, env.dt,
         ))
+        metrics["scene_fell"] = metrics["target_fell"]
+    if needs_outcomes:
+        initial = jax.tree_util.tree_map(lambda value: value[target], reset["scene_outcome"])
+        samples = jax.tree_util.tree_map(lambda value: np.swapaxes(value[target], 0, 1), outs["scene_outcome"])
+        metrics.update(scene_eval.summarize_outcomes(
+            env, initial, samples, selected, seed=TARGET_SEED, out_dir=out_dir))
     metrics["eval_s"] = round(time.perf_counter() - start, 1)  # the batch plus rendering the video
     return video_path, frames, metrics, robust_metrics

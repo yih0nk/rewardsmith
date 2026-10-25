@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 pytest.importorskip("mujoco_playground")
 
+import numpy as np  # noqa: E402
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 
@@ -47,7 +47,9 @@ def test_one_batch_reproduces_the_separate_video_and_robustness_rollouts(ball_en
     calls = _no_render(monkeypatch)
 
     (tmp_path / "new").mkdir()
-    video, frames, metrics, robust = evaluation.evaluate(ball_env, result, tmp_path / "new", steps=STEPS)
+    video, frames, metrics, robust = evaluation.evaluate(
+        ball_env, result, tmp_path / "new", steps=STEPS,
+        success_spec=[{"metric": "reach:ball", "op": ">=", "value": 0.8}])
 
     assert video == tmp_path / "new" / render.VIDEO_FILE and frames == [b"png"]
     [(qpos, kw)] = calls
@@ -57,6 +59,9 @@ def test_one_batch_reproduces_the_separate_video_and_robustness_rollouts(ball_en
         assert metrics[key] == pytest.approx(value, abs=1e-4)
     assert set(metrics) >= {"target_reached", "target_start_dist", "target_min_dist", "target_fell"}
     assert 1.4 < metrics["target_start_dist"] < 3.1
+    assert metrics["reach:ball"] == metrics["target_reached"]
+    evidence = json.loads((tmp_path / "new" / "scene_evaluation.json").read_text())
+    assert len(evidence["episodes"]) == evaluation.TARGET_ENVS
     assert {k: v for k, v in robust.items() if k != "robust_s"} == {k: v for k, v in robust_ref.items() if k != "robust_s"}
     rows = json.loads((tmp_path / "new" / "robustness.json").read_text())["rollouts"]
     assert [r["name"] for r in rows] == [r["name"] for r in rows_ref]

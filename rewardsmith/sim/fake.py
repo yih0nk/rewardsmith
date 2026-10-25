@@ -10,6 +10,7 @@ from .base import Cull, RunResult, Stopped, run_sequentially
 from .go1_spec import describe
 from .progress import ProgressWriter
 from .scene import EMPTY, SceneSpec
+from . import outcomes
 
 FAKE_TOTAL_STEPS = 10_000_000  # the "round" preset's num_timesteps
 FAKE_EVALS = 20
@@ -18,6 +19,11 @@ FAKE_EVAL_S = 9.0
 
 
 class FakeSimulator:
+    evaluation_spec: list[dict] | None = None
+
+    def set_evaluation_spec(self, spec: list[dict] | None) -> None:
+        self.evaluation_spec = spec
+
     def describe(self, scene: SceneSpec | None = None) -> str:
         # The real Go1 contract, so prompts written against the fake match the GPU run.
         return describe(scene or EMPTY)
@@ -51,6 +57,8 @@ class FakeSimulator:
                 "fell": 0.0,
                 **terms,
                 **_fake_target_metrics(scene, quality),
+                **{metric: round(quality / 10, 2) for metric in outcomes.requested(self.evaluation_spec, scene or EMPTY)},
+                "scene_fell": 0.0,
             },
             reward_curve=curve,
         )

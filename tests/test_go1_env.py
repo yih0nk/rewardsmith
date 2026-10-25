@@ -91,8 +91,14 @@ def scene_states(scene_env):
     return reset(jax.random.split(jax.random.PRNGKey(3), 16))
 
 
-def test_scene_features_match_the_spec(scene_env, scene_states):
-    state = jax.tree.map(lambda x: x[0], scene_states)
+@pytest.fixture(scope="module")
+def scene_state(scene_env):
+    # Warp includes shared/empty work buffers that cannot be unbatched with x[0].
+    return jax.jit(scene_env.reset)(jax.random.PRNGKey(3))
+
+
+def test_scene_features_match_the_spec(scene_env, scene_state):
+    state = scene_state
     feats = scene_env.features(state.data, state.info, jnp.zeros(4, dtype=bool))
     expected = features_for(SCENE)
     assert set(feats) == {f.name for f in expected}
@@ -120,8 +126,8 @@ def test_scene_adds_to_the_observation(env, scene_env, scene_states):
     assert scene_states.obs["privileged_state"].shape[-1] == plain.obs["privileged_state"].shape[-1] + per_object + 1
 
 
-def test_scene_env_steps_with_finite_rewards(scene_env, scene_states):
-    state = jax.tree.map(lambda x: x[0], scene_states)
+def test_scene_env_steps_with_finite_rewards(scene_env, scene_state):
+    state = scene_state
     step = jax.jit(scene_env.step)
     for _ in range(3):
         state = step(state, jnp.zeros(scene_env.action_size))

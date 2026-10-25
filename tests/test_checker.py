@@ -27,7 +27,7 @@ def test_a_good_spec_validates_to_floats():
     ([checker.NO_FALL] * 7, "1 to 6"),
     ("fell < 0.5", "1 to 6"),
     ([{"metric": "speed", "op": ">", "value": 1}], "unknown metric 'speed'"),
-    ([{"metric": "fell", "op": "<=", "value": 0.5}], "op must be"),
+    ([{"metric": "fell", "op": "==", "value": 0.5}], "op must be"),
     ([{"metric": "fell", "op": "<", "value": math.nan}], "finite number"),
     ([{"metric": "fell", "op": "<", "value": True}], "finite number"),
     ([{"metric": "fell", "op": "<", "value": "0.5"}], "finite number"),
@@ -40,8 +40,8 @@ def test_bad_specs_are_rejected_with_a_reason(bad, why):
 
 
 def test_schema_and_prompt_list_every_known_metric():
-    enum = checker.SCHEMA["properties"]["clauses"]["items"]["properties"]["metric"]["enum"]
-    assert enum == list(checker.METRICS)
+    metric = checker.SCHEMA["properties"]["clauses"]["items"]["properties"]["metric"]
+    assert metric["type"] == "string"  # scene names and composite expressions validate against the scene
     assert all(name in checker.SYSTEM for name in checker.METRICS)
 
 

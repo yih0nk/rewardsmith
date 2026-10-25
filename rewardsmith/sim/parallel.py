@@ -170,7 +170,7 @@ def run_in_processes(
     pool: WarmPool | None = None,
     cull: Cull | None = None,
     behavior_metrics: bool = False,
-    sim_options: dict[str, bool] | None = None,
+    sim_options: dict[str, object] | None = None,
 ) -> list[RunResult | Stopped | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs.
 
@@ -241,7 +241,7 @@ def _prepare(source: str, out_dir: Path, scene: SceneSpec | None = None) -> tupl
 def _hand_over(
     warm: WarmProcess, source: str, out_dir: Path, preset: str, impl: str | None,
     behavior_metrics: bool = False, scene: SceneSpec | None = None,
-    sim_options: dict[str, bool] | None = None,
+    sim_options: dict[str, object] | None = None,
 ) -> subprocess.Popen:
     reward_file, scene_file = _prepare(source, out_dir, scene)
     send(warm.job, {
@@ -255,7 +255,7 @@ def _hand_over(
 def _start(
     source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict,
     behavior_metrics: bool = False, scene: SceneSpec | None = None,
-    sim_options: dict[str, bool] | None = None,
+    sim_options: dict[str, object] | None = None,
 ) -> subprocess.Popen:
     reward_file, scene_file = _prepare(source, out_dir, scene)
     cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir), "--preset", preset]

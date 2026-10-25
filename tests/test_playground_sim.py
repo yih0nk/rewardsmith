@@ -56,7 +56,8 @@ def test_explicit_options_override_environment_in_parallel_jobs(monkeypatch, tmp
     monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs) or [])
     sim = PlaygroundSimulator(preset="smoke", randomize=False, push=True, robustness=False)
     sim.run_many([(WALK_BACKWARDS, tmp_path)])
-    assert seen["sim_options"] == {"randomize": False, "push": True, "robustness": False}
+    assert seen["sim_options"] == {"randomize": False, "push": True, "robustness": False, "evaluation_spec": None}
+
 
 
 def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):

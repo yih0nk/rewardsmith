@@ -172,6 +172,7 @@ def run_batch(
     keys: jax.Array,
     push_dirs: list[tuple[float, float]],
     steps: int = STEPS,
+    observe: Callable[..., Any] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Roll the policy out in every env of a batch at once, in one compiled scan.
 
@@ -180,15 +181,16 @@ def run_batch(
     (zero for no shove). Returns (reset, steps): reset holds qpos, mocap_pos, mocap_quat
     and target_dist per env; steps holds qpos, lin, yaw, up, done and target_dist per env
     and step, shaped (env, step, ...). target_dist only when the scene has a target.
+    An optional observer adds nested scene_outcome telemetry at reset and each step.
     """
-    rollout = _rollout_fn(env, result, steps)
+    rollout = _rollout_fn(env, result, steps, observe=observe)
     reset, outs = jax.device_get(jax.jit(jax.vmap(rollout, in_axes=(in_axes, 0, 0)))(
         models, keys, jnp.array(push_dirs, dtype=jnp.float32)
     ))
-    return ({k: np.asarray(v) for k, v in reset.items()}, {k: np.asarray(v) for k, v in outs.items()})
+    return jax.tree_util.tree_map(np.asarray, (reset, outs))
 
 
-def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., Any]:
+def _rollout_fn(env: Go1Env, result: TrainResult, steps: int, observe=None) -> Callable[..., Any]:
     policy = result.make_inference_fn(result.params, deterministic=False)
     torso = env._torso_body_id
     push_from = round(PUSH_AT_S / env.dt)
@@ -203,6 +205,8 @@ def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., A
             state = env.reset(rng)
             d = state.data
             reset = {"qpos": d.qpos, "mocap_pos": d.mocap_pos, "mocap_quat": d.mocap_quat}
+            if observe is not None:
+                reset["scene_outcome"] = observe(state)
             if has_target:
                 reset["target_dist"] = env.scene_features(d)["target_dist"]
 
@@ -225,6 +229,8 @@ def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., A
                     "up": env.get_upvector(d)[2],
                     "done": state.done,
                 }
+                if observe is not None:
+                    sample["scene_outcome"] = observe(state)
                 if has_target:
                     sample["target_dist"] = env.scene_features(d)["target_dist"]
                 return (state, rng), sample

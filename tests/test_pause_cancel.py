@@ -41,9 +41,9 @@ def test_pause_after_round_one_then_resume_finishes_the_run(tmp_path):
             return super().make(request)
 
     class CountingChecker(FakeChecker):
-        def write_spec(self, request):
+        def write_spec(self, request, scene=None):
             calls["spec"] += 1
-            return super().write_spec(request)
+            return super().write_spec(request, scene=scene)
 
     class PausingCritic(FakeCritic):
         def review(self, request, result, check=None):
