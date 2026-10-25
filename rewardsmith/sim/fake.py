@@ -104,20 +104,41 @@ def _write_fake_progress(out_dir: Path, curve: list[float], terms: dict[str, flo
 
 
 def _fake_target_metrics(scene: SceneSpec | None, quality: float) -> dict[str, float]:
-    """The target_* metrics scene_eval reports, scaled so better fake runs get closer."""
+    """The metrics scene_eval reports, scaled so better fake runs get closer."""
     target = scene.target_object if scene else None
     if target is None:
         return {}
+    q = quality / 10
     start = sum(target.distance) / 2
-    final = round(start * (1 - quality / 10), 2)
-    return {
-        "target_reached": round(quality / 10, 2),
+    final = round(start * (1 - q), 2)
+    out = {
+        "target_reached": round(q, 2),
         "target_start_dist": round(start, 2),
         "target_min_dist": final,
         "target_final_dist": final,
+        "target_final_in": round(q * q, 2),
+        "target_near_frac": round(q / 2, 2),
         "target_time_to_reach": round(20 - quality, 1),
         "target_fell": 0.0,
+        "final_speed": round(0.5 * (1 - q), 2),
     }
+    if target.movable:
+        out["object_moved"] = round(2 * q, 2)
+    if scene.goal_object is not None:
+        g0 = round(max(1.0, sum(scene.goal_object.distance) / 2 - start), 2)
+        delivered = round(max(0.0, q - 0.5) * 2, 2)
+        out.update({
+            "object_goal_start_dist": g0,
+            "object_goal_min_dist": round(g0 * (1 - q), 2),
+            "object_goal_final_dist": round(g0 * (1 - q) + 0.1, 2),
+            "object_goal_reached": delivered,
+            "object_in_goal_final": delivered,
+            "object_goal_progress": round(q - 0.1, 2),
+            "phase_no_approach": round(1 - q, 2),
+            "phase_short": round(q - delivered, 2),
+            "phase_delivered": delivered,
+        })
+    return out
 
 
 def _fake_terms(source: str) -> dict[str, float]:
