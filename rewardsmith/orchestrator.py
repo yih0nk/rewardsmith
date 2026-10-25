@@ -66,6 +66,9 @@ def run_request(
     best: Best | None = None
     ranked: list[Best] = []  # every scored candidate so far, best first
     history: list[Attempt] = []  # the same, in the order they were scored, for the editor
+    warm_up = getattr(sim, "warm_up", None)
+    if warm_up:  # round 1's training processes warm up during the scene and check calls too
+        warm_up(k)
     scener, checker = _staged(scener, conn, rid, "scene"), _staged(checker, conn, rid, "check")
     scene = _make_scene(conn, req, scener)
     env_doc = sim.describe(scene)

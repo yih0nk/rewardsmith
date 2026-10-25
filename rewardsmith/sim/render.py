@@ -72,9 +72,32 @@ def rollout_and_render(
     "side", "back", "top"). With side_view, also writes SIDE_VIDEO_FILE; find it
     with side_video_path(mp4 path).
     """
-    out_dir.mkdir(parents=True, exist_ok=True)
     qpos, summary, mocap_pos, mocap_quat = _rollout(env, result, steps, seed)
+    video, pngs = render_rollout(
+        env, qpos, out_dir, n_frames, height, width, camera,
+        critic_height=critic_height, critic_width=critic_width, side_view=side_view,
+        mocap_pos=mocap_pos, mocap_quat=mocap_quat,
+    )
+    return video, pngs, summary
 
+
+def render_rollout(
+    env: Go1Env,
+    qpos: np.ndarray,
+    out_dir: Path,
+    n_frames: int = 10,
+    height: int = 720,
+    width: int = 1280,
+    camera: str = "chase",
+    *,
+    critic_height: int = 288,
+    critic_width: int = 512,
+    side_view: bool = False,
+    mocap_pos: np.ndarray | None = None,
+    mocap_quat: np.ndarray | None = None,
+) -> tuple[Path, list[bytes]]:
+    """Write the videos of a rollout's qpos rows; return (mp4 path, PNG frames for the critic)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
     video = out_dir / VIDEO_FILE
     views = [(video, camera)] + ([(side_video_path(video), "side")] if side_view else [])
     picks = np.linspace(0, len(qpos) - 1, num=min(n_frames, len(qpos))).round().astype(int)
@@ -82,8 +105,7 @@ def rollout_and_render(
         env.mj_model, qpos, env.dt, views, picks, height, width,
         mocap_pos=mocap_pos, mocap_quat=mocap_quat,
     )
-    pngs = [_png(f, critic_width, critic_height) for f in stills]
-    return video, pngs, summary
+    return video, [_png(f, critic_width, critic_height) for f in stills]
 
 
 def rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0) -> tuple[np.ndarray, dict[str, float]]:
@@ -121,8 +143,20 @@ def _rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0):
 
     qpos0, mocap_pos, mocap_quat, outs = jax.device_get(run(jax.random.PRNGKey(seed)))
     qpos, lin, yaw, up, done = (np.asarray(x) for x in outs)
+    summary, n = rollout_summary(qpos, lin, yaw, up, done)
+    return np.concatenate([qpos0[None], qpos[:n]]), summary, mocap_pos, mocap_quat
+
+
+def rollout_summary(
+    qpos: np.ndarray, lin: np.ndarray, yaw: np.ndarray, up: np.ndarray, done: np.ndarray
+) -> tuple[dict[str, float], int]:
+    """One rollout's summary from its per-step arrays, and n, the steps it counts.
+
+    Only the steps up to and including the first fall count.
+    """
+    done = np.asarray(done)
     fell = bool(done.any())
-    n = int(np.argmax(done)) + 1 if fell else steps  # keep the step that fell, drop the ones after
+    n = int(np.argmax(done)) + 1 if fell else len(done)  # keep the step that fell, drop the ones after
     summary = {
         "forward_velocity": float(lin[:n, 0].mean()),
         "lateral_velocity": float(lin[:n, 1].mean()),
@@ -132,7 +166,7 @@ def _rollout(env: Go1Env, result: TrainResult, steps: int, seed: int = 0):
         "fell": float(fell),
         "rollout_steps": float(n),
     }
-    return np.concatenate([qpos0[None], qpos[:n]]), summary, mocap_pos, mocap_quat
+    return summary, n
 
 
 def side_video_path(video: Path) -> Path:

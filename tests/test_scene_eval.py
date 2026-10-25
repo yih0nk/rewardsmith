@@ -39,7 +39,7 @@ def test_target_metrics_ignore_sliding_after_the_first_fall():
     # First robot falls at step 2, then slides into reach; only the second robot succeeds.
     dists = np.array([[3.0, 3.0], [2.0, 0.1], [0.1, 3.0], [0.0, 4.0]])
     done = np.array([[0, 0], [1, 0], [0, 0], [0, 0]])
-    result = scene_eval._summarize(np.array([3.0, 3.0]), dists, done, reach_radius=0.5, dt=0.02)
+    result = scene_eval.summarize(np.array([3.0, 3.0]), dists, done, reach_radius=0.5, dt=0.02)
     assert result["target_reached"] == 0.5
     assert result["target_fell"] == 0.5
     assert result["target_min_dist"] == pytest.approx(1.05)
@@ -50,7 +50,7 @@ def test_target_metrics_ignore_sliding_after_the_first_fall():
 def test_falling_without_reaching_reports_no_reach_time():
     import numpy as np
 
-    result = scene_eval._summarize(np.array([3.0]), np.array([[2.0], [0.0]]),
+    result = scene_eval.summarize(np.array([3.0]), np.array([[2.0], [0.0]]),
                                    np.array([[1], [0]]), reach_radius=0.5, dt=0.02)
     assert result["target_reached"] == 0.0
     assert result["target_time_to_reach"] == -1.0
@@ -90,6 +90,29 @@ def _check_collected_evidence(tmp_path, impl):
     evidence = json.loads((tmp_path / "scene_evaluation.json").read_text())
     assert len(evidence["episodes"]) == 2
     assert evidence["definitions"]["climb:step"] == ["event", ["climb:step"]]
+    measured = _shared_evaluation(env, tmp_path, ["climb:step"])
+    assert measured["climb:step"] == 0 and measured["scene_fell"] == 0
+
+
+def _shared_evaluation(env, tmp_path, metrics):
+    from rewardsmith.sim import evaluation, render, robustness
+    from rewardsmith.sim.train import TrainResult
+
+    batches = []
+    real = robustness.run_batch
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(evaluation, "TARGET_ENVS", 2)
+        patch.setattr(render, "render_rollout", lambda env, qpos, path, **kw: (path / "rollout.mp4", []))
+        patch.setattr(robustness, "run_batch", lambda *args, **kw: batches.append(len(args[4])) or real(*args, **kw))
+        _, _, measured, _ = evaluation.evaluate(
+            env, TrainResult(make_inference_fn=standing_policy, params=None), tmp_path,
+            robust=False, steps=5,
+            success_spec=[{"metric": metric, "op": ">=", "value": 0.8} for metric in metrics])
+    assert batches == [3]  # video plus two scene episodes, in one physics batch
+    evidence = json.loads((tmp_path / "scene_evaluation.json").read_text())
+    assert len(evidence["episodes"]) == 2
+    assert all(episode["valid"] for episode in evidence["episodes"])
+    return measured
 
 
 def test_movable_object_rollout_does_not_credit_an_idle_policy(tmp_path):
@@ -109,3 +132,5 @@ def test_movable_object_rollout_does_not_credit_an_idle_policy(tmp_path):
     assert all(episode["valid"] for episode in evidence["episodes"])
     assert all(not episode["outcomes"][metric]["pass"]
                for episode in evidence["episodes"] for metric in metrics)
+    batched = _shared_evaluation(env, tmp_path, metrics)
+    assert all(batched[metric] == 0 for metric in metrics)

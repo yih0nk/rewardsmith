@@ -11,6 +11,7 @@ Settings (env vars):
   REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
 """
 
+import logging
 import os
 import threading
 from pathlib import Path
@@ -25,10 +26,12 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
-from . import gate, go1, go1_spec, parallel, render, robustness, scene_eval, train  # noqa: E402
+from . import evaluation, gate, go1, go1_spec, parallel, train  # noqa: E402
 from .base import Cull, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 from .scene import EMPTY, SceneSpec  # noqa: E402
+
+log = logging.getLogger("rewardsmith.sim")
 
 
 class PlaygroundSimulator:
@@ -63,6 +66,23 @@ class PlaygroundSimulator:
         return go1_spec.describe(scene or EMPTY)
 
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
+        """Gate in a warm training process when one is free, else here.
+
+        In a warm process the gates of a round run side by side instead of one at a
+        time, on a process whose imports and first compile are already paid, and the
+        process that passed a source then trains it (see parallel.WarmPool).
+        """
+        pool = self._pool
+        warm = pool.reserve() if pool else None
+        if warm is not None:
+            try:
+                error = warm.gate(source, scene, self.impl)
+            except parallel.WarmProcessError:
+                log.exception("warm gate failed; gating in the worker instead")
+                pool.discard(warm)
+            else:
+                pool.release(warm)
+                return error
         with self._gate_lock:
             return gate.check_reward(source, impl=self.impl, scene=scene)
 
@@ -88,11 +108,8 @@ class PlaygroundSimulator:
         )
         result = train.train(train_env, self.preset, on_progress=progress.point, randomize=self.randomize)
         progress.stage("rendering")
-        video, frames, rollout = render.rollout_and_render(env, result, out_dir)
-        rollout.update(scene_eval.target_metrics(
-            env, result.make_inference_fn, result.params, success_spec=self.evaluation_spec, out_dir=out_dir
-        ))
-        robust = robustness.evaluate(env, result, rollout, out_dir) if self.robustness else {}
+        # The video, target metrics and robustness rollouts, all in one batch (see evaluation.py).
+        video, frames, rollout, robust = evaluation.evaluate(env, result, out_dir, robust=self.robustness, success_spec=self.evaluation_spec)
         (out_dir / "reward.py").write_text(source)
 
         last = result.curve[-1]

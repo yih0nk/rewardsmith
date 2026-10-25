@@ -42,6 +42,32 @@ def target_metrics(
     if target is None and not needs_outcomes:
         return {}
     policy = make_policy(params, deterministic=False)
+    observe = observer(env)
+
+    def run(rng):
+        reset_rng, act_rng = jax.random.split(rng)
+        state = jax.vmap(env.reset)(jax.random.split(reset_rng, num_envs))
+        start = jax.vmap(observe)(state)
+
+        def body(state, key):
+            action, _ = policy(state.obs, key)
+            state = jax.vmap(env.step)(state, action)
+            return state, jax.vmap(observe)(state)
+
+        _, samples = jax.lax.scan(body, state, jax.random.split(act_rng, steps))
+        return start, samples
+
+    start, samples = jax.device_get(jax.jit(run)(jax.random.PRNGKey(seed)))
+    summary = summarize(start["distance"], samples["distance"], samples["done"], target.reach_radius, env.dt) if target else {}
+    if target:
+        summary["scene_fell"] = summary["target_fell"]
+    if needs_outcomes:
+        summary.update(summarize_outcomes(env, start, samples, selected, seed=seed, out_dir=out_dir))
+    return summary
+
+
+def observer(env: Go1Env):
+    target = env.scene.target_object
     placed = [(obj.name, env.mj_model.body("obj_" + obj.name).id) for obj in env.scene.objects]
 
     def observe(state):
@@ -60,41 +86,27 @@ def target_metrics(
             "distance": env.scene_features(data)["target_dist"] if target else jnp.float32(0),
         }
 
-    def run(rng):
-        reset_rng, act_rng = jax.random.split(rng)
-        state = jax.vmap(env.reset)(jax.random.split(reset_rng, num_envs))
-        start = jax.vmap(observe)(state)
-
-        def body(state, key):
-            action, _ = policy(state.obs, key)
-            state = jax.vmap(env.step)(state, action)
-            return state, jax.vmap(observe)(state)
-
-        _, samples = jax.lax.scan(body, state, jax.random.split(act_rng, steps))
-        return start, samples
-
-    start, samples = jax.device_get(jax.jit(run)(jax.random.PRNGKey(seed)))
-    summary = _summarize(start["distance"], samples["distance"], samples["done"], target.reach_radius, env.dt) if target else {}
-    if target:
-        summary["scene_fell"] = summary["target_fell"]
-    if needs_outcomes:
-        def row(tree, *indices):
-            return jax.tree_util.tree_map(lambda array: np.asarray(array)[indices].tolist(), tree)
-        episodes = [{"start": row(start, i), "frames": [row(samples, t, i) for t in range(steps)]}
-                    for i in range(num_envs)]
-        measured, evidence = outcomes.evaluate(env.scene, episodes, env.dt, selected)
-        summary.update(measured)
-        if out_dir is not None:
-            import json
-            (out_dir / "scene_evaluation.json").write_text(json.dumps({
-                "dt": env.dt, "steps": steps, "seed": seed, "episodes": evidence,
-                "definitions": {name: outcomes.parts(name, env.scene) for name in selected},
-            }, indent=2))
-    return summary
+    return observe
 
 
-def _summarize(start, dists, done, reach_radius: float, dt: float) -> dict[str, float]:
-    """Only observations up to and including each episode's first terminal step count."""
+def summarize_outcomes(env, start, samples, selected, *, seed, out_dir=None):
+    steps, num_envs = samples["done"].shape
+    def row(tree, *indices):
+        return jax.tree_util.tree_map(lambda array: np.asarray(array)[indices].tolist(), tree)
+    episodes = [{"start": row(start, i), "frames": [row(samples, t, i) for t in range(steps)]}
+                for i in range(num_envs)]
+    measured, evidence = outcomes.evaluate(env.scene, episodes, env.dt, selected)
+    if out_dir is not None:
+        import json
+        (out_dir / "scene_evaluation.json").write_text(json.dumps({
+            "dt": env.dt, "steps": steps, "seed": seed, "episodes": evidence,
+            "definitions": {name: outcomes.parts(name, env.scene) for name in selected},
+        }, indent=2))
+    return measured
+
+
+def summarize(start, dists, done, reach_radius: float, dt: float) -> dict[str, float]:
+    """start (num_envs,), dists and done (steps, num_envs). Only observations up to and including each episode's first terminal step count."""
     done = np.asarray(done, dtype=bool)
     valid = np.concatenate([np.ones_like(done[:1]), np.cumprod(~done[:-1], axis=0).astype(bool)])
     reached = (dists <= reach_radius) & valid

@@ -27,6 +27,7 @@ import numpy as np
 
 from .base import ROLLOUT_STEPS
 from .go1 import Go1Env
+from .render import rollout_summary
 from .train import TrainResult, randomizer
 
 N_ROBOTS = 10
@@ -62,6 +63,26 @@ def behavior_proxy(metrics: Metrics, nominal: Metrics) -> bool:
     return got * ref > 0 and abs(got) >= KEEP_FRACTION * abs(ref)
 
 
+@dataclasses.dataclass
+class Plan:
+    """The robustness rollouts: who they are, and the batch inputs that reproduce them."""
+
+    groups: list[str]
+    names: list[str]
+    keys: jax.Array  # one reset key per rollout
+    push_dirs: list[tuple[float, float]]
+    rng_models: jax.Array  # randomizes the first groups.count("robots") robots
+
+
+def plan(n_robots: int = N_ROBOTS, n_seeds: int = N_SEEDS, pushes: bool = True, seed: int = SEED) -> Plan:
+    shoves = PUSH_DIRS if pushes else {}
+    groups = ["robots"] * n_robots + ["seeds"] * n_seeds + ["pushes"] * len(shoves)
+    names = [f"robot{i}" for i in range(n_robots)] + [f"seed{i}" for i in range(n_seeds)] + list(shoves)
+    push_dirs = [(0.0, 0.0)] * (n_robots + n_seeds) + list(shoves.values())
+    rng_models, rng_reset = jax.random.split(jax.random.PRNGKey(seed))
+    return Plan(groups, names, jax.random.split(rng_reset, len(groups)), push_dirs, rng_models)
+
+
 def evaluate(
     env: Go1Env,
     result: TrainResult,
@@ -76,26 +97,31 @@ def evaluate(
 ) -> dict[str, float]:
     """Return robustness metrics for the candidate; also write the per-rollout detail to out_dir."""
     start = time.perf_counter()
-    shoves = PUSH_DIRS if pushes else {}
-    groups = ["robots"] * n_robots + ["seeds"] * n_seeds + ["pushes"] * len(shoves)
-    names = [f"robot{i}" for i in range(n_robots)] + [f"seed{i}" for i in range(n_seeds)] + list(shoves)
-    push_dirs = [(0.0, 0.0)] * (n_robots + n_seeds) + list(shoves.values())
+    p = plan(n_robots, n_seeds, pushes, seed)
+    models, in_axes = models_for(env, n_robots, len(p.groups) - n_robots, p.rng_models)
+    _, outs = run_batch(env, result, models, in_axes, p.keys, p.push_dirs, steps)
+    rows = [summarize(outs, i) for i in range(len(p.groups))]
+    return report(p, rows, models, nominal, check, out_dir, start)
 
-    rng_models, rng_reset = jax.random.split(jax.random.PRNGKey(seed))
-    models, in_axes = _models(env, n_robots, len(groups) - n_robots, rng_models)
-    rollout = _rollout_fn(env, result, steps)
-    out = jax.jit(jax.vmap(rollout, in_axes=(in_axes, 0, 0)))(
-        models, jax.random.split(rng_reset, len(groups)), jnp.array(push_dirs, dtype=jnp.float32)
-    )
-    rows = [{k: float(v[i]) for k, v in out.items()} for i in range(len(groups))]
 
+def report(
+    p: Plan,
+    rows: list[dict[str, float]],
+    models: Any,
+    nominal: Metrics,
+    check: Check = behavior_proxy,
+    out_dir: Path | None = None,
+    start: float | None = None,
+) -> dict[str, float]:
+    """The robust_* summary of the plan's rollouts (rows, in plan order; models[i] is row i's robot)."""
     summary: dict[str, float] = {}
     for group in ("robots", "seeds", "pushes"):
-        members = [r for r, g in zip(rows, groups) if g == group]
+        members = [r for r, g in zip(rows, p.groups) if g == group]
         if members:
             summary[f"robust_{group}_pass"] = sum(check(r, nominal) for r in members)
             summary[f"robust_{group}_n"] = len(members)
-    summary["robust_s"] = round(time.perf_counter() - start, 1)
+    if start is not None:
+        summary["robust_s"] = round(time.perf_counter() - start, 1)
 
     if out_dir is not None:
         detail = {
@@ -104,14 +130,20 @@ def evaluate(
             "nominal": dict(nominal),
             "rollouts": [
                 {"name": name, "group": g, "pass": check(r, nominal), **r, **_physics(models, i)}
-                for i, (name, g, r) in enumerate(zip(names, groups, rows))
+                for i, (name, g, r) in enumerate(zip(p.names, p.groups, rows))
             ],
         }
         (out_dir / "robustness.json").write_text(json.dumps(detail, indent=2))
     return summary
 
 
-def _models(env: Go1Env, n_random: int, n_nominal: int, rng: jax.Array) -> tuple[Any, Any]:
+def summarize(outs: Mapping[str, np.ndarray], i: int) -> dict[str, float]:
+    """Rollout i's metrics, averaged over the steps up to and including its fall (as render.py does)."""
+    summary, _ = rollout_summary(outs["qpos"][i], outs["lin"][i], outs["yaw"][i], outs["up"][i], outs["done"][i])
+    return summary
+
+
+def models_for(env: Go1Env, n_random: int, n_nominal: int, rng: jax.Array) -> tuple[Any, Any]:
     """A batch of n_random randomized robots followed by n_nominal copies of the nominal one."""
     nominal = env.mjx_model
     models, in_axes = randomizer()(nominal, jax.random.split(rng, n_random))
@@ -132,21 +164,54 @@ def _is_batched(axis: Any, value: Any) -> bool:
     return type(axis) is int and axis == 0 and isinstance(value, (jax.Array, np.ndarray))
 
 
-def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., dict[str, jax.Array]]:
+def run_batch(
+    env: Go1Env,
+    result: TrainResult,
+    models: Any,
+    in_axes: Any,
+    keys: jax.Array,
+    push_dirs: list[tuple[float, float]],
+    steps: int = STEPS,
+    observe: Callable[..., Any] | None = None,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Roll the policy out in every env of a batch at once, in one compiled scan.
+
+    Env i runs robot models[i] (in_axes from models_for; None for one shared model) from
+    reset key keys[i], with action keys split off the same key each step, and push_dirs[i]
+    (zero for no shove). Returns (reset, steps): reset holds qpos, mocap_pos, mocap_quat
+    and target_dist per env; steps holds qpos, lin, yaw, up, done and target_dist per env
+    and step, shaped (env, step, ...). target_dist only when the scene has a target.
+    An optional observer adds nested scene_outcome telemetry at reset and each step.
+    """
+    rollout = _rollout_fn(env, result, steps, observe=observe)
+    reset, outs = jax.device_get(jax.jit(jax.vmap(rollout, in_axes=(in_axes, 0, 0)))(
+        models, keys, jnp.array(push_dirs, dtype=jnp.float32)
+    ))
+    return jax.tree_util.tree_map(np.asarray, (reset, outs))
+
+
+def _rollout_fn(env: Go1Env, result: TrainResult, steps: int, observe=None) -> Callable[..., Any]:
     policy = result.make_inference_fn(result.params, deterministic=False)
     torso = env._torso_body_id
     push_from = round(PUSH_AT_S / env.dt)
     push_to = push_from + max(1, round(PUSH_FOR_S / env.dt))
     push_force = float(env._torso_mass) * PUSH_DV / ((push_to - push_from) * env.dt)
+    has_target = env.scene.target_object is not None
 
-    def rollout(model, rng: jax.Array, push_dir: jax.Array) -> dict[str, jax.Array]:
+    def rollout(model, rng: jax.Array, push_dir: jax.Array):
         nominal = env._mjx_model
         env._mjx_model = model  # same swap as Playground's domain-randomization wrapper
         try:
             state = env.reset(rng)
+            d = state.data
+            reset = {"qpos": d.qpos, "mocap_pos": d.mocap_pos, "mocap_quat": d.mocap_quat}
+            if observe is not None:
+                reset["scene_outcome"] = observe(state)
+            if has_target:
+                reset["target_dist"] = env.scene_features(d)["target_dist"]
 
             def step(carry, t):
-                state, alive, rng = carry
+                state, rng = carry
                 rng, key = jax.random.split(rng)
                 # The shove is along the robot's own heading axes, flattened to the ground.
                 heading = state.data.xmat[torso] @ jnp.array([push_dir[0], push_dir[1], 0.0])
@@ -156,35 +221,24 @@ def _rollout_fn(env: Go1Env, result: TrainResult, steps: int) -> Callable[..., d
                 xfrc = jnp.zeros_like(state.data.xfrc_applied).at[torso, :3].set(on * push_force * heading)
                 action, _ = policy(state.obs, key)
                 state = env.step(state.replace(data=state.data.replace(xfrc_applied=xfrc)), action)
+                d = state.data
                 sample = {
-                    "lin": env.get_local_linvel(state.data),
-                    "yaw": env.get_gyro(state.data)[2],
-                    "height": state.data.qpos[2],
-                    "up": env.get_upvector(state.data)[2],
-                    "alive": alive,
+                    "qpos": d.qpos,
+                    "lin": env.get_local_linvel(d),
+                    "yaw": env.get_gyro(d)[2],
+                    "up": env.get_upvector(d)[2],
+                    "done": state.done,
                 }
-                return (state, alive & (state.done < 0.5), rng), sample
+                if observe is not None:
+                    sample["scene_outcome"] = observe(state)
+                if has_target:
+                    sample["target_dist"] = env.scene_features(d)["target_dist"]
+                return (state, rng), sample
 
-            (_, alive, _), s = jax.lax.scan(step, (state, jnp.bool_(True), rng), jnp.arange(steps))
+            _, outs = jax.lax.scan(step, (state, rng), jnp.arange(steps))
         finally:
             env._mjx_model = nominal
-
-        # Like the nominal rollout, average only the steps up to and including the fall.
-        w = s["alive"].astype(jnp.float32)
-        n = w.sum()
-
-        def mean(x):
-            return (x * w).sum() / n
-
-        return {
-            "forward_velocity": mean(s["lin"][:, 0]),
-            "lateral_velocity": mean(s["lin"][:, 1]),
-            "yaw_rate": mean(s["yaw"]),
-            "base_height": mean(s["height"]),
-            "upright": mean(s["up"]),
-            "fell": 1.0 - alive.astype(jnp.float32),
-            "rollout_steps": n,
-        }
+        return reset, outs
 
     return rollout
 

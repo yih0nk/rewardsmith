@@ -47,8 +47,8 @@ def test_warm_processes_take_jobs_and_spares_are_stopped(tmp_path):
     assert all(isinstance(r, RunResult) for r in results)
     assert all((d / "train.log").exists() for _, d in jobs)
     # the two jobs ran in warm processes, which exited cleanly; the spare was killed
-    assert [p.returncode for p, _ in warm[:2]] == [0, 0]
-    assert warm[2][0].returncode not in (None, 0)
+    assert [wp.proc.returncode for wp in warm[:2]] == [0, 0]
+    assert warm[2].proc.returncode not in (None, 0)
 
 
 def test_a_warm_process_without_a_job_waits_then_exits_when_its_parent_does(tmp_path):
@@ -103,9 +103,15 @@ def test_behavior_metrics_reach_cold_and_warm_children(tmp_path):
 
     pool = parallel.WarmPool(1, fake=True)
     warm = pool.take()
-    parallel._hand_over(warm, SOURCE, tmp_path / "warm", "smoke", None, behavior_metrics=True)
-    warm[0].wait()
-    assert json.loads(warm[1].read_text())["behavior_metrics"] is True
+    sent = []
+    real_send = parallel.send
+    parallel.send = lambda path, payload: (sent.append(payload), real_send(path, payload))
+    try:
+        parallel._hand_over(warm, SOURCE, tmp_path / "warm", "smoke", None, behavior_metrics=True)
+    finally:
+        parallel.send = real_send
+    assert warm.proc.wait(timeout=60) == 0
+    assert sent[0]["kind"] == "train" and sent[0]["behavior_metrics"] is True
 
 
 @pytest.mark.parametrize("warm", [False, True])
@@ -128,7 +134,7 @@ def test_resolved_simulator_options_reach_child_execution(tmp_path, monkeypatch,
     monkeypatch.setattr(run_one, "_simulator", simulator)
     if warm:
         job = tmp_path / "job.json"
-        parallel._hand_over((object(), job), SOURCE, out_dir, "smoke", None, sim_options=options)
+        parallel._hand_over(parallel.WarmProcess(None, job), SOURCE, out_dir, "smoke", None, sim_options=options)
         monkeypatch.setattr(run_one, "_warm_up", lambda fake: None)
         monkeypatch.setattr(run_one, "_redirect_output", lambda path: None)
         assert run_one.main(["--serve", str(job), "--fake"]) == 0
@@ -172,3 +178,60 @@ def test_scene_evaluation_plan_survives_training_process_handoff(tmp_path, warm)
             pool.close()
     assert isinstance(result, RunResult)
     assert isinstance(result.metrics["push:box:zone"], float)
+
+
+def test_a_warm_process_gates_until_a_source_passes_then_trains_it(tmp_path):
+    from rewardsmith.sim.parallel import WarmPool
+
+    pool = WarmPool(2, fake=True)
+    try:
+        wp = pool.reserve()
+        assert pool.reserve() is not wp  # a reserved process is lent to one gate at a time
+        pool.release(pool.procs[1])
+        assert "SyntaxError" in wp.gate("def reward(:")  # the writer's message, from the child
+        assert wp.gated is None
+        assert wp.gate(SOURCE) is None  # the fix passes in the same process
+        pool.release(wp)
+        assert pool.reserve() is pool.procs[1]  # a process holding a passed source isn't lent again
+        pool.release(pool.procs[1])
+
+        other = SOURCE + "# other\n"
+        jobs = [(other, tmp_path / "c0"), (SOURCE, tmp_path / "c1")]
+        results = run_in_processes(jobs, max_parallel=2, fake=True, pool=pool)
+    finally:
+        pool.close()
+
+    assert all(isinstance(r, RunResult) for r in results)
+    assert wp.proc.returncode == 0
+    assert (tmp_path / "c1" / "train.log").exists()  # which process got which job: see the next test
+
+
+def test_take_prefers_the_process_that_gated_the_source(tmp_path):
+    from rewardsmith.sim.parallel import WarmPool
+
+    pool = WarmPool(3, fake=True)
+    try:
+        first, second = pool.reserve(), pool.reserve()
+        assert second.gate(SOURCE) is None
+        pool.release(first)
+        pool.release(second)
+        assert pool.take(SOURCE) is second
+        assert pool.take(SOURCE) is first  # no other holder: any free one
+    finally:
+        pool.close()
+
+
+def test_a_dead_warm_process_raises_instead_of_answering(tmp_path):
+    from rewardsmith.sim.parallel import WarmPool, WarmProcessError
+
+    pool = WarmPool(1, fake=True)
+    try:
+        wp = pool.reserve()
+        wp.proc.kill()
+        wp.proc.wait()
+        with pytest.raises(WarmProcessError):
+            wp.gate(SOURCE)
+        pool.release(wp)
+        assert pool.procs == [] and pool.take() is None
+    finally:
+        pool.close()

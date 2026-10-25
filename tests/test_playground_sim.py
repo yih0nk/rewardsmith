@@ -57,3 +57,30 @@ def test_explicit_options_override_environment_in_parallel_jobs(monkeypatch, tmp
     sim = PlaygroundSimulator(preset="smoke", randomize=False, push=True, robustness=False)
     sim.run_many([(WALK_BACKWARDS, tmp_path)])
     assert seen["sim_options"] == {"randomize": False, "push": True, "robustness": False, "evaluation_spec": None}
+
+
+
+def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
+    from rewardsmith.sim import gate, parallel
+
+    in_worker = []
+    monkeypatch.setattr(gate, "check_reward", lambda source, impl=None, scene=None: in_worker.append(source))
+    sim = PlaygroundSimulator(preset="smoke")
+    sim._pool = parallel.WarmPool(1, fake=True)
+    try:
+        assert "SyntaxError" in sim.gate("def reward(:")  # answered by the warm (fake) child
+        assert sim.gate(WALK_BACKWARDS) is None
+        assert in_worker == []
+        taken = sim._pool.take(WALK_BACKWARDS)
+        assert taken.gated == WALK_BACKWARDS
+        taken.kill()
+    finally:
+        sim.close_warm_pool()
+
+    sim._pool = parallel.WarmPool(1, fake=True)
+    try:
+        sim._pool.procs[0].proc.kill()
+        assert sim.gate(WALK_BACKWARDS) is None  # the dead child is dropped; the worker gates it
+        assert in_worker == [WALK_BACKWARDS]
+    finally:
+        sim.close_warm_pool()
