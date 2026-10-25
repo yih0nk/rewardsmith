@@ -62,6 +62,10 @@ You may also get the success check: pass/fail clauses over these metrics, writte
 request before any training. The request only counts as done if the check passes AND your
 score clears the bar. If a clause failed, say which one and what the reward should change
 to fix it. Judge the motion yourself too: the check can pass while the behavior looks wrong.
+Clauses named check:<key> come from code the checker wrote, which you are shown. Read it: if it
+would pass without the requested behavior (trivially true, measuring something easier, or a
+bug), set check_is_trivial to true and say why; the score is then at most 4, whatever the check
+says. Otherwise set it false.
 
 Start the critique with the 2-3 numbers your score rests on. For a scene task, then name the
 phase where it fails, using the task diagnosis you are given and the frames: never approached
@@ -76,8 +80,9 @@ SCHEMA = {
         "score": {"type": "number"},
         "reward_hacking": {"type": "boolean"},
         "critique": {"type": "string"},
+        "check_is_trivial": {"type": "boolean"},
     },
-    "required": ["score", "reward_hacking", "critique"],
+    "required": ["score", "reward_hacking", "critique", "check_is_trivial"],
     "additionalProperties": False,
 }
 
@@ -105,11 +110,15 @@ class ClaudeCritic:
                 f"Metrics: {json.dumps(result.metrics)}\n"
                 f"Episode reward over training (last 20 evals): {curve}"
                 + (f"\n\nSuccess check (written before training):\n{describe(check)}" if check else "")
+                + (f"\n\nThe check's code (each check:<key> is the fraction of 32 fresh episodes where key held, "
+                   f"or its mean):\n```python\n{check['code']}\n```" if check and check.get("code") else "")
                 + (f"\n\nTask diagnosis (computed from the 32 episodes):\n{diagnosis}" if diagnosis else "")
             ),
         })
         out = ask_json(self.client, self.model, SYSTEM, content, SCHEMA, effort=self.effort)
-        return apply_limits(float(out["score"]), bool(out["reward_hacking"]), out["critique"], result.metrics, check)
+        trivial = bool(out.get("check_is_trivial")) and bool(check and check.get("code"))
+        return apply_limits(float(out["score"]), bool(out["reward_hacking"]), out["critique"], result.metrics, check,
+                            check_trivial=trivial)
 
 
 FELL_OR_HACKED_MAX = 3.0
@@ -163,7 +172,8 @@ def task_diagnosis(metrics: dict[str, Any]) -> str | None:
 
 
 def apply_limits(
-    score: float, reward_hacking: bool, critique: str, metrics: dict, check: dict[str, Any] | None = None
+    score: float, reward_hacking: bool, critique: str, metrics: dict, check: dict[str, Any] | None = None,
+    check_trivial: bool = False,
 ) -> Review:
     """Clamp to 0-10 and enforce the hard limits from the prompt, whatever Claude returned.
     The critique leads with the caps and the task diagnosis, for the editor."""
@@ -180,6 +190,9 @@ def apply_limits(
         score = TASK_FAILED_MAX
         why = "; ".join(f"{c['metric']} {c['op']} {c['value']:g}, got {_num(c['actual'])}" for c in failed)
         notes.append(f"Capped at 4: the task was not done ({why}).")
+    if check_trivial and score > TASK_FAILED_MAX:
+        score = TASK_FAILED_MAX
+        notes.append("Capped at 4: the check's code doesn't measure the task, so its pass proves nothing.")
     diagnosis = task_diagnosis(metrics)
     return Review(score=score, critique=" ".join(notes + ([diagnosis] if diagnosis else []) + [critique]),
                   reward_hacking=reward_hacking)
