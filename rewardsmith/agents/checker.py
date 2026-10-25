@@ -48,15 +48,15 @@ NO_FALL = {"metric": "fell", "op": "<", "value": 0.5}
 
 def body_metrics(body: str | None) -> dict[str, tuple[str, float, float]]:
     """The metrics a check can use on one body: the shared ones, then the body's own
-    (Body.metric_names; the Go1's are the pose metrics). A body may describe its own in
-    a metric_docs dict, name: (meaning, low, high)."""
+    (Body.metric_names: name -> (meaning, low, high); the Go1's are the pose metrics)."""
     from ..sim import bodies
 
     b = bodies.get_body(body)
-    docs = getattr(b, "metric_docs", {})
+    own = b.metric_names()
     out = {name: definition for name, definition in METRICS.items() if name not in POSE_METRICS}
-    for name in b.metric_names():
-        out[name] = METRICS.get(name) or docs.get(name) or (f"measured on the {b.title}", -1e6, 1e6)
+    for name in own:
+        spec = own[name] if isinstance(own, dict) else None
+        out[name] = tuple(spec) if spec else METRICS.get(name, (f"measured on the {b.title}", -1e6, 1e6))
     return out
 
 

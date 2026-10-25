@@ -22,8 +22,8 @@ from rewardsmith.sim.fake import FakeSimulator
 
 
 class FakeBody:
-    def __init__(self, name, title, caps, metrics=()):
-        self.name, self.title, self.capabilities, self._metrics = name, title, caps, list(metrics)
+    def __init__(self, name, title, caps, metrics=None):
+        self.name, self.title, self.capabilities, self._metrics = name, title, caps, metrics or {}
 
     def metric_names(self):
         return self._metrics
@@ -31,7 +31,8 @@ class FakeBody:
 
 G1 = FakeBody("g1", "Unitree G1", Capabilities(
     kind="humanoid", legs=2, can_walk=True, bipedal=True, can_grasp=False, reach_m=None,
-    summary="Unitree G1: humanoid, walks on two legs, waves its arms, no gripper"), ["hand_height"])
+    summary="Unitree G1: humanoid, walks on two legs, waves its arms, no gripper"),
+    {"hand_height": ("mean height of the right hand above the floor, m", 0.0, 2.0)})
 PANDA = FakeBody("panda", "Franka Panda", Capabilities(
     kind="arm", legs=0, can_walk=False, bipedal=False, can_grasp=True, reach_m=0.85,
     summary="Franka Panda: 7-joint arm on a table with a parallel gripper, picks and places objects"))
@@ -182,16 +183,20 @@ def test_a_failed_router_call_falls_back_to_the_go1(tmp_path, registry):
     assert "couldn't choose a body" in db.get_request(conn, rid)["body_reason"]
 
 
-def test_run_turn_runs_the_simulator_on_the_body_and_puts_it_back(tmp_path, registry):
+def test_run_turn_sets_the_simulators_body_before_it_describes_the_env(tmp_path, registry):
+    registry(G1)
     s = _settings(tmp_path)
     conn = db.connect(s.db_path)
-    rid = db.create_request(conn, "walk backwards")
     sim, seen = FakeSimulator(), []
-    describe = sim.describe
-    sim.describe = lambda scene, *a, **k: (seen.append(sim.body), describe(scene, *a, **k))[1]
+    sim.describe = lambda scene=None: (seen.append(sim.body), "notes")[1]
+    rid = db.create_request(conn, "walk backwards", body="go1")
     run_turn(conn, s, db.claim_next_request(conn), sim)
-    assert seen == ["go1"] and sim.body == "go1"
+    assert seen == ["go1"]
     assert db.get_request(conn, rid)["best_score"] is not None
+    sim.set_body("g1")
+    assert sim.body == "g1"
+    sim.set_body(None)
+    assert sim.body == "go1"
 
 
 def test_old_rows_read_as_the_go1(tmp_path):
@@ -248,9 +253,9 @@ def test_prompts_name_the_body_and_stay_word_for_word_on_the_go1(registry):
     assert checker.system_for("go1") == checker.SYSTEM
     humanoid = checker.system_for("g1")
     assert "Unitree G1 humanoid" in humanoid and "Unitree Go1" not in humanoid
-    assert "- hand_height: measured on the Unitree G1" in humanoid
+    assert "- hand_height: mean height of the right hand above the floor, m" in humanoid
     assert "front_feet_off" not in humanoid and "Pose requests" not in humanoid
-    assert checker.metric_definition("hand_height")[0] == "measured on the Unitree G1"
+    assert checker.metric_definition("hand_height") == ("mean height of the right hand above the floor, m", 0.0, 2.0)
     arm = writer.system_for("panda")
     assert "stock gait" not in arm and "hind legs" not in arm
     assert "Keep the stock terms the environment notes list" in arm
