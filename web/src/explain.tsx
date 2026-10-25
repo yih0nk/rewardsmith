@@ -1,4 +1,4 @@
-import { ReactNode, useId } from "react";
+import { ReactNode, useId, useState } from "react";
 import { SuccessClause } from "./api";
 
 // Plain-language explanations for the words the pipeline uses.
@@ -27,8 +27,16 @@ export function Explain({
   children: ReactNode;
 }) {
   const id = useId();
+  // Open the tip leftward when it would run past the right edge of the window.
+  const [flip, setFlip] = useState(false);
+  const place = (el: Element) =>
+    setFlip(el.getBoundingClientRect().left + 460 > window.innerWidth);
   return (
-    <span className="explain">
+    <span
+      className={`explain ${flip ? "flip" : ""}`}
+      onPointerEnter={(e) => place(e.currentTarget)}
+      onFocus={(e) => place(e.currentTarget)}
+    >
       <button type="button" className="explain-term" aria-describedby={id}>
         {children}
       </button>
