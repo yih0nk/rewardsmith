@@ -131,8 +131,14 @@ export default function RunStatus({
             {stage.round != null && (
               <span className="sr-only">Round {stage.round}. </span>
             )}
-            ↻ Steps 2–7 repeat each round:{" "}
-            <Explain term="carry">Claude revises the best rewards</Explain>
+            {detail.mode === "instant" ? (
+              <>One round: Instant writes one reward and stops. Follow up to refine it.</>
+            ) : (
+              <>
+                ↻ Steps 2–7 repeat each round:{" "}
+                <Explain term="carry">Claude revises the best rewards</Explain>
+              </>
+            )}
           </p>
         </>
       )}

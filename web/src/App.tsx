@@ -269,8 +269,10 @@ export default function App() {
                 Use the best instead
               </button>
             </>
-          ) : (
+          ) : current.bestScore != null ? (
             <>the best candidate so far, or pick one with Refine this</>
+          ) : (
+            <>the best candidate once one is scored; before that, your note is added to the task</>
           )}
         </p>
       }
