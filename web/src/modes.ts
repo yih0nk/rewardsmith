@@ -4,8 +4,8 @@ import { Health, MessageOptions, Mode } from "./api";
 // the hints here are what one run takes on the RTX 4090.
 
 export const MODES: { id: Mode; label: string; hint: string }[] = [
-  { id: "instant", label: "Instant", hint: "1 reward, 1 round · first video in about 2 min" },
-  { id: "effort", label: "Effort", hint: "4 rewards a round, 2+ rounds, live coach · about 10 min" },
+  { id: "instant", label: "Instant", hint: "1 reward · first video in about 2 min" },
+  { id: "effort", label: "Effort", hint: "4 rewards side by side, live coach · about 4–5 min" },
 ];
 
 export const MODEL_LABELS: Record<string, string> = {
