@@ -11,6 +11,7 @@ import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from . import jax_compat  # noqa: F401  (must come before brax's PPO trainer)
@@ -22,6 +23,7 @@ from brax.training.agents.ppo import train as ppo
 from mujoco_playground import wrapper
 from mujoco_playground.config import locomotion_params
 
+from . import checkpoints
 from .go1 import BASE_ENV, Go1Env
 
 # Overrides on top of Playground's tuned Go1 joystick PPO config.
@@ -184,12 +186,33 @@ def train(
     seed: int = 0,
     on_progress: Callable[[CurvePoint], None] | None = None,
     randomize: bool = False,
+    init_params: Any = None,
+    checkpoint_dir: Path | None = None,
+    restore_value: bool = True,
+    init_noise: float | None = None,
 ) -> TrainResult:
     """Train a policy. randomize=True gives every env its own randomized robot.
 
     brax also randomizes its eval envs then, so the curve is measured on randomized robots.
+
+    init_params (a params tuple or a checkpoint path) starts PPO from those weights
+    instead of random ones, fitted to this env's observations (checkpoints.fit);
+    restore_value=False keeps a fresh value network, and init_noise resets the policy's
+    exploration noise to that std (checkpoints.reset_noise). The step count still starts
+    at 0: num_timesteps is how many more steps to train. With checkpoint_dir, the
+    params are saved there at every eval as params_<steps>.pkl.
     """
     kwargs = ppo_kwargs(preset, overrides)
+    if init_params is not None:
+        if isinstance(init_params, (str, Path)):
+            init_params = checkpoints.load(Path(init_params))
+        init_params = fit_params(env, init_params)
+        kwargs["restore_params"] = checkpoints.reset_noise(init_params, init_noise) if init_noise else init_params
+        kwargs["restore_value_fn"] = restore_value
+    if checkpoint_dir is not None:
+        kwargs["policy_params_fn"] = lambda steps, _make_policy, params: checkpoints.save(
+            checkpoints.step_path(checkpoint_dir, steps), params
+        )
     start = time.perf_counter()
     curve: list[CurvePoint] = []
 
@@ -229,6 +252,13 @@ def train(
         num_timesteps=int(kwargs["num_timesteps"]),
         randomized=randomize,
     )
+
+
+def fit_params(env: Any, params: Any) -> Any:
+    """params fitted to env's observation sizes (see checkpoints.fit)."""
+    factory = locomotion_params.brax_ppo_config(BASE_ENV).network_factory
+    sizes = {k: int(v[-1]) for k, v in env.observation_size.items()}
+    return checkpoints.fit(params, sizes, {"policy": factory.policy_obs_key, "value": factory.value_obs_key})
 
 
 def _eval_group(metrics: Mapping[str, Any], prefix: str) -> dict[str, float]:

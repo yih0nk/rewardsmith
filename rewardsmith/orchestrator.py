@@ -20,7 +20,6 @@ round 1 is the editor revising that candidate with its critique, the coach's not
 the user's note. Its mode (modes.py) sets K, rounds, models and the training budget.
 """
 
-import importlib.util
 import inspect
 import json
 import logging
@@ -43,6 +42,7 @@ from .coaching import ACTED, ADVISORY, LAST_RUNNER, QUOTA, TOO_EARLY, Call, Live
 from .search import Halving
 from .sim import progress as sim_progress
 from .sim import scene as scene_spec
+from .sim import checkpoints
 from .sim.base import RunResult, Simulator, Stopped
 from .sim.scene import SceneError, SceneSpec
 
@@ -124,6 +124,14 @@ def run_request(
         scene = scene_spec.parse(req["scene"]) if req.get("scene") is not None else scene_spec.EMPTY
     else:
         scene = _make_scene(conn, req, scener)
+    plan = getattr(sim, "plan_request", None)
+    if plan:  # per-request steps and stock terms (sim/budget.py); describe() names the stock terms
+        message = plan(text, scene)
+        steps = getattr(sim, "steps", None)
+        if settings.max_steps and steps is not None and steps > settings.max_steps:
+            sim.steps = settings.max_steps  # type: ignore[attr-defined]
+            message += f"; this mode caps it at {settings.max_steps / 1e6:g}M steps"
+        db.log_event(conn, rid, "plan", message)
     env_doc = sim.describe(scene)
     # The critic sees the frames; naming the objects helps it judge them.
     critic_request = text if not scene.objects else f"{text}\n\nScene: {scene.summary()}"
@@ -134,6 +142,12 @@ def run_request(
     # Next-round drafts the editor started while a round still trained (see _EarlyDrafts).
     early = _EarlyDrafts(editor, text, env_doc, max(0, k // 2))
 
+    # source -> out_dir of every candidate that trained, stopped ones too: their params_<steps>.pkl
+    # let a revision train on from its parent's weights (_start_from), including the coach's early drafts.
+    trained_dirs: dict[str, Path] = {}
+    if follow_up is not None and follow_up.init_params is not None:
+        # A follow-up's first round revises its target, so it trains on from the target's policy.
+        trained_dirs[follow_up.parent.source] = follow_up.init_params.parent
     for n in range(start, settings.max_rounds + 1):
         try:
             _checkpoint(conn, rid, round_boundary=True)
@@ -199,10 +213,12 @@ def run_request(
                 db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
             for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
                 db.set_candidate(conn, cid, status="training")
-            jobs: list[tuple[Any, ...]] = [(src, out_dir) for _, src, out_dir in ready]
-            if n == start and best is None and follow_up is not None and follow_up.init_params is not None:
-                # A follow-up trains on from its parent's policy instead of from scratch.
-                jobs = [(src, out_dir, {"init_params": str(follow_up.init_params)}) for src, out_dir in jobs]
+            parents = {cid: d.parent for d, cid in zip(drafts, cids)}
+            jobs: list[tuple[Any, ...]] = [
+                (src, out_dir, *(_start_from(trained_dirs, parents[cid], best, settings.continue_steps)
+                                 if settings.continue_rounds else ()))
+                for cid, src, out_dir in ready
+            ]
             # Each candidate is judged the moment its run ends, while the others still train.
             judge = _Judge(conn, lock, rid, n, critic, critic_request, spec, check_error, settings.artifacts_dir,
                            [cid for cid, _, _ in ready], [src for _, src, _ in ready])
@@ -228,6 +244,9 @@ def run_request(
                 with db.stage(conn, rid, "training", n):
                     results = sim.run_many(jobs, scene, **more) if jobs else []
                 judge.finish(results)  # any job run_many didn't report as it ended
+                for (_, src, out_dir), result in zip(ready, results):
+                    if not isinstance(result, str):
+                        trained_dirs[src] = out_dir
                 if live is not None:
                     _log_coach_stats(conn, lock, rid, n, live)
                 _checkpoint(conn, rid, round_boundary=False)  # before waiting on the critic's Claude calls
@@ -265,6 +284,22 @@ def run_request(
     early.close()  # drafts for a round that won't run
     db.set_request(conn, rid, succeeded=int(best is not None and _succeeded(best, settings)))
     return best
+
+
+def _start_from(
+    trained: dict[str, Path], parent: str | None, best: Best | None, steps: int | None = None,
+) -> tuple[dict, ...]:
+    """A revision's job options: train on from its parent's policy, else the best one so far,
+    for `steps` more steps when given (a mode's continue budget; else the simulator's).
+
+    The scene is fixed for the whole request, so these checkpoints fit the env as they are.
+    Returns () when neither has a checkpoint: the simulator's default start.
+    """
+    for source in (parent, best.source if best else None):
+        found = checkpoints.latest(trained[source]) if source in trained else None
+        if found is not None:
+            return ({"init_params": str(found), **({"steps": steps} if steps else {})},)
+    return ()
 
 
 class _Judge:
@@ -724,18 +759,9 @@ def _relative(path: Path | None, root: Path) -> str | None:
 KEEP_GOING = re.compile(r"^\s*(keep going|continue|keep training|more|again|go on|improve( it)?)[.!]*\s*$", re.I)
 
 
-def can_continue_training() -> bool:
-    """True once the training engine's continue-from-weights interface is in: jobs take a
-    third item {"init_params": path} and sim/checkpoints.py finds a run's latest params_<steps>.pkl."""
-    return importlib.util.find_spec("rewardsmith.sim.checkpoints") is not None
-
-
 def _latest_params(out_dir: Path) -> Path | None:
-    if not can_continue_training():
-        return None
-    from .sim import checkpoints  # type: ignore[attr-defined]
-
-    return checkpoints.latest(out_dir)
+    """A run's latest saved policy (params_<steps>.pkl), or None."""
+    return checkpoints.latest(out_dir) if out_dir.is_dir() else None
 
 
 def label(cand: dict[str, Any]) -> str:
@@ -828,22 +854,19 @@ def prepare_turn(
 
 @contextmanager
 def training_budget(sim: Simulator, mode: modes.Mode) -> Iterator[None]:
-    """Apply a mode's step budget and robustness scoring to the simulator for one run.
-
-    The training engine's simulator takes a step count (sim.steps); until then the PPO
-    override every training process reads (REWARDSMITH_PPO_OVERRIDES) carries it.
-    """
+    """Apply a mode's step budget and robustness scoring to the simulator for one run, and put
+    them back after. A simulator with a per-request plan (sim.steps) is capped in run_request
+    (settings.max_steps); one without gets the budget through the PPO override every training
+    process reads (REWARDSMITH_PPO_OVERRIDES)."""
     saved: dict[str, Any] = {}
     key, env_before = "REWARDSMITH_PPO_OVERRIDES", os.environ.get("REWARDSMITH_PPO_OVERRIDES")
     if hasattr(sim, "robustness") and not mode.robustness:
         saved["robustness"] = sim.robustness
         sim.robustness = False  # type: ignore[attr-defined]
-    if mode.steps:
-        if hasattr(sim, "steps"):
-            saved["steps"] = sim.steps
-            sim.steps = mode.steps  # type: ignore[attr-defined]
-        elif hasattr(sim, "preset"):  # the real simulator: its training processes inherit the variable
-            os.environ[key] = json.dumps({**json.loads(env_before or "{}"), "num_timesteps": mode.steps})
+    if hasattr(sim, "steps"):
+        saved["steps"] = sim.steps  # plan_request and the cap change it per request
+    elif mode.steps and hasattr(sim, "preset"):
+        os.environ[key] = json.dumps({**json.loads(env_before or "{}"), "num_timesteps": mode.steps})
     try:
         yield
     finally:

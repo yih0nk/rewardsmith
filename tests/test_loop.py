@@ -562,3 +562,46 @@ def test_current_stage_is_the_latest_open_one(tmp_path):
     db.start_stage(conn, rid, "training", 1)
     db.fail_request(conn, rid, "boom")  # a failed run must not leave a timer running
     assert db.get_request(conn, rid)["stage"] is None
+
+
+def test_later_rounds_train_on_from_their_parents_policy(tmp_path):
+    s = replace(_settings(tmp_path), candidates_per_round=2, max_rounds=2, min_rounds=2, carry_top=1)
+    seen: list[list] = []
+
+    class Checkpointing(FakeSimulator):
+        def run_many(self, jobs, scene=None, cull=None):
+            seen.append(jobs)
+            results = super().run_many(jobs, scene, cull)
+            for _, out_dir, *_ in jobs:  # the real simulator saves params at every eval
+                (out_dir / "params_100.pkl").write_bytes(b"")
+                (out_dir / "params_200.pkl").write_bytes(b"")
+            return results
+
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    best = run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), Checkpointing())
+    first, second = seen
+    assert all(len(job) == 2 for job in first)  # round 1 starts from the simulator's default (the walker)
+    round1 = db.get_request(conn, rid)["rounds"][0]["candidates"]
+    best1 = max(round1, key=lambda c: (c["score"], -c["idx"]))
+    parent = next(d for src, d in first if src == best1["reward_src"])
+    assert [job[2] for job in second] == [{"init_params": str(parent / "params_200.pkl")}] * 2  # the latest one
+    assert best is not None
+
+
+def test_continuing_rounds_can_be_switched_off(tmp_path):
+    s = replace(_settings(tmp_path), candidates_per_round=2, max_rounds=2, min_rounds=2, continue_rounds=False)
+    seen: list[list] = []
+
+    class Recording(FakeSimulator):
+        def run_many(self, jobs, scene=None, cull=None):
+            seen.append(jobs)
+            for _, out_dir, *_ in jobs:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "params_1.pkl").write_bytes(b"")
+            return super().run_many(jobs, scene, cull)
+
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), Recording())
+    assert all(len(job) == 2 for jobs in seen for job in jobs)
