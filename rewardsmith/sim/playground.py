@@ -20,7 +20,7 @@ Settings (env vars):
                           mode (default gait; see go1.STOCK_PROFILES). Always off in steer mode.
   REWARDSMITH_STOCK_WEIGHT  multiplier on the stock terms' scales (default go1.STOCK_WEIGHT)
   REWARDSMITH_RESTORE_VALUE 1 = warm starts keep the checkpoint's value network too (default 1)
-  REWARDSMITH_TUNE_NOISE  tune mode resets the walker's exploration noise to this std (default 0.5;
+  REWARDSMITH_TUNE_NOISE  tune mode resets the walker's exploration noise to this std (default 0.25;
                           0 keeps the walker's own, about 0.1, too little to leave its gait)
   REWARDSMITH_STEPS       training steps per candidate (default: the preset's)
 """
@@ -49,7 +49,7 @@ log = logging.getLogger("rewardsmith.sim")
 
 DEFAULT_WALKER = "/workspace/pretrained/go1_walker/params.pkl"
 MODES = ("steer", "tune", "off")
-TUNE_NOISE = 0.5
+TUNE_NOISE = 0.25
 
 
 def default_walker() -> str:
