@@ -37,6 +37,10 @@ Recipe for object tasks (the environment notes list the objects):
   4. success: a bonus while target_to_goal_dist is under the goal radius, with the approach
      and alignment terms switched off once the object is in.
   Success is measured on the object, never on the robot's distance to it.
+- Hold a pose (stand on the hind legs, lift a paw, a handstand): reward the pose itself, not
+  height alone: the lifted feet off the floor (1 - foot_contact), body pitch from gravity
+  (arcsin(-gravity[0]), nose up), and a bonus that grows while the pose is held; keep the feet
+  that stay down planted and the body from rolling (gravity[1]).
 - Vary the candidates in how they shape these phases (kernels, weights, the push spot), not
   by dropping a phase.
 """

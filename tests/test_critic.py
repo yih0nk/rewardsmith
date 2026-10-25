@@ -80,3 +80,13 @@ def test_critic_prompt_carries_the_task_diagnosis(monkeypatch):
         "push the ball into the goal", RunResult(metrics=PUSH_METRICS), PUSH_CHECK)
     assert "Task diagnosis (computed from the 32 episodes):\nEpisodes by phase" in seen["text"]
     assert review.score == 4.0
+
+
+def test_a_failed_pose_clause_caps_the_score():
+    check = {"pass": False, "clauses": [
+        {"metric": "front_feet_off", "op": ">=", "value": 0.6, "actual": 0.2, "pass": False},
+        {"metric": "fell", "op": "<", "value": 0.5, "actual": 0.0, "pass": True},
+    ]}
+    review = critic.apply_limits(6.5, False, "rears up, drops back", {"fell": 0.0}, check)
+    assert review.score == 4.0 and "front_feet_off >= 0.6, got 0.2" in review.critique
+    assert "front_feet_off" in critic.SYSTEM

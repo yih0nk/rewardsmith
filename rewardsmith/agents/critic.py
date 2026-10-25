@@ -5,6 +5,7 @@ from typing import Any
 import anthropic
 
 from ..sim.base import RunResult
+from ..sim.go1_spec import POSE_METRICS
 from .base import Review
 from .checker import METRICS, describe
 from .claude import ask_json
@@ -35,6 +36,11 @@ Metrics: forward_velocity and lateral_velocity are mean m/s in the robot's own f
 (negative forward means backwards, positive lateral means left); yaw_rate is mean rad/s;
 base_height is mean metres (about 0.28 standing); upright is the mean up-axis z (1 = level);
 fell is 1 if it flipped; term_* are per-term episode rewards from the reward function.
+Pose metrics, over the same rollout: front_feet_off and rear_feet_off are the fraction of time
+both front (or both rear) feet are off the floor, front_off_held_s and rear_off_held_s the longest
+unbroken stretch of that in seconds, feet_off_mean the mean number of feet in the air, pitch_deg
+the mean body pitch (nose up positive; about 60-90 standing on the hind legs) and abs_roll_deg
+the mean roll. For a pose request, judge the pose from these and the frames, not from height.
 When the scene has a target object, the task metrics come from 32 fresh 10 s episodes. The
 target_* ones are about the ROBOT'S BASE and the target: target_reached is the fraction that got
 within reach of it, target_final_in the fraction that ended within reach, target_start_dist,
@@ -110,11 +116,12 @@ FELL_OR_HACKED_MAX = 3.0
 TASK_FAILED_MAX = 4.0  # the task-completion clause of the success check failed
 # Checker metrics whose clause says a scene task got done, beside the named outcomes
 # (push:ball:goal, reach:box, ...), which are never in checker.METRICS.
-TARGET_TASK_METRICS = frozenset({"target_reached", "target_final_dist"})
+TARGET_TASK_METRICS = frozenset({"target_reached", "target_final_dist"}) | frozenset(POSE_METRICS)
 
 
 def is_task_metric(metric: str) -> bool:
-    """True for a success-check clause about the task itself, not about falling or gait."""
+    """True for a success-check clause about the task itself (a scene outcome, reaching the
+    target, or a pose), not about falling or speed."""
     return metric in TARGET_TASK_METRICS or metric not in METRICS
 
 # What each phase means, and what the reward should change to get past it (scene_eval phases).
