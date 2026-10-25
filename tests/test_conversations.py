@@ -139,6 +139,82 @@ def test_follow_up_defaults_to_the_conversations_best(tmp_path):
     assert req["task"] == "push the ball to the goal"  # "keep going" adds nothing to the task
 
 
+def _check(*passes):
+    return {"pass": all(passes), "clauses": [{"metric": f"m{i}", "pass": p} for i, p in enumerate(passes)]}
+
+
+def _follow_up(conn, s, rid, text="keep going"):
+    """Run one follow-up turn on the fakes and mark it done; returns its request id."""
+    t = db.add_turn(conn, rid, text)
+    req, follow = prepare_turn(conn, s, db.claim_next_request(conn), FakeFollowupReader())
+    run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(), follow_up=follow)
+    db.set_request(conn, t, status="done")
+    return t
+
+
+def test_on_a_score_tie_the_follow_up_refines_the_run_that_meets_more_of_the_check(tmp_path):
+    s = _settings(tmp_path)
+    conn = db.connect(s.db_path)
+    rid = _first_turn(conn, s)
+    first, second, *rest = db.scored_candidates(conn, rid)
+    for c in rest:
+        db.set_candidate(conn, c["id"], score=1.0)
+    # The critic caps both at 4 (the task's criterion fails); the second meets more of the check.
+    db.set_candidate(conn, first["id"], score=4.0, check_result=_check(False, True, False))
+    db.set_candidate(conn, second["id"], score=4.0, check_result=_check(False, True, True))
+    db.add_turn(conn, rid, "keep going")
+    req, _ = prepare_turn(conn, s, db.claim_next_request(conn), FakeFollowupReader())
+    assert req["target_candidate_id"] == second["id"]
+
+
+def test_a_second_keep_going_builds_on_the_first_follow_up(tmp_path):
+    """The live failure: every turn scored 4.0, and turn 3 refined turn 1's run again, from scratch."""
+    s = _settings(tmp_path, max_rounds=1)
+    conn = db.connect(s.db_path)
+    rid = _first_turn(conn, s, "walk to the goal and avoid the blocks")
+    for c in db.scored_candidates(conn, rid):
+        db.set_candidate(conn, c["id"], score=4.0, check_result=_check(False, True))
+    t2 = _follow_up(conn, s, rid)
+    t2_runs = [c for c in db.scored_candidates(conn, rid) if c["request_id"] == t2]
+    for c in t2_runs:
+        db.set_candidate(conn, c["id"], score=4.0, check_result=_check(False, True))
+    t2_best = t2_runs[-1]  # every run ties: the latest wins
+    run_dir = s.artifacts_dir / t2 / f"r{t2_best['round_n']}c{t2_best['idx']}"
+    (run_dir / "params_2000000.pkl").write_bytes(b"")
+
+    t3 = db.add_turn(conn, rid, "keep going")
+    req, follow = prepare_turn(conn, s, db.claim_next_request(conn), FakeFollowupReader())
+    assert req["id"] == t3 and req["target_candidate_id"] == t2_best["id"]
+    assert follow.init_params == run_dir / "params_2000000.pkl"
+    # The editor sees both earlier turns' attempts, not just the target's own turn.
+    assert {a.turn for a in follow.history} == {1, 2}
+    assert len(follow.history) == len(db.scored_candidates(conn, rid))  # every scored run so far
+    events = db.get_request(conn, t3)["events"]
+    assert any("Training continues from its policy (params_2000000.pkl)" in e["message"] for e in events)
+
+
+def test_a_target_without_a_saved_policy_says_why_it_starts_over(tmp_path):
+    s = _settings(tmp_path)
+    conn = db.connect(s.db_path)
+    rid = _first_turn(conn, s)  # FakeSimulator saves no params_<steps>.pkl, like runs from before checkpoints
+    db.add_turn(conn, rid, "keep going")
+    req, follow = prepare_turn(conn, s, db.claim_next_request(conn), FakeFollowupReader())
+    assert follow.init_params is None
+    messages = [e["message"] for e in db.get_request(conn, req["id"])["events"]]
+    assert any("that run saved no policy to train on from" in m for m in messages)
+
+
+def test_format_history_names_the_turn_after_turn_one():
+    from rewardsmith.agents.base import Attempt
+    from rewardsmith.agents.editor import format_history
+
+    text = format_history([Attempt(2, 0, 4.0, "plows into blocks"), Attempt(1, 3, 4.0, "scrapes the purple block", 2)])
+    assert text.splitlines() == [
+        "- Round 2, candidate 0, score 4.0: plows into blocks",
+        "- Turn 2, round 1, candidate 3, score 4.0: scrapes the purple block",
+    ]
+
+
 def test_a_note_that_changes_the_scene_reruns_the_scene_writer(tmp_path):
     s = _settings(tmp_path)
     conn = db.connect(s.db_path)

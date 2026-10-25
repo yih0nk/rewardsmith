@@ -34,6 +34,7 @@ class Attempt:
     idx: int
     score: float
     critique: str
+    turn: int = 1  # the conversation turn it ran in; a follow-up's editor sees every turn's attempts
 
 
 @dataclass

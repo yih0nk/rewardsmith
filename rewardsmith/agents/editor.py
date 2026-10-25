@@ -41,7 +41,8 @@ def format_history(history: Sequence[Attempt]) -> str:
     lines = []
     for a in list(history)[-MAX_HISTORY:]:
         critique = a.critique if len(a.critique) <= MAX_CRITIQUE else a.critique[:MAX_CRITIQUE] + "..."
-        lines.append(f"- Round {a.round}, candidate {a.idx}, score {a.score:.1f}: {critique}")
+        where = f"Turn {a.turn}, round {a.round}" if a.turn > 1 else f"Round {a.round}"
+        lines.append(f"- {where}, candidate {a.idx}, score {a.score:.1f}: {critique}")
     return "\n".join(lines)
 
 
