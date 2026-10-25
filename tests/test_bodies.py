@@ -66,3 +66,12 @@ def test_simulator_takes_a_body(monkeypatch):
         PlaygroundSimulator(preset="smoke", body="hexapod")
     with pytest.raises(ValueError, match="unknown body"):
         sim.set_body("hexapod")
+
+
+def test_the_registry_imports_without_jax():
+    import subprocess
+    import sys
+
+    code = ("import sys; from rewardsmith.sim.bodies import get_body; get_body().describe(); "
+            "print(any(m in sys.modules for m in ('jax', 'mujoco', 'mujoco_playground')))")
+    assert subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip() == "False"
