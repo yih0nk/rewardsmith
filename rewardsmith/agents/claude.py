@@ -34,8 +34,9 @@ def ask_json(
 ) -> dict[str, Any]:
     """on_text, if given, gets the reply's text as it streams (see stream.IdeaStream).
 
-    fallback=False drops the server-side refusal fallback, for models that don't take
-    it (Claude Haiku 5.5). on_usage, if given, gets the reply's usage (token counts)."""
+    fallback=False drops the server-side refusal fallback. Claude Haiku 5.5 doesn't take
+    it, so it is always off there. on_usage, if given, gets the reply's usage (token counts)."""
+    fallback = fallback and not model.startswith("claude-haiku")
     extra: dict[str, Any] = {"betas": [FALLBACK_BETA], "fallbacks": "default"} if fallback else {}
     # Streamed so a large max_tokens doesn't hit the SDK's HTTP timeout.
     # Thinking counts toward max_tokens, so leave room for K full reward modules.
