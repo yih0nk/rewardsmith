@@ -6,6 +6,11 @@ every reward is written against that scene's features.
 Round 1: the writer drafts K rewards from the request.
 Round 2+: the editor revises the best reward so far, using the critic's notes.
 
+While a round trains, the live coach (coaching.py) watches each candidate's evals,
+comments on the board and stops candidates that are going nowhere. A stopped
+candidate's fix is drafted right away, so part of the next round is written before
+this one ends. Each candidate is judged by the critic as soon as its own run ends.
+
 A run can be paused (it stops at the next round boundary and later resumes from the
 database) or cancelled (it stops at the next checkpoint). See _checkpoint.
 """
@@ -23,11 +28,12 @@ from typing import Any, Sequence
 
 from . import config, db
 from .agents import checker as check_spec
-from .agents.base import Attempt, Checker, Critic, Draft, Editor, Ranker, Scener, Writer
+from .agents.base import Attempt, Checker, Coach, Critic, Draft, Editor, Ranker, Scener, Writer
 from .agents.editor import unified_diff
+from .coaching import ACTED, LAST_RUNNER, QUOTA, TOO_EARLY, Call, LiveCoach
 from .search import Halving
 from .sim import scene as scene_spec
-from .sim.base import Simulator, Stopped
+from .sim.base import RunResult, Simulator, Stopped
 from .sim.scene import SceneError, SceneSpec
 
 log = logging.getLogger("rewardsmith.worker")
@@ -80,6 +86,7 @@ def run_request(
     ranker: Ranker | None = None,
     checker: Checker | None = None,
     scener: Scener | None = None,
+    coach: Coach | None = None,
 ) -> Best | None:
     rid, text = req["id"], req["text"]
     halving = settings.halving if ranker is not None else ()
@@ -103,6 +110,8 @@ def run_request(
     # gated; it is settled before anything trains, so the target can't move once results come in.
     pending_spec = _start_success_spec(req, checker, scene)
     spec, check_error = (None, None) if pending_spec else _settle_spec(conn, req, checker, scene, sim)
+    # Next-round drafts the editor started while a round still trained (see _EarlyDrafts).
+    early = _EarlyDrafts(editor, text, env_doc, max(0, k // 2))
 
     for n in range(start, settings.max_rounds + 1):
         try:
@@ -111,6 +120,7 @@ def run_request(
             close_pool = getattr(sim, "close_warm_pool", None)
             if close_pool:
                 close_pool()
+            early.close()
             raise
         round_id = db.add_round(conn, rid, n)
         db.log_event(conn, rid, "round", f"Round {n} started")
@@ -122,11 +132,13 @@ def run_request(
             try:
                 on_idea = _idea_events(conn, rid)  # each idea goes on the board while Claude still writes
                 with db.stage(conn, rid, "writing", n):
-                    if best is None:
-                        ideas = {"on_idea": on_idea} if _accepts(writer.write, "on_idea") else {}
-                        drafts = [_as_draft(d) for d in writer.write(text, env_doc, k, **ideas)]
-                    else:
-                        drafts = _revise(editor, text, env_doc, ranked[: settings.carry_top], k, history, on_idea)
+                    drafts = early.collect(on_idea)  # already written while the last round trained
+                    rest, on_rest = k - len(drafts), _offset(on_idea, len(drafts))
+                    if rest and best is None:
+                        ideas = {"on_idea": on_rest} if _accepts(writer.write, "on_idea") else {}
+                        drafts += [_as_draft(d) for d in writer.write(text, env_doc, rest, **ideas)]
+                    elif rest:
+                        drafts += _revise(editor, text, env_doc, ranked[: settings.carry_top], rest, history, on_rest)
             except Exception as exc:
                 if best is None:  # nothing to show yet: let the worker fail the request
                     raise
@@ -165,54 +177,44 @@ def run_request(
             for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
                 db.set_candidate(conn, cid, status="training")
             jobs = [(src, out_dir) for _, src, out_dir in ready]
+            # Each candidate is judged the moment its run ends, while the others still train.
+            judge = _Judge(conn, lock, rid, n, critic, critic_request, spec, check_error, settings.artifacts_dir,
+                           [cid for cid, _, _ in ready], [src for _, src, _ in ready])
+            cull: Any = None
+            if halving and len(ready) > halving[-1]:
+                assert ranker is not None
+                cull = Halving(
+                    [out_dir for _, out_dir in jobs], halving[1:],
+                    rank=lambda snapshots: ranker.rank(text, snapshots),
+                    on_event=lambda msg: _locked(lock, db.log_event, conn, rid, "halving", msg),
+                    labels=[out_dir.name for _, out_dir in jobs],
+                )
+            live = None
+            if coach is not None and jobs:
+                live = _live_coach(conn, lock, rid, n, coach, critic_request, ready, spec if not check_error else None,
+                                   cull, early if n < settings.max_rounds else None, history)
+                cull = live
+            more: dict[str, Any] = {"cull": cull} if cull is not None else {}
+            if _accepts(sim.run_many, "on_done"):
+                more["on_done"] = judge.on_done
             # "training" covers each candidate's render too; progress.json has the per-candidate stage.
-            with db.stage(conn, rid, "training", n):
-                if halving and len(ready) > halving[-1]:
-                    assert ranker is not None
-                    cull = Halving(
-                        [out_dir for _, out_dir in jobs], halving[1:],
-                        rank=lambda snapshots: ranker.rank(text, snapshots),
-                        on_event=lambda msg: db.log_event(conn, rid, "halving", msg),
-                        labels=[out_dir.name for _, out_dir in jobs],
-                    )
-                    results = sim.run_many(jobs, scene, cull=cull)
-                else:
-                    results = sim.run_many(jobs, scene) if jobs else []
-
-            trained = []
-            for (cid, src, _), result in zip(ready, results):
-                if isinstance(result, str):  # a crashed run shouldn't stop the round
-                    db.set_candidate(conn, cid, status="failed", error=result)
-                    continue
-                if isinstance(result, Stopped):  # halving cut it short; no video, so no critic
-                    db.set_candidate(conn, cid, status="stopped", metrics=result.metrics, error=result.reason)
-                    continue
-                video = _relative(result.video_path, settings.artifacts_dir)
-                check = check_spec.evaluate(spec, result.metrics) if spec else None
-                if check is not None and check_error:
-                    check.update({"pass": False, "verified": False, "error": check_error})
-                db.set_candidate(conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
-                trained.append((cid, src, result, check))
-
-            _checkpoint(conn, rid, round_boundary=False)  # before the critic's Claude calls
-            # One Claude call per video, all at once; each takes tens of seconds.
-            with db.stage(conn, rid, "judging", n), ThreadPoolExecutor(max_workers=max(1, len(trained))) as pool:
-                reviews = list(pool.map(lambda t: _safe_review(critic, critic_request, t[2], t[3]), trained))
+            try:
+                with db.stage(conn, rid, "training", n):
+                    results = sim.run_many(jobs, scene, **more) if jobs else []
+                judge.finish(results)  # any job run_many didn't report as it ended
+                if live is not None:
+                    _log_coach_stats(conn, lock, rid, n, live)
+                _checkpoint(conn, rid, round_boundary=False)  # before waiting on the critic's Claude calls
+                trained, reviews = judge.wait()
+            finally:
+                if live is not None:
+                    live.close()
+                judge.close()
 
             round_best: Best | None = None
             for (cid, src, result, check), review in zip(trained, reviews):
-                if isinstance(review, Exception):  # one failed API call shouldn't cost the rest of the run
-                    error = f"The critic could not score this run: {_describe(review)}"
-                    db.set_candidate(conn, cid, status="failed", error=error)
+                if isinstance(review, Exception):  # _Judge already marked it failed
                     continue
-                db.set_candidate(
-                    conn,
-                    cid,
-                    status="scored",
-                    score=review.score,
-                    critique=review.critique,
-                    reward_hacking=int(getattr(review, "reward_hacking", False)),
-                )
                 scored = Best(cid, src, review.score, review.critique, result.metrics, check["pass"] if check else True)
                 ranked.append(scored)
                 history.append(Attempt(n, cids.index(cid), review.score, review.critique))
@@ -234,8 +236,185 @@ def run_request(
             if close_pool:
                 close_pool()
 
+    early.close()  # drafts for a round that won't run
     db.set_request(conn, rid, succeeded=int(best is not None and _succeeded(best, settings)))
     return best
+
+
+class _Judge:
+    """The critic for one round, one candidate at a time: each run is recorded and sent to
+    the critic the moment it ends (run_many's on_done), and its score lands on the board as
+    soon as the critic answers, while the rest of the round still trains."""
+
+    def __init__(
+        self, conn: sqlite3.Connection, lock: threading.Lock, rid: str, round_n: int, critic: Critic,
+        request: str, spec: list[dict[str, Any]] | None, check_error: str | None, artifacts_dir: Path,
+        cids: list[int], sources: list[str],
+    ):
+        self.conn, self.lock, self.rid, self.round_n = conn, lock, rid, round_n
+        self.critic, self.request, self.spec, self.check_error = critic, request, spec, check_error
+        self.artifacts_dir, self.cids, self.sources = artifacts_dir, cids, sources
+        self._seen: set[int] = set()
+        self._trained: dict[int, tuple[int, str, RunResult, dict[str, Any] | None]] = {}
+        self._reviews: dict[int, Future] = {}
+        self._stage: int | None = None
+        self._pool = ThreadPoolExecutor(max_workers=max(1, len(cids)), thread_name_prefix="critic")
+
+    def on_done(self, i: int, result: Any) -> None:
+        if i in self._seen:
+            return
+        self._seen.add(i)
+        cid = self.cids[i]
+        with self.lock:
+            if isinstance(result, str):  # a crashed run shouldn't stop the round
+                db.set_candidate(self.conn, cid, status="failed", error=result)
+                return
+            if isinstance(result, Stopped):  # halving or the coach cut it short; no video, so no critic
+                db.set_candidate(self.conn, cid, status="stopped", metrics=result.metrics, error=result.reason)
+                return
+            video = _relative(result.video_path, self.artifacts_dir)
+            check = check_spec.evaluate(self.spec, result.metrics) if self.spec else None
+            if check is not None and self.check_error:
+                check.update({"pass": False, "verified": False, "error": self.check_error})
+            db.set_candidate(self.conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
+            if db.control_of(self.conn, self.rid) == "cancel":
+                return  # the run stops at the next checkpoint: no Claude calls for it
+            if self._stage is None:
+                self._stage = db.start_stage(self.conn, self.rid, "judging", self.round_n)
+        self._trained[i] = (cid, self.sources[i], result, check)
+        self._reviews[i] = self._pool.submit(self._review, cid, result, check)
+
+    def finish(self, results: Sequence[Any]) -> None:
+        """Record whatever on_done hasn't seen (simulators without it report only here)."""
+        for i, result in enumerate(results):
+            self.on_done(i, result)
+
+    def wait(self) -> tuple[list[tuple[int, str, RunResult, dict[str, Any] | None]], list[Any]]:
+        """Every trained candidate in job order, with its Review or the exception the critic raised."""
+        order = sorted(self._trained)
+        reviews = [self._reviews[i].result() for i in order]
+        if self._stage is not None:
+            with self.lock:
+                db.end_stage(self.conn, self._stage)
+            self._stage = None
+        return [self._trained[i] for i in order], reviews
+
+    def close(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        if self._stage is not None:  # an error or a cancel left the stage open
+            with self.lock:
+                db.end_stage(self.conn, self._stage)
+            self._stage = None
+
+    def _review(self, cid: int, result: RunResult, check: dict[str, Any] | None) -> Any:
+        review = _safe_review(self.critic, self.request, result, check)
+        with self.lock:
+            if isinstance(review, Exception):  # one failed API call shouldn't cost the rest of the run
+                error = f"The critic could not score this run: {_describe(review)}"
+                db.set_candidate(self.conn, cid, status="failed", error=error)
+            else:
+                db.set_candidate(
+                    self.conn, cid, status="scored", score=review.score, critique=review.critique,
+                    reward_hacking=int(getattr(review, "reward_hacking", False)),
+                )
+        return review
+
+
+class _EarlyDrafts:
+    """Next-round drafts started mid-round: when the coach stops a candidate, the editor
+    revises its reward with the coach's diagnosis right away, so those drafts are ready
+    when the round ends. At most `limit` a round, so the round's best still get revised."""
+
+    def __init__(self, editor: Editor, text: str, env_doc: str, limit: int):
+        self.editor, self.text, self.env_doc, self.limit = editor, text, env_doc, limit
+        self._futures: list[Future] = []
+        self._pool = ThreadPoolExecutor(max_workers=max(1, limit), thread_name_prefix="early-draft")
+
+    def start(self, source: str, critique: str, metrics: dict[str, Any], history: Sequence[Attempt]) -> bool:
+        """Start one revision of source. False when this round already has its share."""
+        if len(self._futures) >= self.limit:
+            return False
+        extra = {"history": list(history)} if history and _accepts(self.editor.revise, "history") else {}
+
+        def draft() -> list[Draft]:
+            drafts = self.editor.revise(self.text, self.env_doc, source, critique, metrics, 1, **extra)
+            return [replace(_as_draft(d), parent=source) for d in drafts[:1]]
+
+        self._futures.append(self._pool.submit(draft))
+        return True
+
+    def collect(self, on_idea: Any = None) -> list[Draft]:
+        """The finished drafts (waiting for any still being written). A failed one is skipped."""
+        futures, self._futures = self._futures, []
+        drafts: list[Draft] = []
+        for future in futures:
+            try:
+                drafts += future.result()
+            except Exception:
+                log.exception("an early draft failed; the round writes that slot normally")
+        if on_idea is not None:
+            for i, d in enumerate(drafts):
+                if d.idea:
+                    on_idea(i, d.idea)
+        return drafts
+
+    def close(self) -> None:
+        self._futures = []
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _live_coach(
+    conn: sqlite3.Connection, lock: threading.Lock, rid: str, round_n: int, coach: Coach, request: str,
+    ready: list[tuple[int, str, Path]], spec: list[dict[str, Any]] | None, halving: Any,
+    early: "_EarlyDrafts | None", history: Sequence[Attempt],
+) -> LiveCoach:
+    """The round's LiveCoach, wired to the board (coach events) and to early drafts."""
+    idx = [int(out_dir.name.rsplit("c", 1)[1]) for _, _, out_dir in ready]  # job -> candidate idx
+
+    def on_note(call: Call, action: str) -> None:
+        obs = call.observation
+        assert obs is not None
+        after = {ACTED: " Stopping it.", TOO_EARLY: " (Too early to stop it.)",
+                 LAST_RUNNER: " (Kept: it is the last one still training.)",
+                 QUOTA: " (Kept: half the round always finishes.)"}.get(action, "")
+        message = f"Candidate {idx[call.idx] + 1} at {call.steps / 1e6:.1f}M steps: {obs.note}{after}"
+        _locked(lock, db.log_event, conn, rid, "coach", message, round_n=round_n, candidate=idx[call.idx])
+
+    def on_stop(i: int, call: Call, metrics: dict[str, Any]) -> None:
+        obs = call.observation
+        if early is None or obs is None:
+            return
+        critique = (
+            f"Live training coach, stopping this reward at {call.steps:,} training steps ({obs.verdict}). "
+            f"What it saw: {obs.note}\nWhat to change: {obs.diagnosis}"
+        )
+        if early.start(ready[i][1], critique, metrics, history):
+            _locked(lock, db.log_event, conn, rid, "coach",
+                    f"Drafting a fix for candidate {idx[i] + 1} for round {round_n + 1} while the others train",
+                    round_n=round_n, candidate=idx[i])
+
+    return LiveCoach(coach, request, [(src, out_dir) for _, src, out_dir in ready], spec=spec, halving=halving,
+                     on_note=on_note, on_stop=on_stop)
+
+
+def _log_coach_stats(conn: sqlite3.Connection, lock: threading.Lock, rid: str, round_n: int, live: LiveCoach) -> None:
+    st = live.stats()
+    log.info("request %s round %d coach: %s", rid, round_n, st)
+    if not st["calls"]:
+        return
+    latency = f", median {st['median_latency_s']:.1f} s" if st["median_latency_s"] is not None else ""
+    _locked(lock, db.log_event, conn, rid, "coach",
+            f"Coach: {st['calls']} looks{latency}, {st['stopped']} stopped, ${st['cost_usd']:.4f}", round_n=round_n)
+
+
+def _locked(lock: threading.Lock, fn: Any, *args: Any, **kwargs: Any) -> Any:
+    with lock:
+        return fn(*args, **kwargs)
+
+
+def _offset(on_idea: Any, by: int) -> Any:
+    """on_idea for drafts numbered after the first `by`."""
+    return None if on_idea is None else (lambda i, idea: on_idea(by + i, idea))
 
 
 def _resume_state(
@@ -573,6 +752,23 @@ def build_ranker(settings: config.Settings) -> Ranker | None:
     return ClaudeRanker(anthropic.Anthropic(), settings.model)
 
 
+def build_coach(settings: config.Settings, req: dict[str, Any] | None = None) -> Coach | None:
+    """The live coach for a request: its own choice ("off" or a model), else the worker's setting.
+    Offline (fake LLM) any choice but "off" gets the fake coach."""
+    model = (req or {}).get("coach") or settings.coach
+    if model == "off":
+        return None
+    if settings.fake_llm:
+        from .agents.fake import FakeCoach
+
+        return FakeCoach()
+    import anthropic
+
+    from .agents.coach import ClaudeCoach
+
+    return ClaudeCoach(anthropic.Anthropic(), model)
+
+
 def build_checker(settings: config.Settings) -> Checker:
     if settings.fake_llm:
         from .agents.fake import FakeChecker
@@ -597,7 +793,8 @@ def main() -> None:
     checker = build_checker(settings)
     scener = build_scener(settings)
     log.info(
-        "worker up (fake_sim=%s, fake_llm=%s, editor=%s)", settings.fake_sim, settings.fake_llm, type(editor).__name__
+        "worker up (fake_sim=%s, fake_llm=%s, editor=%s, coach=%s)",
+        settings.fake_sim, settings.fake_llm, type(editor).__name__, settings.coach,
     )
 
     while True:
@@ -608,7 +805,8 @@ def main() -> None:
         log.info("running %s: %s", req["id"], req["text"])
         try:
             best = run_request(
-                conn, settings, req, writer, editor, critic, sim, ranker=ranker, checker=checker, scener=scener
+                conn, settings, req, writer, editor, critic, sim, ranker=ranker, checker=checker, scener=scener,
+                coach=build_coach(settings, req),
             )
             db.set_request(conn, req["id"], status="done", control=None)  # a late pause has nothing left to pause
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")

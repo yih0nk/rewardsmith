@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from .base import Cull, RunResult, Stopped
+from .base import Cull, OnDone, RunResult, Stopped
 from .progress import point_metrics, read_progress
 from .run_one import FRAMES_DIR, RESULT_FILE
 from .scene import SceneSpec
@@ -171,11 +171,13 @@ def run_in_processes(
     cull: Cull | None = None,
     behavior_metrics: bool = False,
     sim_options: dict[str, object] | None = None,
+    on_done: OnDone | None = None,
 ) -> list[RunResult | Stopped | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs.
 
     Every job trains in scene. Jobs go to pool's warm processes first, then to newly
     started ones. cull, if given, is asked every poll which running jobs to stop early.
+    on_done, if given, gets each job's result as soon as that job ends.
     """
     if not jobs:
         return []
@@ -185,6 +187,11 @@ def run_in_processes(
     results: list[RunResult | Stopped | str | None] = [None] * len(jobs)
     pending = list(enumerate(jobs))
     running: dict[int, tuple[subprocess.Popen, Path, float]] = {}
+
+    def finish(i: int, result: RunResult | Stopped | str) -> None:
+        results[i] = result
+        if on_done:
+            on_done(i, result)
 
     while pending or running:
         while pending and len(running) < slots:
@@ -201,18 +208,18 @@ def run_in_processes(
                 if time.monotonic() - started > timeout_s:
                     proc.kill()
                     proc.wait()
-                    results[i] = f"Timeout: training took over {timeout_s:.0f}s"
                     del running[i]
+                    finish(i, f"Timeout: training took over {timeout_s:.0f}s")
                 continue
-            results[i] = _collect(out_dir, proc.returncode)
             del running[i]
+            finish(i, _collect(out_dir, proc.returncode))
         if cull and running:
             for i, reason in cull(set(running)).items():
                 if i in running:
                     proc, out_dir, _ = running.pop(i)
                     proc.kill()
                     proc.wait()
-                    results[i] = _stopped(out_dir, reason)
+                    finish(i, _stopped(out_dir, reason))
 
     return [r if r is not None else "Error: no result" for r in results]
 

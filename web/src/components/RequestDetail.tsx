@@ -9,6 +9,7 @@ import {
 import { candidateName, candidateState, isScored } from "../stages";
 import { QueuePlace, RenderReply, runAnchor } from "../thread";
 import CandidateCard from "./CandidateCard";
+import CoachFeed from "./CoachFeed";
 import Critique, { inline } from "./Critique";
 import SuccessCheck from "./SuccessCheck";
 import DiffView from "./DiffView";
@@ -186,6 +187,7 @@ export default function RequestDetail({
               now={now}
             />
             <RunControls run={detail} />
+            <CoachFeed events={detail.events} />
             <div className="success-spec">
               <span className="label">
                 <Explain term="successCheck">Success check</Explain>

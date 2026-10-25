@@ -29,6 +29,10 @@ class Stopped:
 # Returns {job index: reason} for the jobs to stop now (see rewardsmith.search.Halving).
 Cull = Callable[[set[int]], dict[int, str]]
 
+# Called by run_many the moment a job ends, with its index and what run_many will return for it,
+# so the caller can start on one result (the critic) while the other jobs still train.
+OnDone = Callable[[int, "RunResult | Stopped | str"], None]
+
 
 class Simulator(Protocol):
     """scene (optional everywhere) is the request's scene spec; None means the plain flat floor."""
@@ -46,23 +50,27 @@ class Simulator(Protocol):
         ...
 
     def run_many(
-        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None,
+        on_done: OnDone | None = None,
     ) -> list["RunResult | Stopped | str"]:
         """Run several (source, out_dir) jobs. Same order as jobs; a failed job gives its error text.
 
         With cull, all jobs train at once and the ones it names are stopped early.
+        on_done, if given, hears about each job as it ends (optional for simulators).
         """
         ...
 
 
 def run_sequentially(
-    sim: Simulator, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None
+    sim: Simulator, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, on_done: OnDone | None = None
 ) -> list[RunResult | str]:
     """run_many for simulators that train one job at a time."""
     results: list[RunResult | str] = []
-    for source, out_dir in jobs:
+    for i, (source, out_dir) in enumerate(jobs):
         try:
             results.append(sim.run(source, out_dir, scene))
         except Exception as exc:
             results.append(f"{type(exc).__name__}: {exc}")
+        if on_done:
+            on_done(i, results[-1])
     return results

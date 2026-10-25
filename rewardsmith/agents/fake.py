@@ -5,7 +5,7 @@ from typing import Any
 
 from ..sim import scene
 from ..sim.base import RunResult
-from .base import Review
+from .base import Observation, Review
 from .checker import NO_FALL, SpecError, core_intents, required_actions, requires_reach, validate_for_scene
 from .editor import unified_diff
 
@@ -221,3 +221,19 @@ class FakeRanker:
     def rank(self, request: str, snapshots: list[dict[str, Any]]) -> list[int]:
         """Highest episode reward first: fine offline, though rewards don't compare in real runs."""
         return sorted(range(len(snapshots)), key=lambda i: -(snapshots[i].get("episode_reward") or 0.0))
+
+
+class FakeCoach:
+    """Commentary read straight off the fake progress curve. Always says continue, so
+    offline runs keep every candidate, as they did before the coach existed."""
+
+    def observe(self, request, source, curve, total_steps, spec=None, frames=()) -> Observation:
+        point = curve[-1] if curve else {}
+        terms = {k: v for k, v in (point.get("terms") or {}).items() if isinstance(v, (int, float))}
+        reward = point.get("episode_reward") or 0.0
+        before = (curve[-2].get("episode_reward") or 0.0) if len(curve) > 1 else 0.0
+        trend = "rising" if reward > before else "flat"
+        top = max(terms, key=lambda k: abs(terms[k]), default=None)
+        lead = f"; the biggest term is {top} ({terms[top]:.2f})" if top else ""
+        note = f"Episode reward {reward:.2f} and {trend}{lead}."
+        return Observation(verdict="continue", note=note, diagnosis="Fake coach: nothing to change yet.")

@@ -43,6 +43,17 @@ class Review:
     reward_hacking: bool = False  # the critic's verdict, stored for the board and hall of fame
 
 
+@dataclass
+class Observation:
+    """The live coach's read of one candidate at one eval (see agents/coach.py)."""
+
+    verdict: str  # continue | revise | kill
+    note: str  # one plain-English line for the board
+    diagnosis: str  # for the editor: what to change in the reward and why
+    latency_s: float = 0.0
+    cost_usd: float = 0.0
+
+
 class Writer(Protocol):
     def write(self, request: str, env_doc: str, k: int) -> list[Draft] | list[str]: ...
 
@@ -88,3 +99,17 @@ class Scener(Protocol):
     def make(self, request: str) -> dict[str, Any]: ...
 
     def fix(self, request: str, spec: dict[str, Any], error: str) -> dict[str, Any]: ...
+
+
+class Coach(Protocol):
+    def observe(
+        self,
+        request: str,
+        source: str,
+        curve: Sequence[dict[str, Any]],
+        total_steps: int,
+        spec: list[dict[str, Any]] | None = None,
+        frames: Sequence[bytes] = (),
+    ) -> Observation:
+        """curve: the candidate's progress.json curve so far (eval 0 is the untrained policy)."""
+        ...

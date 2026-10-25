@@ -29,8 +29,14 @@ def ask_json(
     effort: str = "high",
     max_tokens: int = 64000,
     on_text: Callable[[str], None] | None = None,
+    fallback: bool = True,
+    on_usage: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
-    """on_text, if given, gets the reply's text as it streams (see stream.IdeaStream)."""
+    """on_text, if given, gets the reply's text as it streams (see stream.IdeaStream).
+
+    fallback=False drops the server-side refusal fallback, for models that don't take
+    it (Claude Haiku 5.5). on_usage, if given, gets the reply's usage (token counts)."""
+    extra: dict[str, Any] = {"betas": [FALLBACK_BETA], "fallbacks": "default"} if fallback else {}
     # Streamed so a large max_tokens doesn't hit the SDK's HTTP timeout.
     # Thinking counts toward max_tokens, so leave room for K full reward modules.
     with client.beta.messages.stream(
@@ -39,8 +45,7 @@ def ask_json(
         system=system,
         messages=[{"role": "user", "content": content}],
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
-        betas=[FALLBACK_BETA],
-        fallbacks="default",
+        **extra,
     ) as stream:
         if on_text is not None:
             for delta in stream.text_stream:
@@ -51,6 +56,8 @@ def ask_json(
                     on_text = None
                     break
         response = stream.get_final_message()
+    if on_usage is not None:
+        on_usage(response.usage)
     if response.stop_reason == "refusal":
         raise RefusalError(str(response.stop_details))
     if response.stop_reason == "max_tokens":

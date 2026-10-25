@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from .base import Cull, RunResult, Stopped, run_sequentially
+from .base import Cull, OnDone, RunResult, Stopped, run_sequentially
 from .go1_spec import describe
 from .progress import ProgressWriter
 from .scene import EMPTY, SceneSpec
@@ -77,11 +77,12 @@ class FakeSimulator:
         )
 
     def run_many(
-        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None,
+        on_done: OnDone | None = None,
     ) -> list[RunResult | Stopped | str]:
-        results: list[RunResult | Stopped | str] = list(run_sequentially(self, jobs, scene))
         if cull is None:
-            return results
+            return list(run_sequentially(self, jobs, scene, on_done))
+        results: list[RunResult | Stopped | str] = list(run_sequentially(self, jobs, scene))
         # Every fake run is already "done", with its whole curve on disk; let the cull
         # pick its rungs from those curves, then stop whoever it names.
         live = {i for i, r in enumerate(results) if isinstance(r, RunResult)}
@@ -93,6 +94,9 @@ class FakeSimulator:
                     r = results[i]
                     results[i] = Stopped(reason=reason, metrics=r.metrics, reward_curve=r.reward_curve)
             time.sleep(0.01)
+        if on_done:  # after the cull: a run it stopped must not reach the critic
+            for i, r in enumerate(results):
+                on_done(i, r)
         return results
 
 
