@@ -17,9 +17,18 @@ FAKE_TOTAL_STEPS = 10_000_000  # the "round" preset's num_timesteps
 FAKE_EVALS = 20
 FAKE_COMPILE_S = 45.0  # roughly what the real first eval waits on JIT
 FAKE_EVAL_S = 9.0
-# CPython 3.11.5's parser can fail with "AST constructor recursion depth mismatch" when two
-# threads parse at once (fixed in later 3.11 releases); the worker gates drafts in threads.
+# CPython 3.11.5's parser can fail with "AST constructor recursion depth mismatch" (gh-106905,
+# fixed in 3.11.6) when threads parse at once or after an earlier parse error; the worker gates
+# drafts in threads. So parse one thread at a time, and retry once on that error.
 _PARSE_LOCK = threading.Lock()
+
+
+def _parse(source: str) -> ast.Module:
+    with _PARSE_LOCK:
+        try:
+            return ast.parse(source)
+        except SystemError:
+            return ast.parse(source)
 
 
 class FakeSimulator:
@@ -34,8 +43,7 @@ class FakeSimulator:
 
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
         try:
-            with _PARSE_LOCK:
-                tree = ast.parse(source)
+            tree = _parse(source)
         except SyntaxError as exc:
             return f"SyntaxError: {exc}"
         if not any(isinstance(n, ast.FunctionDef) and n.name == "reward" for n in tree.body):
@@ -160,8 +168,7 @@ def _term_names(source: str) -> list[str]:
     """String keys of the first dict literal the reward returns, or task and energy."""
     fallback = ["task", "energy"]
     try:
-        with _PARSE_LOCK:
-            tree = ast.parse(source)
+        tree = _parse(source)
     except SyntaxError:
         return fallback
     for node in ast.walk(tree):
