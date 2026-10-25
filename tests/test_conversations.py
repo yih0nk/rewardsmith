@@ -112,6 +112,8 @@ def test_follow_up_keeps_the_scene_and_check_and_revises_the_target(tmp_path):
 
     turn = db.get_request(conn, t2)
     assert turn["scene"] == first["scene"] and turn["success_spec"] == first["success_spec"]
+    # The note says "before"; the check validator would read that as a new, ordered task.
+    assert turn["success_check_error"] is None
     assert not scener.calls and not checker.calls  # same scene and check: no calls for them
     assert not [c for c in writer.calls if c[0] == "write"]
     (name, args), = [c for c in editor.calls if c[0] == "revise"]
@@ -149,6 +151,7 @@ def test_a_note_that_changes_the_scene_reruns_the_scene_writer(tmp_path):
     run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(), checker=FakeChecker(),
                 scener=scener, follow_up=follow)
     assert scener.calls and db.get_request(conn, t2)["success_spec"]
+    assert "walk forward" in scener.calls[0][1][0] and "add a box" in scener.calls[0][1][0]  # the task, not the note alone
     assert any("changes the scene" in e["message"] for e in db.get_request(conn, t2)["events"])
 
 

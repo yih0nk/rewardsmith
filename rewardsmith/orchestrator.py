@@ -110,7 +110,7 @@ def run_request(
 ) -> Best | None:
     """follow_up: round 1 revises its parent instead of writing from scratch (see prepare_turn)."""
     rid = req["id"]
-    text = req.get("task") or req["text"]  # a follow-up's task carries the user's notes
+    text = _task(req)  # a follow-up's task carries the user's notes
     halving = settings.halving if ranker is not None else ()
     k = halving[0] if halving else settings.candidates_per_round
     # A resumed run picks up after its last finished round, with the same scene and check.
@@ -506,7 +506,7 @@ def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | 
     Rejected specs go back to the scene writer with the validator's errors, like
     the reward gate. Every attempt is logged as a "scene" event.
     """
-    rid, text = req["id"], req["text"]
+    rid, text = req["id"], _task(req)
     if req.get("scene") is not None:
         scene = scene_spec.parse(req["scene"])
         db.log_event(conn, rid, "scene", f"Using the scene the request came with. {scene.summary()}")
@@ -591,7 +591,7 @@ def _start_success_spec(req: dict[str, Any], checker: Checker | None, scene: Sce
         return None
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        return pool.submit(_write_spec, checker, req["text"], scene)
+        return pool.submit(_write_spec, checker, _task(req), scene)
     finally:
         pool.shutdown(wait=False)
 
@@ -623,17 +623,21 @@ def _success_spec(
     if the checker fails."""
     rid = req["id"]
     if req.get("success_spec"):
+        if (req.get("turn") or 1) > 1 and not req.get("scene_changed"):
+            # A follow-up keeps its parent's check, validated against the parent's task: the
+            # note ("get behind the ball before pushing") would read as a new task.
+            return req["success_spec"]
         # Keep stored specs immutable, but do not certify an old locomotion-only
         # check as proof of a scene objective after an upgrade.
         try:
-            check_spec.validate_for_scene(req["success_spec"], req["text"], scene)
+            check_spec.validate_for_scene(req["success_spec"], _task(req), scene)
         except check_spec.SpecError as exc:
             db.set_request(conn, rid, success_check_error=_describe(exc))
         return req["success_spec"]
     if checker is None:
         return None
     try:
-        spec = pending.result() if pending is not None else _write_spec(checker, req["text"], scene)
+        spec = pending.result() if pending is not None else _write_spec(checker, _task(req), scene)
     except Exception as exc:
         log.exception("success check for %s failed", rid)
         db.log_event(conn, rid, "check", f"Could not write the success check ({type(exc).__name__}); using: don't fall")
@@ -642,6 +646,11 @@ def _success_spec(
     db.set_success_spec(conn, rid, spec)
     db.log_event(conn, rid, "check", "Success check: " + ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in spec))
     return spec
+
+
+def _task(req: dict[str, Any]) -> str:
+    """What the agents work toward: a follow-up's task (the behavior plus the user's notes), else the text."""
+    return req.get("task") or req["text"]
 
 
 def _as_draft(item: Draft | str | tuple[str, str | None]) -> Draft:
