@@ -7,7 +7,7 @@ objects adds per-object features on top: features_for(scene) lists them all.
 
 from dataclasses import dataclass
 
-from .scene import EMPTY, SceneObject, SceneSpec
+from .scene import EMPTY, SceneObject, SceneSpec, Structure
 
 CTRL_DT = 0.02  # seconds per policy step
 EPISODE_STEPS = 1000  # 20 s
@@ -123,21 +123,36 @@ GOAL_FEATURES: tuple[Feature, ...] = (
 )
 
 
-def object_features(obj: SceneObject, alias: str | None = None) -> tuple[Feature, ...]:
-    """Features for one object, named after it (or after alias, e.g. "target")."""
-    rows = OBJECT_FEATURES + (MOVABLE_FEATURES if obj.movable else ())
+# With something to stand on (stairs, ramps, gaps, fixed boxes): where the ground is.
+TERRAIN_FEATURES: tuple[Feature, ...] = (
+    Feature("feet_ground_z", (4,), "height of the ground under each foot, m (0 on the floor, the step or ramp top "
+                                   "under it otherwise); feet order FR, FL, RR, RL"),
+    Feature("base_ground_z", (), "height of the ground under the base, m; how high the robot has climbed"),
+    Feature("base_clearance", (), "base height above the ground under it, m; about 0.28 standing"),
+    Feature("ground_ahead", (5,), "ground height 0.2, 0.4, 0.6, 0.8 and 1.0 m ahead of the base along its heading, m"),
+)
+
+
+def object_features(obj: SceneObject | Structure, alias: str | None = None) -> tuple[Feature, ...]:
+    """Features for one object or structure, named after it (or after alias, e.g. "target")."""
+    rows = OBJECT_FEATURES + (MOVABLE_FEATURES if getattr(obj, "movable", False) else ())
     who = alias or obj.name
     return tuple(Feature(f"{who}_{suffix}", shape, meaning) for suffix, shape, meaning in rows)
 
 
 def scene_features(scene: SceneSpec) -> tuple[Feature, ...]:
     out: list[Feature] = []
-    for obj in scene.objects:
+    for obj in scene.relevant_objects:
         out += object_features(obj)
-    if scene.target_object is not None:
-        out += object_features(scene.target_object, alias="target")
+    for st in scene.relevant_structures:
+        out += object_features(st)
+    target = scene.target_object or scene.target_structure
+    if target is not None:
+        out += object_features(target, alias="target")
     if scene.goal_object is not None:
         out += GOAL_FEATURES
+    if scene.has_ground:
+        out += TERRAIN_FEATURES
     return tuple(out)
 
 
@@ -197,26 +212,37 @@ def describe(
     )
     if scene.terrain == "rough":
         lines.append("- On rough ground, base_height and feet_height are world z, so they vary with the bumps (up to 5 cm).")
-    if scene.objects:
+    sensed = [o.name for o in scene.relevant_objects] + [st.name for st in scene.relevant_structures]
+    if scene.structures:
+        lines += ["", "Structures: their features describe one anchor point: the top landing of stairs and ramps "
+                      "(<name>_pos[2] is its height), the far platform of a gap, a wall's centre, a field's far edge."]
+    if sensed:
         lines += ["", "Per object, for each object name above (e.g. state[\"ball_dist\"]):"]
         for suffix, shape, meaning in OBJECT_FEATURES + MOVABLE_FEATURES:
             only = " (movable objects only)" if (suffix, shape, meaning) in MOVABLE_FEATURES else ""
             lines.append(f"- state[\"<name>_{suffix}\"] ({'scalar' if not shape else f'shape {shape}'}){only}: {meaning}")
         target = scene.target_object
-        if target is not None:
+        named = target or scene.target_structure
+        if named is not None:
             lines.append(f"- the same keys with \"target_\" instead of \"<name>_\" (e.g. state[\"target_dist\"]) "
-                         f"refer to the target object, {target.name}")
-        lines.append(f"Objects present: {', '.join(o.name for o in scene.objects)}. "
+                         f"refer to the target, {named.name}")
+        lines.append(f"Objects with features: {', '.join(sensed)}. "
                      "Use only these names; any other key raises a KeyError.")
         if scene.goal_object is not None:
             for f in GOAL_FEATURES:
                 lines.append(f"- state[\"{f.name}\"] ({'scalar' if not f.shape else f'shape {f.shape}'}): {f.meaning}")
-        if target is not None:
-            lines.append(f"The base is within reach of {target.name} when {target.name}_dist < "
-                         f"{target.reach_radius:.2f} m.")
+        if named is not None:
+            lines.append(f"The base is within reach of {named.name} when {named.name}_dist < "
+                         f"{named.reach_radius:.2f} m.")
         if scene.goal_object is not None:
             lines.append(f"The task is done when {target.name} is in {scene.goal}: target_to_goal_dist < "
                          f"{scene.goal_radius:.2f} m. Success is measured on the object, not on the robot.")
+    if scene.has_ground:
+        lines += ["", "Terrain (the scene has steps, ramps or platforms to stand on):"]
+        for f in TERRAIN_FEATURES:
+            lines.append(f"- state[\"{f.name}\"] ({'scalar' if not f.shape else f'shape {f.shape}'}): {f.meaning}")
+        lines.append("- base_height and feet_height stay world z; subtract base_ground_z / feet_ground_z for height "
+                     "above the ground. Climbing shows up as base_ground_z rising.")
     lines += [
         "",
         "How the reward is used:",
@@ -246,7 +272,7 @@ def describe(
             "gait, posture, foot and smoothness terms have no effect: leave them out. action and prev_action are "
             "the walker's joint actions."
         )
-    if scene.objects:
+    if scene.objects or scene.structures:
         lines += [
             "- Objects are placed fresh each episode (ranges above), and the policy observes each object's "
             "relative position, so reward the skill (e.g. distance or heading to the object), not a fixed spot.",

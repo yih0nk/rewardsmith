@@ -19,6 +19,14 @@ stock flat floor, places every object afresh at each reset, adds per-object
 features for the reward, and appends each object's relative position to the
 policy's observation so it can learn the skill.
 
+Structures (stairs, ramps, walls, gaps, obstacle fields) are mocap bodies too,
+placed like objects but facing the robot. Only `relevant` objects and structures
+get features and observation inputs. A scene with something to stand on also
+gets terrain features: the ground height under each foot and the base, and a few
+samples ahead of the robot, from the scene's box tops (the rough heightfield is
+not included). The observation is always the joystick's first, with the scene's
+inputs appended: relevant objects, then relevant structures, then the terrain.
+
 The policy does not observe the episode time: the round preset resets every
 training env after about 320 steps (6.4 s), so a time input is out of range for
 most of a 20 s episode, and scene policies flipped once it was.
@@ -45,7 +53,7 @@ from .go1_spec import (  # noqa: F401
     COMMAND_LIMITS, COMMAND_SMOOTHING, STOCK_PREFIX, STOCK_PROFILES, STOCK_SCALES, STOCK_WEIGHT, features_for,
 )
 from .reward_slot import load_reward
-from .scene import EMPTY, SceneObject, SceneSpec
+from .scene import EMPTY, SceneObject, SceneSpec, Structure
 
 BASE_ENV = "Go1JoystickFlatTerrain"
 # Config overrides that turn on Playground's random pushes: every 1-3 s a velocity kick
@@ -58,6 +66,7 @@ WALKER_STATE = 48  # the joystick "state" observation the walker reads; the comm
 # The robot's slice of qpos/qvel: free joint + 12 joints. Movable scene objects come after.
 ROBOT_NQ, ROBOT_NV = 19, 18
 MAX_OBS_DIST = 10.0  # m; clip object distances in the observation
+AHEAD = (0.2, 0.4, 0.6, 0.8, 1.0)  # m ahead of the base where ground_ahead samples the ground
 
 
 class RewardError(ValueError):
@@ -73,6 +82,13 @@ class _Placed:
     mocap_id: int  # -1 for movable objects
     qpos_adr: int  # free joint address, movable objects only
     dof_adr: int
+
+
+@dataclass(frozen=True)
+class _PlacedStructure:
+    st: Structure
+    body_id: int
+    mocap_id: int
 
 
 class Go1Env(joystick.Joystick):
@@ -97,7 +113,20 @@ class Go1Env(joystick.Joystick):
         else:
             # Joystick.__init__ always loads a stock scene file; load the compiled scene instead.
             go1_base.Go1Env.__init__(self, xml_path=scene_xml.write_scene_xml(scene).as_posix(), config=config)
+            self._undamp_launched()
             self._post_init()
+
+    def _undamp_launched(self) -> None:
+        """Go1's base env sets dof_damping[6:] to its PD gain, which also lands on every scene
+        object's free joint after the robot. Launched objects must keep their speed, so theirs go
+        back to 0 (other movable objects keep the damping their tasks were tuned with)."""
+        launched = [o for o in self._scene.objects if o.movable and o.speed[1] > 0]
+        if not launched:
+            return
+        for o in launched:
+            adr = self._mj_model.jnt_dofadr[self._mj_model.joint(scene_xml.body_name(o)).id]
+            self._mj_model.dof_damping[adr:adr + 6] = 0.0
+        self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
 
     def _post_init(self) -> None:
         super()._post_init()
@@ -107,6 +136,27 @@ class Go1Env(joystick.Joystick):
         self._soft_lowers = self._lowers * self._config.soft_joint_pos_limit_factor
         self._soft_uppers = self._uppers * self._config.soft_joint_pos_limit_factor
         self._placed = tuple(self._locate(o) for o in self._scene.objects)
+        self._structs = tuple(
+            _PlacedStructure(st, b.id, int(self.mj_model.body_mocapid[b.id]))
+            for st in self._scene.structures for b in [self.mj_model.body(scene_xml.body_name(st))]
+        )
+        self._ground = self._ground_geoms()
+
+    def _ground_geoms(self) -> tuple[jax.Array, jax.Array] | None:
+        """(geom ids, half sizes) of every box the robot can stand on, or None."""
+        ids, halves = [], []
+        for o in self._scene.objects:
+            if o.kind == "box" and not o.movable:
+                ids.append(self.mj_model.geom(scene_xml.body_name(o)).id)
+                halves.append([0.5 * x for x in o.size])
+        for st in self._scene.structures:
+            for i, pc in enumerate(st.pieces):
+                if pc.kind == "box" and pc.ground:
+                    ids.append(self.mj_model.geom(scene_xml.piece_name(st, i)).id)
+                    halves.append(list(pc.half))
+        if not ids:
+            return None
+        return jnp.array(ids, dtype=jnp.int32), jnp.array(halves, dtype=jnp.float32)
 
     def _locate(self, obj: SceneObject) -> _Placed:
         body = self.mj_model.body(scene_xml.body_name(obj))
@@ -151,6 +201,42 @@ class Go1Env(joystick.Joystick):
             "base_yaw": self._yaw(data),
             "time": jnp.asarray(data.time, dtype=jnp.float32),
             **self.scene_features(data),
+            **self.terrain_features(data),
+        }
+
+    def ground_height(self, data: mjx.Data, xy: jax.Array) -> jax.Array:
+        """Height of the walkable surface under each point of xy (n, 2): the highest box top
+        the vertical line through it meets, else 0 (the floor). Ramps' tilted tops included."""
+        if self._ground is None:
+            return jnp.zeros(xy.shape[0])
+        ids, half = self._ground
+        pos, rot = data.geom_xpos[ids], data.geom_xmat[ids]  # (g, 3), (g, 3, 3)
+        normal = rot[:, :, 2]  # top face normal, world frame
+        top = pos + normal * half[:, 2:3]
+        nz = jnp.maximum(normal[:, 2], 1e-3)
+        d = xy[None, :, :] - top[:, None, :2]  # (g, n, 2)
+        z = top[:, None, 2] - (normal[:, None, 0] * d[..., 0] + normal[:, None, 1] * d[..., 1]) / nz[:, None]
+        point = jnp.concatenate([xy[None].repeat(len(ids), 0), z[..., None]], axis=-1) - pos[:, None, :]
+        local = jnp.einsum("gji,gnj->gni", rot, point)  # rot^T @ point
+        inside = (jnp.abs(local[..., 0]) <= half[:, None, 0]) & (jnp.abs(local[..., 1]) <= half[:, None, 1])
+        inside &= normal[:, None, 2] > 0.3  # a box on its side has no top to stand on
+        return jnp.maximum(jnp.max(jnp.where(inside, z, 0.0), axis=0), 0.0)
+
+    def terrain_features(self, data: mjx.Data) -> dict[str, jax.Array]:
+        """See go1_spec.TERRAIN_FEATURES. Empty unless the scene has something to stand on."""
+        if self._ground is None:
+            return {}
+        base = data.qpos[0:3]
+        yaw = self._yaw(data)
+        heading = jnp.stack([jnp.cos(yaw), jnp.sin(yaw)])
+        feet = data.site_xpos[self._feet_site_id]
+        ahead = base[None, :2] + jnp.asarray(AHEAD)[:, None] * heading[None]
+        h = self.ground_height(data, jnp.concatenate([feet[:, :2], base[None, :2], ahead]))
+        return {
+            "feet_ground_z": h[:4],
+            "base_ground_z": h[4],
+            "base_clearance": base[2] - h[4],
+            "ground_ahead": h[5:],
         }
 
     def _yaw(self, data: mjx.Data) -> jax.Array:
@@ -164,8 +250,11 @@ class Go1Env(joystick.Joystick):
         yaw = self._yaw(data)
         c, s = jnp.cos(yaw), jnp.sin(yaw)
         out: dict[str, jax.Array] = {}
-        for p in self._placed:
-            pos = data.xpos[p.body_id]
+        points = [(p.obj.name, data.xpos[p.body_id]) for p in self._placed if p.obj.relevant]
+        points += [(p.st.name, data.xpos[p.body_id] + data.xmat[p.body_id] @ jnp.asarray(p.st.anchor))
+                   for p in self._structs if p.st.relevant]
+        movable = {p.obj.name: p for p in self._placed if p.obj.movable}
+        for name, pos in points:
             d = pos - base
             rel = jnp.stack([c * d[0] + s * d[1], -s * d[0] + c * d[1], d[2]])
             values = {
@@ -174,11 +263,12 @@ class Go1Env(joystick.Joystick):
                 "heading_err": jnp.arctan2(rel[1], rel[0]),
                 "pos": pos,
             }
-            if p.obj.movable:
-                values["vel"] = data.qvel[p.dof_adr:p.dof_adr + 3]
+            if name in movable:
+                adr = movable[name].dof_adr
+                values["vel"] = data.qvel[adr:adr + 3]
             for suffix, value in values.items():
-                out[f"{p.obj.name}_{suffix}"] = value
-                if p.obj.name == self._scene.target:
+                out[f"{name}_{suffix}"] = value
+                if name == self._scene.target:
                     out[f"target_{suffix}"] = value
         goal = self._scene.goal
         if goal is not None:
@@ -190,22 +280,36 @@ class Go1Env(joystick.Joystick):
                 out["target_to_goal_dist"], 1e-3)
         return out
 
-    def _scene_obs(self, data: mjx.Data) -> jax.Array:
-        """What the policy sees of the scene: per object its relative position, distance and
-        bearing (as cos, sin), and its velocity if movable."""
+    def _scene_obs(self, data: mjx.Data) -> jax.Array | None:
+        """What the policy sees of the scene, or None: per relevant object its relative position,
+        distance and bearing (as cos, sin), and its velocity if movable; the same for each relevant
+        structure's anchor plus its height above the base; then the ground ahead relative to the
+        ground under the base, and the base's clearance above it."""
         feats = self.scene_features(data)
         yaw = self._yaw(data)
         c, s = jnp.cos(yaw), jnp.sin(yaw)
         parts = []
-        for p in self._placed:
-            n = p.obj.name
+
+        def where(n: str) -> list[jax.Array]:
             rel = jnp.clip(feats[f"{n}_rel_pos"][:2], -MAX_OBS_DIST, MAX_OBS_DIST)
             he = feats[f"{n}_heading_err"]
-            parts += [rel, jnp.minimum(feats[f"{n}_dist"], MAX_OBS_DIST)[None], jnp.cos(he)[None], jnp.sin(he)[None]]
+            return [rel, jnp.minimum(feats[f"{n}_dist"], MAX_OBS_DIST)[None], jnp.cos(he)[None], jnp.sin(he)[None]]
+
+        for p in self._placed:
+            if not p.obj.relevant:
+                continue
+            n = p.obj.name
+            parts += where(n)
             if p.obj.movable:
                 v = feats[f"{n}_vel"]
                 parts.append(jnp.stack([c * v[0] + s * v[1], -s * v[0] + c * v[1]]))
-        return jnp.concatenate(parts)
+        for p in self._structs:
+            if p.st.relevant:
+                parts += where(p.st.name) + [feats[f"{p.st.name}_rel_pos"][2:3]]
+        terrain = self.terrain_features(data)
+        if terrain:
+            parts += [terrain["ground_ahead"] - terrain["base_ground_z"], terrain["base_clearance"][None]]
+        return jnp.concatenate(parts) if parts else None
 
     def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> dict[str, jax.Array]:
         if self._scene.is_empty:
@@ -213,9 +317,9 @@ class Go1Env(joystick.Joystick):
         # Joystick reads the joints as qpos[7:] and qvel[6:]; hand it the robot's slice only.
         robot = data.replace(qpos=data.qpos[:ROBOT_NQ], qvel=data.qvel[:ROBOT_NV])
         obs = super()._get_obs(robot, info)
-        if not self._placed:  # rough ground alone: nothing more to see
-            return obs
         extra = self._scene_obs(data)
+        if extra is None:  # rough ground alone, or only scenery: nothing more to see
+            return obs
         return {k: jnp.concatenate([v, extra]) for k, v in obs.items()}
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
@@ -244,7 +348,7 @@ class Go1Env(joystick.Joystick):
         qvel = qvel.at[0:6].set(jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5))
 
         rng, key = jax.random.split(rng)
-        qpos, mocap_pos, mocap_quat = self._place_objects(key, qpos, yaw[0])
+        qpos, qvel, mocap_pos, mocap_quat = self._place_objects(key, qpos, qvel, yaw[0])
 
         data = mjx_env.make_data(
             self.mj_model,
@@ -266,8 +370,9 @@ class Go1Env(joystick.Joystick):
         reward, done = jnp.zeros(2)
         return mjx_env.State(data, obs, reward, done, metrics, info)
 
-    def _place_objects(self, rng: jax.Array, qpos: jax.Array, robot_yaw: jax.Array):
-        """Draw each object's distance, bearing and turn from its ranges, relative to the robot's start."""
+    def _place_objects(self, rng: jax.Array, qpos: jax.Array, qvel: jax.Array, robot_yaw: jax.Array):
+        """Draw each object's distance, bearing and turn from its ranges, relative to the robot's start,
+        and launch movable objects that have a speed toward where the robot starts."""
         mocap_pos = jnp.asarray(self.mj_model.body_pos[self.mj_model.body_mocapid >= 0], dtype=jnp.float32)
         mocap_quat = jnp.asarray(self.mj_model.body_quat[self.mj_model.body_mocapid >= 0], dtype=jnp.float32)
         # body_pos rows above are in body order; mocap ids are too, since both follow the body tree.
@@ -289,7 +394,29 @@ class Go1Env(joystick.Joystick):
                 mocap_quat = mocap_quat.at[p.mocap_id].set(quat)
             else:
                 qpos = qpos.at[p.qpos_adr:p.qpos_adr + 7].set(jnp.concatenate([pos, quat]))
-        return qpos, mocap_pos, mocap_quat
+                if o.speed[1] > 0:
+                    rng, ks, ka = jax.random.split(rng, 3)
+                    speed = jax.random.uniform(ks, minval=o.speed[0], maxval=o.speed[1])
+                    toward = heading + jnp.pi + jnp.deg2rad(jax.random.uniform(ka, minval=o.aim[0], maxval=o.aim[1]))
+                    v = speed * jnp.stack([jnp.cos(toward), jnp.sin(toward), 0.0])
+                    qvel = qvel.at[p.dof_adr:p.dof_adr + 3].set(v)
+                    if o.kind == "ball":  # rolling, not sliding: w = z x v / r, in the body frame (turned by turn)
+                        w = jnp.stack([-v[1], v[0], 0.0]) / o.size[0]
+                        cz, sz = jnp.cos(turn), jnp.sin(turn)
+                        qvel = qvel.at[p.dof_adr + 3:p.dof_adr + 6].set(
+                            jnp.stack([cz * w[0] + sz * w[1], -sz * w[0] + cz * w[1], 0.0]))
+        for p in self._structs:
+            st = p.st
+            rng, kd, kb, ky = jax.random.split(rng, 4)
+            dist = jax.random.uniform(kd, minval=st.distance[0], maxval=st.distance[1])
+            heading = robot_yaw + jnp.deg2rad(jax.random.uniform(kb, minval=st.bearing[0], maxval=st.bearing[1]))
+            turn = heading + jnp.deg2rad(jax.random.uniform(ky, minval=st.yaw[0], maxval=st.yaw[1]))
+            # The structure's frame starts at its near edge, x pointing away from the robot when turn = heading.
+            # Its near edge centre sits dist away along the bearing.
+            pos = jnp.stack([qpos[0] + dist * jnp.cos(heading), qpos[1] + dist * jnp.sin(heading), jnp.float32(0.0)])
+            mocap_pos = mocap_pos.at[p.mocap_id].set(pos)
+            mocap_quat = mocap_quat.at[p.mocap_id].set(jnp.stack([jnp.cos(turn / 2), 0.0, 0.0, jnp.sin(turn / 2)]))
+        return qpos, qvel, mocap_pos, mocap_quat
 
     def _initial_info(self, rng: jax.Array) -> dict[str, Any]:
         """The info dict Joystick.reset builds (perturbation and command state included)."""
@@ -402,7 +529,8 @@ def dummy_state(scene: SceneSpec = EMPTY) -> dict[str, jax.Array]:
     state = {f.name: jnp.zeros(f.shape, dtype=jnp.float32) for f in features_for(scene)}
     state["gravity"] = jnp.array([0.0, 0.0, -1.0])
     state["up_z"] = jnp.float32(1.0)
-    for name in [o.name for o in scene.objects] + (["target"] if scene.target else []):
+    sensed = [o.name for o in scene.relevant_objects] + [st.name for st in scene.relevant_structures]
+    for name in sensed + (["target"] if scene.target else []):
         state[f"{name}_rel_pos"] = jnp.array([1.0, 0.0, 0.0])
         state[f"{name}_pos"] = jnp.array([1.0, 0.0, 0.0])
         state[f"{name}_dist"] = jnp.float32(1.0)
@@ -410,6 +538,8 @@ def dummy_state(scene: SceneSpec = EMPTY) -> dict[str, jax.Array]:
         state["target_to_goal_rel"] = jnp.array([1.0, 0.0, 0.0])
         state["target_to_goal_dist"] = jnp.float32(1.0)
         state["target_to_goal_speed"] = jnp.float32(0.0)
+    if scene.has_ground:
+        state["base_clearance"] = jnp.float32(0.278)
     return state
 
 
