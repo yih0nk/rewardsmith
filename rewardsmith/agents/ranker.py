@@ -11,6 +11,7 @@ from typing import Any
 import anthropic
 
 from .claude import ask_json
+from .robot import for_body
 
 SYSTEM = """You decide which robot-learning runs keep training. Each run trains a simulated
 Unitree Go1 quadruped with PPO on a different reward function for the same requested
@@ -41,6 +42,8 @@ SCHEMA = {
 
 
 class ClaudeRanker:
+    body: str | None = None  # the request\'s robot; the worker sets it per request
+
     def __init__(self, client: anthropic.Anthropic, model: str):
         self.client, self.model = client, model
 
@@ -50,7 +53,7 @@ class ClaudeRanker:
             f"Requested behavior: {request}\n\n{runs}\n\n"
             f"Return order: all run numbers 0-{len(snapshots) - 1}, most promising first."
         )
-        out = ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], SCHEMA, effort="low")
+        out = ask_json(self.client, self.model, for_body(SYSTEM, self.body), [{"type": "text", "text": prompt}], SCHEMA, effort="low")
         return [int(i) for i in out["order"]]
 
 

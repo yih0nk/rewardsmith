@@ -20,7 +20,8 @@ from .base import Attempt, Draft
 from .claude import ask_json
 from .references import reference
 from .stream import IdeaStream, OnIdea
-from .writer import SYSTEM, WRITE_SCHEMA
+from .robot import robot
+from .writer import WRITE_SCHEMA, system_for
 
 log = logging.getLogger("rewardsmith.editor")
 
@@ -47,8 +48,9 @@ def format_history(history: Sequence[Attempt]) -> str:
 
 
 class ClaudeEditor:
-    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high"):
+    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high", body: str | None = None):
         self.client, self.model, self.effort = client, model, effort
+        self.system = system_for(body)
 
     def revise(
         self,
@@ -80,7 +82,7 @@ class ClaudeEditor:
             "Each idea should say what you changed and why."
         )
         out = ask_json(
-            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA, effort=self.effort,
+            self.client, self.model, self.system, [{"type": "text", "text": prompt}], WRITE_SCHEMA, effort=self.effort,
             on_text=IdeaStream(on_idea) if on_idea else None,
         )
         return [Draft(c["source"], unified_diff(best_source, c["source"]), c["idea"]) for c in out["candidates"]][:k]
@@ -96,8 +98,8 @@ class DroidEditor:
     so the SDK cancels it. We read back the candidate files and diff each one.
     """
 
-    def __init__(self, workspace_root: Path, model: str | None = None, timeout: float = 900):
-        self.workspace_root, self.model, self.timeout = workspace_root, model, timeout
+    def __init__(self, workspace_root: Path, model: str | None = None, timeout: float = 900, body: str | None = None):
+        self.workspace_root, self.model, self.timeout, self.body = workspace_root, model, timeout, body
 
     def revise(
         self,
@@ -120,7 +122,7 @@ class DroidEditor:
         (ws / "env.md").write_text(env_doc + "\n")
         before = {p.name for p in ws.iterdir()}
 
-        ideas = self._run(_droid_prompt(request, names), ws)
+        ideas = self._run(_droid_prompt(request, names, self.body), ws)
 
         after = {p.name for p in ws.iterdir()}
         if after - before:
@@ -155,10 +157,10 @@ class DroidIdeas(BaseModel):
     ideas: list[str]
 
 
-def _droid_prompt(request: str, names: list[str]) -> str:
+def _droid_prompt(request: str, names: list[str], body: str | None = None) -> str:
     files = ", ".join(names)
     return (
-        f"The user wants a simulated Unitree Go1 quadruped to: {request}\n\n"
+        f"The user wants a simulated {robot(body)} to: {request}\n\n"
         f"{files} each hold the same reward function, the best one so far. A PPO policy was "
         "trained on it; critique.md says what the robot did wrong after watching the video, "
         "metrics.json has the rollout measurements, history.md lists earlier attempts and "

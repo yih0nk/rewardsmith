@@ -6,7 +6,7 @@ import {
   metricInfo,
   successSentence,
 } from "../explain";
-import { MODE_MODEL, modeLabel, modelLabel } from "../modes";
+import { MODE_MODEL, bodyLabel, modeLabel, modelLabel } from "../modes";
 import { candidateName, candidateState, isScored } from "../stages";
 import { QueuePlace, RenderReply, runAnchor } from "../thread";
 import CandidateCard from "./CandidateCard";
@@ -190,6 +190,9 @@ export default function RequestDetail({
         >
           {statusText}
         </span>
+        <span className="tag body-tag" title={detail.body_reason ?? undefined}>
+          {bodyLabel(detail.body, health)}
+        </span>
         <span className="exp-id num">
           Run #{detail.id}
           {Number.isFinite(detail.created_at) && (
@@ -207,7 +210,7 @@ export default function RequestDetail({
 
       </div>
       <div id={`run-body-${detail.id}`} hidden={collapsed}>
-      <TurnMeta detail={detail} />
+      <TurnMeta detail={detail} health={health} />
       <div className="run-card">
         {/* A finished run gives the video the width; the status card moves under it. */}
         <div
@@ -697,9 +700,11 @@ function RunProblem({
 }
 
 // Under the message: the turn's mode and model, and for a follow-up what it refines.
-function TurnMeta({ detail }: { detail: Detail }) {
+function TurnMeta({ detail, health }: { detail: Detail; health: Health | null }) {
   const followUp = (detail.turn ?? 1) > 1;
-  if (!detail.mode && !followUp) return null; // a run from before modes
+  // Why Claude picked this robot (Auto), on the task's first turn.
+  const why = !followUp && detail.body && detail.body_reason;
+  if (!detail.mode && !followUp && !why) return null; // a run from before modes
   const mode = detail.mode ?? "effort";
   const t = detail.target;
   return (
@@ -709,6 +714,14 @@ function TurnMeta({ detail }: { detail: Detail }) {
         {modeLabel(mode)} · {modelLabel(detail.model ?? MODE_MODEL[mode])}
         {detail.training_steps != null && ` · ${detail.training_steps / 1_000_000}M steps per candidate`}
       </span>
+      {why && (
+        <span className="body-why">
+          Using the {bodyLabel(detail.body, health)}: {detail.body_reason}
+        </span>
+      )}
+      {!followUp && detail.body === null && detail.status === "queued" && (
+        <span>Claude picks the robot when it starts</span>
+      )}
       {t && (
         <span>
           refines{" "}

@@ -13,10 +13,11 @@ import re
 import anthropic
 
 from .claude import ask_json
+from .robot import for_body
 
 DEFAULT_MODEL = "claude-haiku-5-5"
 
-SYSTEM = """A user trains a simulated robot dog (Unitree Go1) on a behavior. The simulator scene
+SYSTEM = """A user trains a simulated Unitree Go1 quadruped on a behavior. The simulator scene
 has a floor (flat or rough) and maybe objects (balls, boxes, ramps, walls, goal markers).
 The user watched a result and sent a follow-up note. Decide whether the note asks to change
 the SCENE: add, remove, move, resize or swap an object, or change the ground. Notes about
@@ -35,13 +36,15 @@ SCHEMA = {
 
 
 class ClaudeFollowupReader:
+    body: str | None = None  # the request\'s robot; the worker sets it per request
+
     def __init__(self, client: anthropic.Anthropic, model: str = DEFAULT_MODEL):
         self.client, self.model = client, model
 
     def changes_scene(self, task: str, scene: str, note: str) -> tuple[bool, str]:
         prompt = f"Behavior: {task}\n\nScene now: {scene}\n\nFollow-up note: {note}"
         out = ask_json(
-            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], SCHEMA, effort="low", max_tokens=2000,
+            self.client, self.model, for_body(SYSTEM, self.body), [{"type": "text", "text": prompt}], SCHEMA, effort="low", max_tokens=2000,
         )
         return bool(out["changes_scene"]), out["reason"]
 

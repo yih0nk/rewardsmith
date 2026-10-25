@@ -141,6 +141,24 @@
   text-underline-offset: 4px;
 }
 
+/* ---- The robot: picker in the new-task composer, a tag on each task and run ---- */
+.body-pick select {
+  max-width: 18ch;
+}
+.body-tag {
+  white-space: nowrap; /* the rest is .tag (experiment.css) */
+}
+.conversation .body-tag {
+  margin-left: auto;
+}
+.conversation.selected .body-tag {
+  border-color: var(--dp-color-ground);
+  color: var(--dp-color-ground);
+}
+.body-why {
+  color: var(--dp-color-ink);
+}
+
 /* Keep the composer compact; the per-candidate budget opens when needed. */
 .training-budget {
   flex-basis: 100%;

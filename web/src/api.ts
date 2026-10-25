@@ -107,6 +107,18 @@ export interface RequestSummary {
   target_candidate_id?: number | null;
   // 1 when a follow-up's note changed the scene, so it trained from scratch.
   scene_changed?: number | null;
+  // The robot it trains (a body name from Health.bodies). null = Auto, until the worker picks one;
+  // older servers leave it out (the Go1). body_reason: why Claude picked it, one line.
+  body?: string | null;
+  body_reason?: string | null;
+}
+
+// A robot the server can train (sim/bodies on the worker): only registered ones are listed.
+export interface BodyInfo {
+  name: string;
+  title: string;
+  kind: string;
+  summary: string;
 }
 
 export type Mode = "instant" | "effort";
@@ -163,6 +175,9 @@ export interface Health {
   max_rounds?: number;
   // The models a message may pick, strongest first (modes.py).
   models?: string[];
+  // The robots a new task may name, default first. Older servers leave them out (the Go1 only).
+  bodies?: BodyInfo[];
+  default_body?: string;
 }
 
 export class ApiError extends Error {
@@ -220,11 +235,13 @@ export const getRequest = (id: string): Promise<RequestDetail> =>
     return json<RequestDetail>(r);
   });
 
-// Per-message options: Instant or Effort, and the writer/editor/critic model.
+// Per-message options: Instant or Effort, the writer/editor/critic model, and for a new
+// task the robot ("auto": Claude picks; follow-ups always keep the task's).
 export interface MessageOptions {
   mode: Mode;
   model: string;
   training_steps?: number;
+  body?: string;
 }
 
 // A new task: a conversation whose first turn is this request (same id).

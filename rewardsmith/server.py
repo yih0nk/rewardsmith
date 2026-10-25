@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import config, db, export, modes
-from .sim import progress, scene
+from .sim import bodies, progress, scene
 
 config.load_dotenv()  # here, not in main(): the console script imports this module first
 settings = config.load()
@@ -46,6 +46,9 @@ class NewRequest(BaseModel):
     # The writer/editor/critic model, one of modes.MODELS. Omit it for the mode's.
     model: str | None = Field(default=None, pattern="^(" + "|".join(modes.MODELS) + ")$")
     training_steps: int | None = Field(default=None, strict=True, ge=modes.MIN_TRAINING_STEPS, le=modes.MAX_TRAINING_STEPS)
+    # The robot: a registered body's name (GET /api/health lists them), or "auto". Omit it for Auto:
+    # Claude picks the body that fits the task. Follow-ups always run on the conversation's body.
+    body: str | None = Field(default=None, max_length=40)
 
 
 @app.post("/api/requests", status_code=201)
@@ -57,7 +60,11 @@ def create_request(body: NewRequest, conn: sqlite3.Connection = Depends(get_conn
             spec = scene.parse(body.scene).to_dict()
         except scene.SceneError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-    rid = db.create_request(conn, body.text, spec, body.coach, body.mode or modes.DEFAULT_TASK_MODE, body.model, body.training_steps)
+    robot = None if body.body in (None, "", "auto") else body.body
+    if robot is not None and robot not in bodies.BODIES:
+        raise HTTPException(status_code=422, detail=f"Unknown body {robot!r}: use auto or one of {sorted(bodies.BODIES)}")
+    rid = db.create_request(conn, body.text, spec, body.coach, body.mode or modes.DEFAULT_TASK_MODE, body.model,
+                           body.training_steps, robot)
     db.log_event(conn, rid, "queued", "Request queued")
     return {"id": rid, "conversation_id": rid}
 
@@ -210,6 +217,12 @@ def health() -> dict:
         "ok": True, "fake_sim": settings.fake_sim, "fake_llm": settings.fake_llm,
         "candidates_per_round": settings.candidates_per_round, "max_rounds": settings.max_rounds,
         **modes.describe(),
+        # The robots a request can name, default first; only registered bodies are ever offered.
+        "default_body": bodies.DEFAULT_BODY,
+        "bodies": [
+            {"name": b.name, "title": b.title, "kind": b.capabilities.kind, "summary": b.capabilities.summary}
+            for b in sorted(bodies.BODIES.values(), key=lambda b: b.name != bodies.DEFAULT_BODY)
+        ],
     }
 
 

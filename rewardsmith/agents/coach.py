@@ -18,6 +18,7 @@ import anthropic
 from .base import Observation
 from .checker import evaluate
 from .claude import ask_json
+from .robot import for_body
 
 DEFAULT_MODEL = "claude-haiku-5-5"
 # $ per million tokens (input, output), for the board's cost line. Unknown models count as Sonnet.
@@ -67,8 +68,9 @@ MAX_FRAMES = 3
 
 
 class ClaudeCoach:
-    def __init__(self, client: anthropic.Anthropic, model: str = DEFAULT_MODEL):
+    def __init__(self, client: anthropic.Anthropic, model: str = DEFAULT_MODEL, body: str | None = None):
         self.client, self.model = client, model
+        self.system = for_body(SYSTEM, body)
 
     def observe(
         self,
@@ -89,7 +91,7 @@ class ClaudeCoach:
         start = time.monotonic()
         # Haiku takes no server-side refusal fallback; low effort keeps the call to a few seconds.
         out = ask_json(
-            self.client, self.model, SYSTEM, content, SCHEMA, effort="low", max_tokens=4000,
+            self.client, self.model, self.system, content, SCHEMA, effort="low", max_tokens=4000,
             fallback=not self.model.startswith("claude-haiku"), on_usage=usage.append,
         )
         latency = time.monotonic() - start

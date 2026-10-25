@@ -26,6 +26,9 @@ export interface Conversation {
   bestScore: number | null;
   createdAt: number;
   turns: Turn[];
+  // The robot every turn runs on (the first turn's); null while Claude picks it on Auto,
+  // undefined from a server without bodies (the Go1).
+  body?: string | null;
 }
 
 const turnOf = (r: RequestSummary) => r.turn ?? 1;
@@ -56,6 +59,7 @@ export function conversationsFromRequests(
         status: last.status,
         bestScore: scores.length ? Math.max(...scores) : null,
         createdAt: first.created_at,
+        body: turns.find((t) => t.body)?.body ?? first.body,
         turns: turns.map((t) => ({
           requestId: t.id,
           text: t.text,

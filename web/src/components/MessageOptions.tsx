@@ -1,18 +1,22 @@
-import { MessageOptions as Options } from "../api";
+import { BodyInfo, MessageOptions as Options } from "../api";
 import { MODES, MODE_MODEL, modelLabel } from "../modes";
 
-// The composer's per-message controls: an Effort switch (off = Instant), and the
-// Claude model that writes, revises and judges the rewards. Switching mode moves the
-// model to that mode's default unless the user picked one for this message.
+// The composer's per-message controls: an Effort switch (off = Instant), the Claude
+// model that writes, revises and judges the rewards, and (new tasks only: bodies
+// given) the robot. Switching mode moves the model to that mode's default unless the
+// user picked one for this message.
 export default function MessageOptions({
   value,
   onChange,
   models,
+  bodies,
   idPrefix,
 }: {
   value: Options & { picked?: boolean };
   onChange: (next: Options & { picked?: boolean }) => void;
   models: string[];
+  // The registered robots; leave it out for a follow-up, which keeps its task's robot.
+  bodies?: BodyInfo[];
   idPrefix: string;
 }) {
   const effort = value.mode === "effort";
@@ -53,6 +57,23 @@ export default function MessageOptions({
           ))}
         </select>
       </label>
+      {bodies && (
+        <label className="model-pick body-pick">
+          <span className="label">Robot</span>
+          <select
+            value={value.body ?? "auto"}
+            title={bodies.find((b) => b.name === value.body)?.summary ?? "Claude picks the robot that fits the task"}
+            onChange={(event) => onChange({ ...value, body: event.target.value })}
+          >
+            <option value="auto">Auto</option>
+            {bodies.map((b) => (
+              <option key={b.name} value={b.name}>
+                {b.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <details className="training-budget">
         <summary>Training budget <span className="subtle">{value.training_steps == null ? "Auto" : `${value.training_steps / 1_000_000}M`}</span></summary>
         <div className="training-budget-panel">

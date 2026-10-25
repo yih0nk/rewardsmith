@@ -12,6 +12,7 @@ import anthropic
 
 from ..sim import scene
 from .claude import ask_json
+from .robot import for_body
 
 SYSTEM = f"""You set up the world for a robot-learning task. A simulated Unitree Go1 quadruped
 (about 0.6 m long, walks up to about 1 m/s, episodes last 20 s) will be trained by reinforcement
@@ -95,12 +96,13 @@ def to_spec(out: dict[str, Any]) -> dict[str, Any]:
 
 
 class ClaudeScener:
-    def __init__(self, client: anthropic.Anthropic, model: str):
+    def __init__(self, client: anthropic.Anthropic, model: str, body: str | None = None):
         self.client, self.model = client, model
+        self.system = for_body(SYSTEM, body)
 
     def make(self, request: str) -> dict[str, Any]:
         prompt = f"Behavior the user wants: {request}\n\nReturn the scene spec for it."
-        return to_spec(ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], SCHEMA,
+        return to_spec(ask_json(self.client, self.model, self.system, [{"type": "text", "text": prompt}], SCHEMA,
                                 effort="medium"))
 
     def fix(self, request: str, spec: dict[str, Any], error: str) -> dict[str, Any]:
@@ -109,5 +111,5 @@ class ClaudeScener:
             f"This scene spec was rejected:\n{json.dumps(spec)}\n\n{error}\n\n"
             "Return a corrected scene spec. Change only what the errors require."
         )
-        return to_spec(ask_json(self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], SCHEMA,
+        return to_spec(ask_json(self.client, self.model, self.system, [{"type": "text", "text": prompt}], SCHEMA,
                                 effort="medium"))

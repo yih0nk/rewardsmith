@@ -15,7 +15,7 @@ import HallOfFame from "./components/HallOfFame";
 import MessageOptions from "./components/MessageOptions";
 import NewTask from "./components/NewTask";
 import Showcase, { showcasePicks } from "./components/Showcase";
-import { FOLLOWUP_OPTIONS, TASK_OPTIONS, modelsOf } from "./modes";
+import { FOLLOWUP_OPTIONS, TASK_OPTIONS, bodiesOf, modelsOf } from "./modes";
 import { candidateName } from "./stages";
 import { ReplyTarget, conversationsFromRequests, runAnchor } from "./thread";
 
@@ -348,6 +348,7 @@ export default function App() {
             selected={hall || route === "new" ? null : route}
             loading={listLoading}
             onSelect={go}
+            health={health}
           />
           {listError && (
             <p className="error" role="alert">
@@ -410,6 +411,7 @@ export default function App() {
                         value={taskOptions}
                         onChange={setTaskOptions}
                         models={modelsOf(health)}
+                        bodies={bodiesOf(health)}
                         idPrefix="new-task"
                       />
                     }
