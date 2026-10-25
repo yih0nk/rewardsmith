@@ -82,8 +82,9 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
 - For a locomotion request that merely mentions scenery, keep its locomotion checks.
 - Pose requests (stand on the hind legs, lift the front paws, a handstand, sit up) must
   check the pose itself with the pose metrics, e.g. standing on the hind legs:
-  front_feet_off >= 0.6 and pitch_deg >= 45, plus front_off_held_s >= the seconds asked for
-  when it must hold it. Staying upright, a height or low speed is not the pose.
+  front_feet_off >= 0.6, pitch_deg >= 45 and base_height >= 0.3, plus front_off_held_s >= the
+  seconds asked for when it must hold it. The height matters: sitting back on the rump with the
+  front legs up has the same pitch at about 0.2 m. Staying upright or low speed alone is not the pose.
 - Every request that names something measurable needs a clause that measures it: a pose
   needs a pose metric, walking forward or backward needs forward_velocity, spinning needs
   yaw_rate. Staying upright and not falling never count as the task on their own.
