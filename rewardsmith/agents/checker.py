@@ -15,6 +15,7 @@ from typing import Any
 import anthropic
 
 from ..sim.go1_spec import POSE_METRICS
+from ..sim.panda_spec import ARM_METRICS
 from ..sim.scene import EMPTY, SceneSpec
 from ..sim import outcomes
 from .claude import ask_json
@@ -154,7 +155,11 @@ class SpecError(ValueError):
     pass
 
 
-def metric_definition(metric: str, scene: SceneSpec | None = None):
+def metric_definition(metric: str, scene: SceneSpec | None = None, table: dict | None = None):
+    if table is not None:  # a body with its own metrics (the arm): no scene outcomes
+        if metric in table:
+            return table[metric]
+        raise SpecError(f"use one of {sorted(table)}")
     if metric in METRICS:
         return METRICS[metric]
     own = _registered_body_metrics().get(metric)
@@ -168,7 +173,7 @@ def metric_definition(metric: str, scene: SceneSpec | None = None):
     return ("fraction of episodes completing: " + description, 0.0, 1.0)
 
 
-def validate(clauses: Any, scene: SceneSpec | None = None) -> list[dict[str, Any]]:
+def validate(clauses: Any, scene: SceneSpec | None = None, table: dict | None = None) -> list[dict[str, Any]]:
     """Return the spec in canonical form, or raise SpecError saying what is wrong."""
     if not isinstance(clauses, list) or not 1 <= len(clauses) <= MAX_CLAUSES:
         raise SpecError(f"a spec is a list of 1 to {MAX_CLAUSES} clauses")
@@ -180,7 +185,7 @@ def validate(clauses: Any, scene: SceneSpec | None = None) -> list[dict[str, Any
         if not isinstance(metric, str):
             raise SpecError(f"unknown metric {metric!r}")
         try:
-            definition = metric_definition(metric, scene)
+            definition = metric_definition(metric, scene, table)
         except SpecError as exc:
             raise SpecError(f"unknown metric {metric!r}: {exc}") from exc
         if not isinstance(op, str) or op not in OPS:
@@ -298,6 +303,8 @@ def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> l
     """Require concrete, scene-valid outcomes and same-episode/order constraints.
     With a fall bound over the evaluation episodes, a `fell` clause on the single video
     rollout is dropped: two fall criteria disagree on the board (37% vs 0)."""
+    if is_arm_spec(clauses):  # the arm's metrics carry no scene outcomes or Go1 motions
+        return validate_arm(clauses, request)
     scene = scene or EMPTY
     spec = validate(clauses, scene)
     if any(c["metric"] in EPISODE_FALLS for c in spec):
@@ -358,12 +365,60 @@ def _registered_body_metrics() -> dict[str, tuple[str, float, float]]:
     return out
 
 
+ARM_SYSTEM = f"""You turn a request for a simulated Franka Panda arm (7 joints, two-finger gripper, bolted to
+a table, one small block in front of it) into a pass/fail success check over rollout metrics.
+The check is written before any training and is never changed afterwards, so it must capture
+what the user asked for, not what is easy.
+
+The arm is trained with PPO, then evaluated over 32 fresh 10 s episodes. These metrics are measured:
+{chr(10).join(f"- {name}: {meaning}" for name, (meaning, _, _) in ARM_METRICS.items())}
+
+Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" or ">=". All must hold.
+- Picking up or lifting: lifted >= 0.8 plus max_cube_height >= the height asked for (default 0.1 m),
+  and lift_held_s >= the seconds asked for when it must hold it.
+- Moving the block to a spot on the table (push, slide, place): placed >= 0.8 or at_target >= 0.8
+  (placed when it must be let go), and final_target_dist <= 0.05.
+- Lifting to a point: at_target >= 0.8 or final_target_dist <= 0.05.
+- Include fell <= 0.1, and dropped <= 0.2 when the block must stay held.
+- Rates are fractions of episodes, 0 to 1; distances are metres.
+"""
+ARM_SCORED = ("lifted", "lift_held_s", "max_cube_height", "grasped_frac", "at_target", "placed", "min_target_dist",
+              "final_target_dist", "cube_moved")
+
+
+def is_arm_spec(clauses: Any) -> bool:
+    """True when every clause is on an arm metric and at least one only the arm has."""
+    metrics = [c.get("metric") for c in clauses if isinstance(c, dict)] if isinstance(clauses, list) else []
+    return bool(metrics) and all(m in ARM_METRICS for m in metrics) and any(m not in METRICS for m in metrics)
+
+
+def validate_arm(clauses: Any, request: str) -> list[dict[str, Any]]:
+    """An arm check: ARM_METRICS only, with a task clause and a bound on fell."""
+    spec = validate(clauses, table=ARM_METRICS)
+    if not any(c["metric"] in ARM_SCORED for c in spec):
+        raise SpecError("The check needs a clause on what happens to the block: one of " + ", ".join(ARM_SCORED))
+    if not any(c["metric"] == "fell" and c["op"] in ("<", "<=") for c in spec):
+        raise SpecError("Arm checks need an upper bound on fell")
+    return spec
+
+
+def default_arm_check(scene: SceneSpec | None) -> list[dict[str, Any]]:
+    """The arm's fallback check: place the block on its table target with a goal zone, else lift it."""
+    if (scene or EMPTY).goal_object is not None:
+        return [{"metric": "placed", "op": ">=", "value": 0.8}, {"metric": "fell", "op": "<=", "value": 0.1}]
+    return [{"metric": "lifted", "op": ">=", "value": 0.8}, {"metric": "max_cube_height", "op": ">=", "value": 0.1},
+            {"metric": "fell", "op": "<=", "value": 0.1}]
+
+
 class ClaudeChecker:
     def __init__(self, client: anthropic.Anthropic, model: str, body: str | None = None):
         self.client, self.model = client, model
-        self.system = system_for(body)
+        self.arm = kind(body) == "arm"
+        self.system = ARM_SYSTEM if self.arm else system_for(body)
 
     def write_spec(self, request: str, scene: SceneSpec | None = None) -> list[dict[str, Any]]:
+        if self.arm:
+            return self._write_arm_spec(request, scene)
         context = scene.summary() if scene else "No scene target: the robot is alone on a flat floor."
         events = "\n".join(f"- {name}: {event.description}" for name, event in outcomes.catalog(scene or EMPTY).items())
         prompt = f"Request: {request}\n\nScene:\n{context}\n\nAvailable episode outcomes:\n{events}\n\nWrite the success check. Use unsupported_reason=null for supported tasks."
@@ -374,6 +429,23 @@ class ClaudeChecker:
                 raise SpecError(f"Unsupported task: {out['unsupported_reason']}")
             try:
                 return validate_for_scene(out.get("clauses"), request, scene)
+            except SpecError as exc:
+                if attempt:
+                    raise
+                prompt += f"\n\nYour last check was rejected: {exc}\nIt was: {json.dumps(out.get('clauses'))}"
+        raise AssertionError("unreachable")
+
+    def _write_arm_spec(self, request: str, scene: SceneSpec | None) -> list[dict[str, Any]]:
+        from ..sim import panda_spec
+
+        notes = "\n".join(panda_spec.scene_notes(scene or EMPTY))
+        prompt = f"Request: {request}\n\nScene:\n{notes}\n\nWrite the success check. Use unsupported_reason=null for supported tasks."
+        for attempt in range(2):
+            out = ask_json(self.client, self.model, self.system, [{"type": "text", "text": prompt}], SCHEMA, effort="medium")
+            if out.get("unsupported_reason"):
+                raise SpecError(f"Unsupported task: {out['unsupported_reason']}")
+            try:
+                return validate_arm(out.get("clauses"), request)
             except SpecError as exc:
                 if attempt:
                     raise
