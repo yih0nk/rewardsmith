@@ -261,6 +261,8 @@ class PlaygroundSimulator:
         pool, self._pool = self._pool, None
         # Halving compares candidates at the same eval, so they all train at once.
         max_parallel = max(self.max_parallel, len(jobs)) if cull else self.max_parallel
+        if cull is not None and getattr(cull, "keep", None) and _flag("REWARDSMITH_SURVIVOR_STEPS", "1"):
+            jobs = self._stretch(jobs, cull.keep)
         try:
             return parallel.run_in_processes(
                 jobs, preset=self.preset, impl=self.impl, max_parallel=max_parallel, scene=scene, pool=pool,
@@ -271,6 +273,20 @@ class PlaygroundSimulator:
         finally:
             if pool:
                 pool.close()
+
+
+    def _stretch(self, jobs: list[Job], keep: list[int]) -> list[Job]:
+        """Give the steps halving culls to the survivors (search.survivor_stretch)."""
+        from ..search import survivor_stretch
+
+        kwargs = train.ppo_kwargs(self.preset)
+        stretch = survivor_stretch(len(jobs), keep, kwargs["num_evals"])
+        out: list[Job] = []
+        for source, out_dir, *rest in jobs:
+            start = dict(rest[0]) if rest else {}
+            start["steps"] = round((start.get("steps") or self.steps or kwargs["num_timesteps"]) * stretch)
+            out.append((source, out_dir, start))
+        return out
 
 
 def _flag(name: str, default: str = "0") -> bool:
