@@ -30,10 +30,12 @@ def test_ground_height_follows_steps_and_ramps(stairs_env):
     def along(angle, dists):
         return jnp.array([base + r * np.array([np.cos(yaw + angle), np.sin(yaw + angle)]) for r in dists])
 
-    stairs = np.asarray(stairs_env.ground_height(d, along(0.0, [0.9, 1.1, 1.4, 1.7, 2.0, 2.9, 3.5])))
-    np.testing.assert_allclose(stairs, [0, 0.06, 0.12, 0.18, 0.24, 0.24, 0], atol=1e-4)
-    ramp = np.asarray(stairs_env.ground_height(d, along(np.pi / 2, [0.9, 2.0, 3.0, 3.5])))
-    np.testing.assert_allclose(ramp, [0, np.tan(np.radians(10)), 2 * np.tan(np.radians(10)), 0.3527], atol=2e-3)
+    # up four steps, across the landing, and down the mirrored steps on the far side
+    stairs = np.asarray(stairs_env.ground_height(d, along(0.0, [0.9, 1.1, 1.4, 1.7, 2.0, 2.9, 3.75, 4.5])))
+    np.testing.assert_allclose(stairs, [0, 0.06, 0.12, 0.18, 0.24, 0.24, 0.18, 0], atol=1e-4)
+    slope = np.tan(np.radians(10))
+    ramp = np.asarray(stairs_env.ground_height(d, along(np.pi / 2, [0.9, 2.0, 3.0, 3.5, 5.0, 6.5])))
+    np.testing.assert_allclose(ramp, [0, slope, 2 * slope, 0.3527, slope, 0], atol=2e-3)
 
 
 def test_features_match_the_spec_and_obs_appends_after_the_joystick(stairs_env):

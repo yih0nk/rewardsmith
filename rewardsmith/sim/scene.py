@@ -103,21 +103,23 @@ SCENE_KEYS = ("terrain", "objects", "target", "goal", "structures")
 # Structure parameters: name -> (default, low, high). Ints are counts. Defaults suit the Go1
 # (legs about 0.2 m, so steps up to about 0.1 m and slopes up to about 15 degrees are climbable).
 STRUCTURE_PARAMS: dict[str, dict[str, tuple[float, float, float]]] = {
-    "stairs": {"steps": (4, 1, 8), "rise": (0.06, 0.02, 0.15), "run": (0.3, 0.2, 0.6), "width": (1.2, 0.6, 3.0),
-               "landing": (1.0, 0.4, 2.0)},
-    "ramp": {"length": (2.0, 0.5, 4.0), "angle": (10.0, 2.0, 25.0), "width": (1.2, 0.6, 3.0),
-             "landing": (1.0, 0.0, 2.0)},
+    "stairs": {"steps": (4, 1, 8), "rise": (0.06, 0.02, 0.15), "run": (0.3, 0.2, 0.6), "width": (1.6, 0.6, 3.0),
+               "landing": (1.0, 0.4, 2.0), "descend": (1, 0, 1)},
+    "ramp": {"length": (2.0, 0.5, 4.0), "angle": (10.0, 2.0, 25.0), "width": (1.6, 0.6, 3.0),
+             "landing": (1.0, 0.0, 2.0), "descend": (1, 0, 1)},
     "wall": {"length": (1.5, 0.2, 4.0), "height": (0.5, 0.03, 1.0), "thickness": (0.1, 0.05, 0.5)},
     "gap": {"width": (0.2, 0.05, 0.5), "height": (0.08, 0.03, 0.15), "length": (1.0, 0.5, 2.0),
             "span": (1.2, 0.6, 3.0)},
     "field": {"count": (6, 2, 12), "size": (0.1, 0.03, 0.4), "height": (0.5, 0.1, 1.0), "length": (3.0, 1.0, 6.0),
               "width": (2.0, 1.0, 4.0), "boxes": (0, 0, 1), "seed": (0, 0, 9999)},
 }
-INT_PARAMS = frozenset({"steps", "count", "boxes", "seed"})
+INT_PARAMS = frozenset({"steps", "count", "boxes", "seed", "descend"})
 FIELD_GAP = 0.5  # m of free floor between obstacles in a field, so the robot fits between them
 STRUCTURE_HELP = {
-    "stairs": "steps (count), rise and run (m per step), width (m), landing (m of flat top)",
-    "ramp": "length (m, horizontal), angle (degrees), width (m), landing (m of flat top, 0 for none)",
+    "stairs": "steps (count), rise and run (m per step), width (m), landing (m of flat top), "
+              "descend (1: the same steps down the far side, so walking on doesn't drop off a ledge; 0: a ledge)",
+    "ramp": "length (m, horizontal), angle (degrees), width (m), landing (m of flat top, 0 for none), "
+            "descend (1: a matching slope down the far side; 0: a ledge)",
     "wall": "length (m, across the robot's path), height (m; low ones are hurdles), thickness (m)",
     "gap": "width (m of the gap), height (m of the two platforms), length (m of each platform), span (m across)",
     "field": "count (obstacles), size (radius or half side, m), height (m), length and width (m of the area), "
@@ -559,9 +561,10 @@ def structure_pieces(st: Structure) -> tuple[Piece, ...]:
     p = st.p
     if st.kind == "stairs":
         n, rise, run, half_w = int(p("steps")), p("rise"), p("run"), 0.5 * p("width")
+        end = n * run + p("landing") + (n * run if p("descend") else 0.0)
         pieces = []
-        for i in range(n):  # step i is a solid block from its riser to the far end, so nothing floats
-            x0, x1 = i * run, n * run + p("landing")
+        for i in range(n):  # step i is a solid block from its riser to the far end (or its mirror), so nothing floats
+            x0, x1 = i * run, end - (i * run if p("descend") else 0.0)
             h = (i + 1) * rise
             pieces.append(Piece("box", (0.5 * (x1 - x0), half_w, 0.5 * h), (0.5 * (x0 + x1), 0.0, 0.5 * h)))
         return tuple(pieces)
@@ -574,6 +577,9 @@ def structure_pieces(st: Structure) -> tuple[Piece, ...]:
         pieces = [Piece("box", (0.5 * slope, half_w, t), (cx, 0.0, cz), pitch=-p("angle"))]
         if p("landing") > 0:
             pieces.append(Piece("box", (0.5 * p("landing"), half_w, 0.5 * h), (length + 0.5 * p("landing"), 0.0, 0.5 * h)))
+        if p("descend"):  # the mirror image, from the landing's far edge back to the floor
+            far = 2 * length + p("landing")
+            pieces.append(Piece("box", (0.5 * slope, half_w, t), (far - cx, 0.0, cz), pitch=p("angle")))
         return tuple(pieces)
     if st.kind == "wall":
         t, half_l, h = p("thickness"), 0.5 * p("length"), p("height")
@@ -781,10 +787,12 @@ def _structure_phrase(st: Structure) -> str:
     p = st.p
     if st.kind == "stairs":
         shape = (f"{st.color} stairs: {p('steps'):g} steps of {p('rise'):g} m rise and {p('run'):g} m run, "
-                 f"{p('width'):g} m wide, then a {p('landing'):g} m landing {st.top_height:.2f} m up")
+                 f"{p('width'):g} m wide, then a {p('landing'):g} m landing {st.top_height:.2f} m up"
+                 + (", and the same steps down the far side" if p("descend") else ", ending in a ledge"))
     elif st.kind == "ramp":
         shape = (f"{st.color} ramp: {p('length'):g} m long at {p('angle'):g} deg, {p('width'):g} m wide, "
-                 f"rising to {st.top_height:.2f} m" + (f", then a {p('landing'):g} m landing" if p("landing") else ""))
+                 f"rising to {st.top_height:.2f} m" + (f", then a {p('landing'):g} m landing" if p("landing") else "")
+                 + (", then a slope back down" if p("descend") else ", ending in a ledge"))
     elif st.kind == "wall":
         shape = f"{st.color} wall {p('length'):g} m long, {p('height'):g} m tall, {p('thickness'):g} m thick, across the path"
     elif st.kind == "gap":
