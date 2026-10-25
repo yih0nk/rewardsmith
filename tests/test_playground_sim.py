@@ -31,7 +31,7 @@ def test_gates_from_threads_take_turns(monkeypatch):
 
     inside, peak, lock = [0], [0], threading.Lock()
 
-    def slow_check(source, impl=None, scene=None):
+    def slow_check(source, impl=None, scene=None, env_options=None):
         with lock:
             inside[0] += 1
             peak[0] = max(peak[0], inside[0])
@@ -56,15 +56,59 @@ def test_explicit_options_override_environment_in_parallel_jobs(monkeypatch, tmp
     monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs) or [])
     sim = PlaygroundSimulator(preset="smoke", randomize=False, push=True, robustness=False)
     sim.run_many([(WALK_BACKWARDS, tmp_path)])
-    assert seen["sim_options"] == {"randomize": False, "push": True, "robustness": False, "evaluation_spec": None}
+    assert {k: seen["sim_options"][k] for k in ("randomize", "push", "robustness", "evaluation_spec")} == {
+        "randomize": False, "push": True, "robustness": False, "evaluation_spec": None}
 
+
+def test_children_get_the_warm_start_settings_resolved(monkeypatch, tmp_path):
+    from rewardsmith.sim import parallel
+    walker = tmp_path / "params.pkl"
+    walker.write_bytes(b"")
+    monkeypatch.setenv("REWARDSMITH_WALKER", str(walker))
+    monkeypatch.delenv("REWARDSMITH_STOCK", raising=False)
+    monkeypatch.delenv("REWARDSMITH_STEPS", raising=False)
+    seen = {}
+    monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs, jobs=jobs) or [])
+    sim = PlaygroundSimulator(preset="smoke")
+    assert "pose" in sim.plan_request("stand on your hind legs")
+    sim.run_many([(WALK_BACKWARDS, tmp_path / "a"), (WALK_BACKWARDS, tmp_path / "b", {"steps": 5})])
+    opts = seen["sim_options"]
+    assert opts["walker"] == str(walker) and opts["mode"] == "tune" and opts["stock_profile"] == "pose"
+    assert opts["steps"] == 10_000_000
+    assert seen["jobs"][1][2] == {"steps": 5}
+    assert PlaygroundSimulator(**opts).sim_options() == opts  # a child trains exactly as the parent would
+
+
+def test_no_walker_means_no_warm_start_and_no_stock_terms(monkeypatch, tmp_path):
+    monkeypatch.setenv("REWARDSMITH_WALKER", str(tmp_path / "missing.pkl"))
+    monkeypatch.delenv("REWARDSMITH_STOCK", raising=False)
+    sim = PlaygroundSimulator(preset="smoke")
+    assert sim.walker == "" and sim.mode == "off" and sim.env_options == {}
+    assert "no warm start" in sim.plan_request("push the ball into the goal")
+    monkeypatch.setenv("REWARDSMITH_WARM_START", "0")
+    assert PlaygroundSimulator(preset="smoke").walker == ""
+
+
+def test_modes_pick_how_the_env_uses_the_walker(monkeypatch, tmp_path):
+    walker = tmp_path / "params.pkl"
+    walker.write_bytes(b"")
+    monkeypatch.setenv("REWARDSMITH_WALKER", str(walker))
+    monkeypatch.delenv("REWARDSMITH_MODE", raising=False)
+    assert PlaygroundSimulator(preset="smoke").env_options == {"walker": str(walker)}  # steer by default
+    tune = PlaygroundSimulator(preset="smoke", mode="tune", stock_profile="pose")
+    assert tune.env_options == {"stock_profile": "pose", "stock_weight": 1.0}
+    assert "stock_" in tune.describe()
+    assert "steers a pretrained walker" in PlaygroundSimulator(preset="smoke").describe()
+    pushing = PlaygroundSimulator(preset="smoke")
+    pushing.plan_request("push the ball into the goal")
+    assert pushing.mode == "steer"
 
 
 def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
     from rewardsmith.sim import gate, parallel
 
     in_worker = []
-    monkeypatch.setattr(gate, "check_reward", lambda source, impl=None, scene=None: in_worker.append(source))
+    monkeypatch.setattr(gate, "check_reward", lambda source, impl=None, scene=None, env_options=None: in_worker.append(source))
     sim = PlaygroundSimulator(preset="smoke")
     sim._pool = parallel.WarmPool(1, fake=True)
     try:
@@ -84,3 +128,21 @@ def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
         assert in_worker == [WALK_BACKWARDS]
     finally:
         sim.close_warm_pool()
+
+
+def test_halving_gives_the_culled_steps_to_the_survivors(monkeypatch, tmp_path):
+    from rewardsmith.sim import parallel
+    seen = {}
+    monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(jobs=jobs) or [])
+    sim = PlaygroundSimulator(preset="round", walker="", steps=1_000_000)
+    sim.run_many([(WALK_BACKWARDS, tmp_path / str(i)) for i in range(4)], cull=lambda running: {})
+    assert all(len(job) == 2 for job in seen["jobs"])  # a cull without rungs: unchanged
+
+    class Cull:
+        keep = [2]
+
+        def __call__(self, running):
+            return {}
+
+    sim.run_many([(WALK_BACKWARDS, tmp_path / str(i)) for i in range(4)], cull=Cull())
+    assert [job[2]["steps"] for job in seen["jobs"]] == [1_600_000] * 4

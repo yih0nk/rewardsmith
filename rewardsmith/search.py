@@ -96,6 +96,21 @@ class Halving:
         return stop
 
 
+def survivor_stretch(n_jobs: int, keep: Sequence[int], num_evals: int) -> float:
+    """How much longer every job of a halving round can train for the round to cost n_jobs full runs.
+
+    Rung r is judged at eval r + 1, and evals split training into num_evals - 1 equal
+    blocks, so block b runs as many jobs as survived the rungs before it. The steps
+    the culled jobs never train go to the survivors, which train on from their own
+    weights: 4 jobs keeping 2 at the first of 4 blocks cost (4 + 2 + 2 + 2) / 4 = 2.5
+    full runs, so each job gets 4 / 2.5 = 1.6x the steps; 8,4,2 gets 2x.
+    """
+    blocks = max(1, num_evals - 1)
+    counts = [n_jobs, *keep]
+    work = sum(min(n_jobs, counts[min(b, len(keep))]) for b in range(blocks)) / blocks
+    return n_jobs / work if work else 1.0
+
+
 def _as_order(order: Sequence[int], n: int) -> list[int]:
     """A full ranking of range(n): the ranker's valid picks first, anything it left out after."""
     seen: list[int] = []
