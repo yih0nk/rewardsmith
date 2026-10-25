@@ -15,6 +15,44 @@ STANDING_HEIGHT = 0.278  # base height in the home pose, m
 LEGS = ("FR", "FL", "RR", "RL")  # front right, front left, rear right, rear left
 
 
+# Playground's tuned Go1 joystick reward terms (joystick.default_config) that keep the gait clean and
+# the body steady, with their stock scales. Left out: tracking_lin_vel, tracking_ang_vel and
+# stand_still, which reward following the joystick command, and that is always 0 here.
+STOCK_SCALES: dict[str, float] = {
+    "lin_vel_z": -0.5, "ang_vel_xy": -0.05, "orientation": -5.0, "dof_pos_limits": -1.0, "pose": 0.5,
+    "termination": -1.0, "torques": -0.0002, "action_rate": -0.01, "energy": -0.001,
+    "feet_clearance": -2.0, "feet_height": -0.2, "feet_slip": -0.1, "feet_air_time": 0.1,
+}
+# The terms a pose or a jump has to break: the body tilts, bobs, leaves the standing pose and lifts its feet.
+POSE_BREAKS = ("lin_vel_z", "ang_vel_xy", "orientation", "pose", "feet_clearance", "feet_height", "feet_slip",
+               "feet_air_time")
+# Per-term multipliers by request family (sim/budget.py picks one); a reward's STOCK_TERMS overrides them.
+STOCK_PROFILES: dict[str, dict[str, float]] = {
+    "gait": {},
+    "pose": {k: 0.0 for k in POSE_BREAKS},
+    "off": {k: 0.0 for k in STOCK_SCALES},
+}
+STOCK_WEIGHT = 1.0  # every stock term's scale is multiplied by this
+STOCK_PREFIX = "stock_"
+
+# What each stock term measures, for the writer.
+STOCK_MEANINGS: dict[str, str] = {
+    "lin_vel_z": "base vertical velocity squared",
+    "ang_vel_xy": "base roll and pitch rates squared",
+    "orientation": "body tilt: squared x and y of the base's up axis",
+    "dof_pos_limits": "joint angles past 95% of their limits",
+    "pose": "exp(-distance from the standing pose), hips and thighs weighted 10x the calves",
+    "termination": "1 on the step the robot flips",
+    "torques": "actuator torque magnitudes",
+    "action_rate": "squared change of the action between steps",
+    "energy": "|joint velocity| x |torque|, summed",
+    "feet_clearance": "swing feet away from 10 cm high, weighted by foot speed",
+    "feet_height": "swing peak away from 10 cm, at each touchdown",
+    "feet_slip": "foot speed while in contact",
+    "feet_air_time": "air time minus 0.1 s at each touchdown (rewards real steps, punishes shuffling)",
+}
+
+
 @dataclass(frozen=True)
 class Feature:
     name: str
@@ -100,7 +138,36 @@ def features_for(scene: SceneSpec = EMPTY) -> tuple[Feature, ...]:
     return FEATURES + scene_features(scene)
 
 
-def describe(scene: SceneSpec = EMPTY) -> str:
+def stock_lines(profile: str, weight: float = STOCK_WEIGHT) -> list[str]:
+    """The writer's notes on the stock terms under a profile (empty when they are all off)."""
+    defaults = STOCK_PROFILES[profile]
+    on = [k for k in STOCK_SCALES if defaults.get(k, 1.0) != 0.0]
+    if not on:
+        return []
+    lines = [
+        "",
+        "Stock gait terms: under your terms the env adds Playground's tuned Go1 walking terms (the ones the "
+        "pretrained walker learned with), so the robot keeps a clean, steady gait while it learns your task. "
+        "They show up as stock_<name> in the training logs. On for this request, with their per-step scales:",
+    ]
+    lines += [f"- {k} ({weight * STOCK_SCALES[k]:+g}): {STOCK_MEANINGS[k]}" for k in on]
+    off = [k for k in STOCK_SCALES if k not in on]
+    if off:
+        lines.append(f"Off for this request (the behavior tilts or lifts the body): {', '.join(off)}.")
+    lines += [
+        "To rescale or drop stock terms, define a module-level dict next to reward(), multipliers on the "
+        "scales above (0 drops a term, 2 doubles it), e.g. STOCK_TERMS = {\"orientation\": 0.0, \"pose\": 0.0}. "
+        "Drop orientation, pose, lin_vel_z and ang_vel_xy for behaviors that tilt or bob the body (standing on "
+        "hind legs, sitting, jumping, rolling over); keep them for walking, turning, reaching and pushing. "
+        "Don't name your own terms stock_*. Don't re-add smoothness or posture penalties the stock terms "
+        "already cover; spend your terms on the task.",
+    ]
+    return lines
+
+
+def describe(
+    scene: SceneSpec = EMPTY, *, warm_start: bool = False, stock_profile: str = "off", stock_weight: float = STOCK_WEIGHT
+) -> str:
     floor = "rough, bumpy ground" if scene.terrain == "rough" else "flat floor"
     lines = [
         f"Robot: Unitree Go1 quadruped in MuJoCo Playground (JAX/MJX), {floor}.",
@@ -152,6 +219,13 @@ def describe(scene: SceneSpec = EMPTY) -> str:
         "- The robot starts standing, with a random heading and small random velocities.",
         "- There is no velocity command. Reward the behavior directly.",
     ]
+    if warm_start:
+        lines.append(
+            "- The policy starts from a pretrained walker (Playground's Go1 joystick policy), not from random "
+            "weights: at the first step it already stands steadily and has a clean trot, but its command is 0, "
+            "so it stands still until your terms reward motion. Your reward teaches the task; it doesn't have to "
+            "teach walking or balance."
+        )
     if scene.objects:
         lines += [
             "- Objects are placed fresh each episode (ranges above), and the policy observes each object's "
@@ -161,4 +235,5 @@ def describe(scene: SceneSpec = EMPTY) -> str:
         ]
         if any(o.kind == "zone" for o in scene.objects):
             lines.append("- Zones are painted on the floor; nothing collides with them.")
+    lines += stock_lines(stock_profile, stock_weight)
     return "\n".join(lines)
