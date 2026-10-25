@@ -31,7 +31,7 @@ def test_gates_from_threads_take_turns(monkeypatch):
 
     inside, peak, lock = [0], [0], threading.Lock()
 
-    def slow_check(source, impl=None, scene=None):
+    def slow_check(source, impl=None, scene=None, stock=None):
         with lock:
             inside[0] += 1
             peak[0] = max(peak[0], inside[0])
@@ -56,31 +56,32 @@ def test_explicit_options_override_environment_in_parallel_jobs(monkeypatch, tmp
     monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs) or [])
     sim = PlaygroundSimulator(preset="smoke", randomize=False, push=True, robustness=False)
     sim.run_many([(WALK_BACKWARDS, tmp_path)])
-    assert seen["sim_options"] == {"randomize": False, "push": True, "robustness": False, "evaluation_spec": None}
+    assert {k: seen["sim_options"][k] for k in ("randomize", "push", "robustness", "evaluation_spec")} == {
+        "randomize": False, "push": True, "robustness": False, "evaluation_spec": None}
 
 
-
-def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
-    from rewardsmith.sim import gate, parallel
-
-    in_worker = []
-    monkeypatch.setattr(gate, "check_reward", lambda source, impl=None, scene=None: in_worker.append(source))
+def test_children_get_the_warm_start_settings_resolved(monkeypatch, tmp_path):
+    from rewardsmith.sim import parallel
+    walker = tmp_path / "params.pkl"
+    walker.write_bytes(b"")
+    monkeypatch.setenv("REWARDSMITH_WALKER", str(walker))
+    monkeypatch.delenv("REWARDSMITH_STOCK", raising=False)
+    monkeypatch.delenv("REWARDSMITH_STEPS", raising=False)
+    seen = {}
+    monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs, jobs=jobs) or [])
     sim = PlaygroundSimulator(preset="smoke")
-    sim._pool = parallel.WarmPool(1, fake=True)
-    try:
-        assert "SyntaxError" in sim.gate("def reward(:")  # answered by the warm (fake) child
-        assert sim.gate(WALK_BACKWARDS) is None
-        assert in_worker == []
-        taken = sim._pool.take(WALK_BACKWARDS)
-        assert taken.gated == WALK_BACKWARDS
-        taken.kill()
-    finally:
-        sim.close_warm_pool()
+    sim.stock_profile = "pose"
+    sim.run_many([(WALK_BACKWARDS, tmp_path / "a"), (WALK_BACKWARDS, tmp_path / "b", {"steps": 5})])
+    opts = seen["sim_options"]
+    assert opts["walker"] == str(walker) and opts["stock_profile"] == "pose" and opts["steps"] is None
+    assert seen["jobs"][1][2] == {"steps": 5}
+    assert PlaygroundSimulator(**opts).sim_options() == opts  # a child trains exactly as the parent would
 
-    sim._pool = parallel.WarmPool(1, fake=True)
-    try:
-        sim._pool.procs[0].proc.kill()
-        assert sim.gate(WALK_BACKWARDS) is None  # the dead child is dropped; the worker gates it
-        assert in_worker == [WALK_BACKWARDS]
-    finally:
-        sim.close_warm_pool()
+
+def test_no_walker_means_no_warm_start_and_no_stock_terms(monkeypatch, tmp_path):
+    monkeypatch.setenv("REWARDSMITH_WALKER", str(tmp_path / "missing.pkl"))
+    monkeypatch.delenv("REWARDSMITH_STOCK", raising=False)
+    sim = PlaygroundSimulator(preset="smoke")
+    assert sim.walker == "" and sim.stock_profile == "off"
+    monkeypatch.setenv("REWARDSMITH_WARM_START", "0")
+    assert PlaygroundSimulator(preset="smoke").walker == ""

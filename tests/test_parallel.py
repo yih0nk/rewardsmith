@@ -1,5 +1,6 @@
 import pytest
 import json
+from pathlib import Path
 
 from rewardsmith.sim import run_one
 from rewardsmith.sim.base import RunResult
@@ -235,3 +236,40 @@ def test_a_dead_warm_process_raises_instead_of_answering(tmp_path):
         assert pool.procs == [] and pool.take() is None
     finally:
         pool.close()
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_a_jobs_checkpoint_and_steps_reach_the_child(tmp_path, monkeypatch, warm):
+    from rewardsmith.sim import parallel
+    out_dir = tmp_path / "out"
+    start = {"init_params": str(tmp_path / "params_5000.pkl"), "steps": 2_000_000}
+    seen = []
+
+    class Simulator:
+        def run(self, source, directory, scene=None, **kwargs):
+            seen.append(kwargs)
+            return RunResult(metrics={"ok": 1.0})
+
+    monkeypatch.setattr(run_one, "_simulator", lambda *args, **kwargs: Simulator())
+    if warm:
+        job = tmp_path / "job.json"
+        parallel._hand_over(parallel.WarmProcess(None, job), SOURCE, out_dir, "smoke", None, start=start)
+        monkeypatch.setattr(run_one, "_warm_up", lambda fake: None)
+        monkeypatch.setattr(run_one, "_redirect_output", lambda path: None)
+        assert run_one.main(["--serve", str(job), "--fake"]) == 0
+    else:
+        commands = []
+        monkeypatch.setattr(parallel.subprocess, "Popen", lambda cmd, **kwargs: commands.append(cmd))
+        parallel._start(SOURCE, out_dir, "smoke", None, True, {}, start=start)
+        assert run_one.main(commands[0][3:]) == 0
+    assert seen == [{"init_params": Path(start["init_params"]), "steps": 2_000_000}]
+
+
+def test_jobs_with_options_run_end_to_end(tmp_path):
+    jobs = [(SOURCE, tmp_path / "a"), (SOURCE, tmp_path / "b", {"init_params": tmp_path / "p.pkl", "steps": 7})]
+    results = run_in_processes(jobs, max_parallel=2, fake=True)
+    assert all(isinstance(r, RunResult) for r in results)
+    assert json.loads((tmp_path / "a" / "start.json").read_text()) == {}
+    assert json.loads((tmp_path / "b" / "start.json").read_text()) == {"init_params": str(tmp_path / "p.pkl"), "steps": "7"}
+    with pytest.raises(ValueError, match="unknown job options"):
+        run_in_processes([(SOURCE, tmp_path / "c", {"init": 1})], fake=True)
