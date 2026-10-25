@@ -136,3 +136,14 @@ def test_steer_mode_needs_a_walker_checkpoint(tmp_path):
     _, params = _walker_params(scene_env)
     with pytest.raises(ValueError, match="not a walker checkpoint"):
         go1.walker_policy(params)
+
+
+def test_reset_noise_keeps_the_mean_and_sets_the_std():
+    plain = go1.make_env(WALK_BACKWARDS, impl="jax")
+    _, params = _walker_params(plain)
+    nets = train.ppo_kwargs("smoke")["network_factory"](plain.observation_size, plain.action_size)
+    obs = jax.jit(plain.reset)(jax.random.PRNGKey(2)).obs
+    before = nets.policy_network.apply(params[0], params[1], obs)
+    after = nets.policy_network.apply(*checkpoints.reset_noise(params, 0.5)[:2], obs)
+    np.testing.assert_allclose(after[:12], before[:12], atol=1e-6)
+    np.testing.assert_allclose(jax.nn.softplus(after[12:]) + checkpoints.MIN_STD, 0.5, rtol=1e-5)
