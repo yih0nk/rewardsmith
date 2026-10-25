@@ -19,6 +19,9 @@ class Settings:
     halving: tuple[int, ...] = ()  # e.g. (8, 4, 2): successive halving within a round; () = off
     editor: str = "claude"  # claude | droid: who revises rewards from round 2 on
     coach: str = "off"  # the live coach's model (e.g. claude-haiku-5-5), or "off"; a request can override it
+    # Let the coach stop candidates (and draft their fixes early). Off: it comments and advises only.
+    # Off by default: on the ball-to-target task its stops cost quality in 2 of 2 paired runs.
+    coach_stops: bool = False
 
 
 def _flag(name: str, default: str) -> bool:
@@ -63,4 +66,5 @@ def load() -> Settings:
         halving=_halving(os.environ.get("REWARDSMITH_HALVING", "")),
         editor=os.environ.get("REWARDSMITH_EDITOR", "claude").strip().lower(),
         coach=os.environ.get("REWARDSMITH_COACH", "claude-haiku-5-5").strip() or "off",
+        coach_stops=_flag("REWARDSMITH_COACH_STOPS", "0"),
     )
