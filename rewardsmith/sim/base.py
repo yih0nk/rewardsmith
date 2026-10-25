@@ -25,6 +25,9 @@ class Stopped:
     reward_curve: list[float] = field(default_factory=list)
 
 
+# (source, out_dir) or (source, out_dir, {"init_params": checkpoint path, "steps": n})
+Job = tuple[str, Path] | tuple[str, Path, dict[str, Any]]
+
 # Called by run_many about twice a second with the indices of the jobs still training.
 # Returns {job index: reason} for the jobs to stop now (see rewardsmith.search.Halving).
 Cull = Callable[[set[int]], dict[int, str]]
@@ -41,28 +44,32 @@ class Simulator(Protocol):
         """Compile and smoke-test a reward module. Return an error message, or None if it passes."""
         ...
 
-    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None) -> RunResult:
-        """Train a policy on this reward, roll it out, render, and measure."""
+    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None, **start: Any) -> RunResult:
+        """Train a policy on this reward, roll it out, render, and measure.
+
+        start may hold init_params (a checkpoint path to train from) and steps.
+        """
         ...
 
     def run_many(
-        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None
+        self, jobs: list[Job], scene: SceneSpec | None = None, cull: Cull | None = None
     ) -> list["RunResult | Stopped | str"]:
-        """Run several (source, out_dir) jobs. Same order as jobs; a failed job gives its error text.
+        """Run several (source, out_dir[, start]) jobs. Same order as jobs; a failed job gives its error text.
 
+        start is {"init_params": path, "steps": n}, either optional (see run).
         With cull, all jobs train at once and the ones it names are stopped early.
         """
         ...
 
 
 def run_sequentially(
-    sim: Simulator, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None
+    sim: Simulator, jobs: list[Job], scene: SceneSpec | None = None
 ) -> list[RunResult | str]:
     """run_many for simulators that train one job at a time."""
     results: list[RunResult | str] = []
-    for source, out_dir in jobs:
+    for source, out_dir, *start in jobs:
         try:
-            results.append(sim.run(source, out_dir, scene))
+            results.append(sim.run(source, out_dir, scene, **(start[0] if start else {})))
         except Exception as exc:
             results.append(f"{type(exc).__name__}: {exc}")
     return results

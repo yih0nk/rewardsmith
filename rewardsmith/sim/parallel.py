@@ -48,13 +48,15 @@ class WarmProcess:
     def alive(self) -> bool:
         return self.proc.poll() is None
 
-    def gate(self, source: str, scene: SceneSpec | None = None, impl: str | None = None) -> str | None:
+    def gate(
+        self, source: str, scene: SceneSpec | None = None, impl: str | None = None, stock: dict | None = None
+    ) -> str | None:
         """Gate source in the child: None if it passes, else the message for the writer."""
         self._seq += 1
         self.gated = None
         send(self.job, {
             "kind": "gate", "seq": self._seq, "source": source, "impl": impl,
-            "scene": scene.to_dict() if scene is not None and not scene.is_empty else None,
+            "scene": scene.to_dict() if scene is not None and not scene.is_empty else None, "stock": stock,
         })
         deadline = time.monotonic() + GATE_TIMEOUT_S
         while True:
@@ -159,7 +161,7 @@ def send(path: Path, payload: dict) -> None:
 
 
 def run_in_processes(
-    jobs: list[tuple[str, Path]],
+    jobs: list[tuple[str, Path] | tuple[str, Path, dict]],
     *,
     preset: str = "round",
     impl: str | None = None,
@@ -174,6 +176,8 @@ def run_in_processes(
 ) -> list[RunResult | Stopped | str]:
     """Run (source, out_dir) jobs, at most max_parallel at a time. Same order as jobs.
 
+    A job may carry a third item, {"init_params": path, "steps": n}: the checkpoint
+    to start from and the steps to train (run_one --init-params / --steps).
     Every job trains in scene. Jobs go to pool's warm processes first, then to newly
     started ones. cull, if given, is asked every poll which running jobs to stop early.
     """
@@ -188,12 +192,13 @@ def run_in_processes(
 
     while pending or running:
         while pending and len(running) < slots:
-            i, (source, out_dir) = pending.pop(0)
+            i, (source, out_dir, *rest) = pending.pop(0)
+            start = job_start(rest[0] if rest else None)
             warm = pool.take(source) if pool else None
             if warm:
-                proc = _hand_over(warm, source, out_dir, preset, impl, behavior_metrics, scene, sim_options)
+                proc = _hand_over(warm, source, out_dir, preset, impl, behavior_metrics, scene, sim_options, start)
             else:
-                proc = _start(source, out_dir, preset, impl, fake, env, behavior_metrics, scene, sim_options)
+                proc = _start(source, out_dir, preset, impl, fake, env, behavior_metrics, scene, sim_options, start)
             running[i] = (proc, out_dir, time.monotonic())
         time.sleep(0.5)
         for i, (proc, out_dir, started) in list(running.items()):
@@ -215,6 +220,20 @@ def run_in_processes(
                     results[i] = _stopped(out_dir, reason)
 
     return [r if r is not None else "Error: no result" for r in results]
+
+
+def job_start(options: dict | None) -> dict:
+    """A job's {"init_params": str, "steps": int}, without the ones it leaves unset."""
+    options = options or {}
+    unknown = set(options) - {"init_params", "steps"}
+    if unknown:
+        raise ValueError(f"unknown job options {sorted(unknown)}")
+    out: dict = {}
+    if options.get("init_params"):
+        out["init_params"] = str(options["init_params"])
+    if options.get("steps"):
+        out["steps"] = int(options["steps"])
+    return out
 
 
 def _child_env(slots: int) -> dict[str, str]:
@@ -241,13 +260,13 @@ def _prepare(source: str, out_dir: Path, scene: SceneSpec | None = None) -> tupl
 def _hand_over(
     warm: WarmProcess, source: str, out_dir: Path, preset: str, impl: str | None,
     behavior_metrics: bool = False, scene: SceneSpec | None = None,
-    sim_options: dict[str, object] | None = None,
+    sim_options: dict[str, object] | None = None, start: dict | None = None,
 ) -> subprocess.Popen:
     reward_file, scene_file = _prepare(source, out_dir, scene)
     send(warm.job, {
         "kind": "train", "reward": str(reward_file), "out_dir": str(out_dir), "preset": preset, "impl": impl,
         "behavior_metrics": behavior_metrics, "scene": str(scene_file) if scene_file else None,
-        "sim_options": sim_options or {},
+        "sim_options": sim_options or {}, **(start or {}),
     })
     return warm.proc
 
@@ -255,10 +274,14 @@ def _hand_over(
 def _start(
     source: str, out_dir: Path, preset: str, impl: str | None, fake: bool, env: dict,
     behavior_metrics: bool = False, scene: SceneSpec | None = None,
-    sim_options: dict[str, object] | None = None,
+    sim_options: dict[str, object] | None = None, start: dict | None = None,
 ) -> subprocess.Popen:
     reward_file, scene_file = _prepare(source, out_dir, scene)
     cmd = [sys.executable, "-m", "rewardsmith.sim.run_one", str(reward_file), str(out_dir), "--preset", preset]
+    if (start or {}).get("init_params"):
+        cmd += ["--init-params", start["init_params"]]
+    if (start or {}).get("steps"):
+        cmd += ["--steps", str(start["steps"])]
     if sim_options is not None:
         cmd += ["--sim-options", json.dumps(sim_options)]
     if impl:
