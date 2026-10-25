@@ -39,7 +39,7 @@ from . import config, db, modes
 from .agents import checker as check_spec
 from .agents.base import Attempt, Checker, Coach, Critic, Draft, Editor, Ranker, Scener, Writer
 from .agents.editor import unified_diff
-from .coaching import ACTED, LAST_RUNNER, QUOTA, TOO_EARLY, Call, LiveCoach
+from .coaching import ACTED, ADVISORY, LAST_RUNNER, QUOTA, TOO_EARLY, Call, LiveCoach
 from .search import Halving
 from .sim import progress as sim_progress
 from .sim import scene as scene_spec
@@ -218,7 +218,7 @@ def run_request(
             live = None
             if coach is not None and jobs:
                 live = _live_coach(conn, lock, rid, n, coach, critic_request, ready, spec if not check_error else None,
-                                   cull, early if n < settings.max_rounds else None, history)
+                                   cull, early if n < settings.max_rounds else None, history, settings.coach_stops)
                 cull = live
             more: dict[str, Any] = {"cull": cull} if cull is not None else {}
             if _accepts(sim.run_many, "on_done"):
@@ -392,7 +392,7 @@ class _EarlyDrafts:
 def _live_coach(
     conn: sqlite3.Connection, lock: threading.Lock, rid: str, round_n: int, coach: Coach, request: str,
     ready: list[tuple[int, str, Path]], spec: list[dict[str, Any]] | None, halving: Any,
-    early: "_EarlyDrafts | None", history: Sequence[Attempt],
+    early: "_EarlyDrafts | None", history: Sequence[Attempt], stops: bool = True,
 ) -> LiveCoach:
     """The round's LiveCoach, wired to the board (coach events) and to early drafts."""
     idx = [int(out_dir.name.rsplit("c", 1)[1]) for _, _, out_dir in ready]  # job -> candidate idx
@@ -402,7 +402,8 @@ def _live_coach(
         assert obs is not None
         after = {ACTED: " Stopping it.", TOO_EARLY: " (Too early to stop it.)",
                  LAST_RUNNER: " (Kept: it is the last one still training.)",
-                 QUOTA: " (Kept: half the round always finishes.)"}.get(action, "")
+                 QUOTA: " (Kept: half the round always finishes.)",
+                 ADVISORY: " (Advice only: the coach doesn't stop runs.)"}.get(action, "")
         message = f"Candidate {idx[call.idx] + 1} at {call.steps / 1e6:.1f}M steps: {obs.note}{after}"
         _locked(lock, db.log_event, conn, rid, "coach", message, round_n=round_n, candidate=idx[call.idx])
 
@@ -420,7 +421,7 @@ def _live_coach(
                     round_n=round_n, candidate=idx[i])
 
     return LiveCoach(coach, request, [(src, out_dir) for _, src, out_dir in ready], spec=spec, halving=halving,
-                     on_note=on_note, on_stop=on_stop)
+                     on_note=on_note, on_stop=on_stop, stops=stops)
 
 
 def _log_coach_stats(conn: sqlite3.Connection, lock: threading.Lock, rid: str, round_n: int, live: LiveCoach) -> None:

@@ -11,7 +11,7 @@ from rewardsmith.agents import coach as coach_mod
 from rewardsmith.agents.base import Observation
 from rewardsmith.agents.coach import ClaudeCoach, check_now, cost, prompt
 from rewardsmith.agents.fake import FakeCoach, FakeCritic, FakeEditor, FakeWriter
-from rewardsmith.coaching import ACTED, LAST_RUNNER, NOTHING, QUOTA, TOO_EARLY, LiveCoach
+from rewardsmith.coaching import ACTED, ADVISORY, LAST_RUNNER, NOTHING, QUOTA, TOO_EARLY, LiveCoach
 from rewardsmith.orchestrator import build_coach, run_request
 from rewardsmith.sim.base import RunResult
 from rewardsmith.sim.fake import FakeSimulator
@@ -63,6 +63,17 @@ def test_kills_at_eval_two_and_reports_every_verdict(tmp_path):
     assert sorted(notes) == [(0, NOTHING), (1, ACTED), (2, NOTHING)]
     assert stopped[0][0] == 1 and stopped[0][1]["forward_velocity"] == pytest.approx(-0.2)
     assert live.finished and live.stats()["stopped"] == 1
+
+
+def test_advice_only_never_stops(tmp_path):
+    dirs = [tmp_path / f"c{i}" for i in range(2)]
+    for d in dirs:
+        _evals(d, 3)
+    notes = []
+    live = LiveCoach(ScriptedCoach(bad={"a"}), "r", list(zip("ab", dirs)), stops=False,
+                     on_note=lambda c, a: notes.append(a))
+    assert _poll(live, {0, 1}, until=lambda s: len(notes) == 2, timeout=1.0) == {}
+    assert sorted(notes) == sorted([ADVISORY, NOTHING])
 
 
 def test_never_kills_before_eval_two(tmp_path):
@@ -212,8 +223,18 @@ def test_fake_coach_comments_on_every_candidate(tmp_path):
     assert all(c["status"] == "scored" for r in rounds for c in r["candidates"])
 
 
-def test_a_stopped_candidate_is_revised_into_the_next_round(tmp_path):
+def test_the_worker_default_only_advises(tmp_path):
     s, conn, req = _start(tmp_path)
+    writer = FakeWriter()
+    first = writer.write("walk backwards", "", 4)
+    run_request(conn, s, req, writer, FakeEditor(), FakeCritic(), FakeSimulator(), coach=ScriptedCoach(bad={first[1]}))
+    rounds = db.get_request(conn, req["id"])["rounds"]
+    assert all(c["status"] == "scored" for r in rounds for c in r["candidates"])
+    assert any("Advice only" in e["message"] for e in db.get_request(conn, req["id"])["events"])
+
+
+def test_a_stopped_candidate_is_revised_into_the_next_round(tmp_path):
+    s, conn, req = _start(tmp_path, coach_stops=True)
     writer = FakeWriter()
     first = writer.write("walk backwards", "", 4)
     revised = []
@@ -237,7 +258,7 @@ def test_a_stopped_candidate_is_revised_into_the_next_round(tmp_path):
 
 
 def test_no_early_drafts_in_the_last_round(tmp_path):
-    s, conn, req = _start(tmp_path)
+    s, conn, req = _start(tmp_path, coach_stops=True)
     s = replace(s, max_rounds=1, min_rounds=1)
     writer = FakeWriter()
     first = writer.write("walk backwards", "", 4)
