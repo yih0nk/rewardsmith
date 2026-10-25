@@ -1,4 +1,4 @@
-import { Candidate, RequestDetail, Round } from "./api";
+import { Candidate, RequestDetail, Round, ServerStage } from "./api";
 import { QueuePlace } from "./thread";
 
 // Where a run is, in words a first-time viewer can follow, and since when.
@@ -98,7 +98,34 @@ function queuedLabel(queue: QueuePlace | null | undefined) {
   return { label: "Queued, starting in a few seconds", hint };
 }
 
+// Board steps the server times on its own. Training, compiling and recording share the
+// server's one "training" step, so those keep the per-candidate progress times.
+const SERVER_STAGES: Partial<Record<StageKey, ServerStage["name"][]>> = {
+  setup: ["scene", "check"],
+  writing: ["writing"],
+  gate: ["compiling"],
+  judging: ["judging"],
+};
+
 export function runStage(
+  detail: RequestDetail,
+  candidatesPerRound?: number | null,
+  queue?: QueuePlace | null,
+): RunStage {
+  const stage = inferStage(detail, candidatesPerRound, queue);
+  const names = SERVER_STAGES[stage.key];
+  if (!names || detail.status !== "running") return stage;
+  const open = (detail.stages ?? []).filter(
+    (s) =>
+      names.includes(s.name) &&
+      s.ended_at == null &&
+      (stage.key === "setup" || s.round_n === stage.round),
+  );
+  const started = earliest(open.map((s) => s.started_at));
+  return started == null ? stage : { ...stage, startedAt: started };
+}
+
+function inferStage(
   detail: RequestDetail,
   candidatesPerRound?: number | null,
   queue?: QueuePlace | null,

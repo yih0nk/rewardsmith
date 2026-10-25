@@ -891,3 +891,14 @@ test("the composer has no option controls until they are passed in", () => {
   );
   assert.match(withControls, /class="composer-controls"><span>Model/);
 });
+
+test("open server-timed stages set the start time; training keeps candidate progress", () => {
+  const writingStage = { name: "writing", round_n: 1, started_at: T0 + 12, ended_at: null };
+  const writing = { ...runningAt([roundAt(1, T0 + 10, [])]), stages: [writingStage] };
+  assert.equal(stages.runStage(writing, 4).startedAt, T0 + 12);
+  // A finished stage, or one from another round, doesn't count.
+  const old = { ...writing, stages: [{ ...writingStage, round_n: 0 }, { ...writingStage, ended_at: T0 + 20 }] };
+  assert.equal(stages.runStage(old, 4).startedAt, T0 + 10);
+  const setup = { ...runningAt([], [sceneEvt]), stages: [{ name: "check", round_n: null, started_at: T0 + 6, ended_at: null }] };
+  assert.equal(stages.runStage(setup).startedAt, T0 + 6);
+});

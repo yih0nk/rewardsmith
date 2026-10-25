@@ -100,10 +100,20 @@ export interface SuccessClause {
   value: number;
 }
 
+// A step the server timed itself (db.stage). round_n is null for scene and check.
+export interface ServerStage {
+  name: "scene" | "check" | "writing" | "compiling" | "training" | "judging";
+  round_n: number | null;
+  started_at: number;
+  ended_at: number | null;
+}
+
 export interface RequestDetail extends RequestSummary {
   success_spec?: SuccessClause[] | null;
   rounds: Round[];
   events: { id: number; kind: string; message: string; created_at: number }[];
+  // Every timed step so far; older servers leave it out.
+  stages?: ServerStage[];
 }
 
 export interface Health {
