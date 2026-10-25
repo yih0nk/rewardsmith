@@ -107,7 +107,8 @@ ADDED_COLUMNS = {
                  "mode": "TEXT",  # instant | effort (modes.py); NULL = effort, what every run was before modes
                  "model": "TEXT",  # writer/editor/critic model; NULL = the mode's default
                  "target_candidate_id": "INTEGER",  # a follow-up's candidate to refine; NULL = the best, when it starts
-                 "scene_changed": "INTEGER"},  # 1 when a follow-up's note changed the scene (it trains from scratch)
+                 "scene_changed": "INTEGER",  # 1 when a follow-up's note changed the scene (it trains from scratch)
+                 "training_steps": "INTEGER"},  # optional per-candidate budget, including continued training
     "candidates": {
         "flagged_at": "REAL",
         "flag_note": "TEXT",
@@ -176,7 +177,7 @@ def _decode(out: dict[str, Any]) -> dict[str, Any]:
 
 def create_request(
     conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None, coach: str | None = None,
-    mode: str | None = None, model: str | None = None,
+    mode: str | None = None, model: str | None = None, training_steps: int | None = None,
 ) -> str:
     """A new conversation whose first turn is this request; its id is the request's.
 
@@ -187,9 +188,9 @@ def create_request(
     now = time.time()
     conn.execute("INSERT INTO conversations (id, title, created_at) VALUES (?, ?, ?)", (rid, text, now))
     conn.execute(
-        """INSERT INTO requests (id, text, created_at, scene, coach, conversation_id, turn, mode, model)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
-        (rid, text, now, json.dumps(scene) if scene is not None else None, coach, rid, mode, model),
+        """INSERT INTO requests (id, text, created_at, scene, coach, conversation_id, turn, mode, model, training_steps)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+        (rid, text, now, json.dumps(scene) if scene is not None else None, coach, rid, mode, model, training_steps),
     )
     return rid
 
@@ -200,7 +201,7 @@ class NotInConversation(ValueError):
 
 def add_turn(
     conn: sqlite3.Connection, conversation_id: str, text: str, target_candidate_id: int | None = None,
-    coach: str | None = None, mode: str | None = None, model: str | None = None,
+    coach: str | None = None, mode: str | None = None, model: str | None = None, training_steps: int | None = None,
 ) -> str:
     """A follow-up: a new request at the end of the conversation. target_candidate_id is the
     candidate to refine; None = the conversation's best when the worker starts the turn."""
@@ -215,9 +216,9 @@ def add_turn(
             raise NotInConversation(f"Candidate {target_candidate_id} is not in conversation {conversation_id}")
         rid = uuid.uuid4().hex[:8]
         conn.execute(
-            """INSERT INTO requests (id, text, created_at, coach, conversation_id, turn, mode, model, target_candidate_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (rid, text, time.time(), coach, conversation_id, last + 1, mode, model, target_candidate_id),
+            """INSERT INTO requests (id, text, created_at, coach, conversation_id, turn, mode, model, target_candidate_id, training_steps)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (rid, text, time.time(), coach, conversation_id, last + 1, mode, model, target_candidate_id, training_steps),
         )
         conn.execute("COMMIT")
     except Exception:

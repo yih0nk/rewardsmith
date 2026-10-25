@@ -686,6 +686,7 @@ function TurnMeta({ detail }: { detail: Detail }) {
       {followUp && <span className="tag">Follow-up</span>}
       <span>
         {modeLabel(mode)} · {modelLabel(detail.model ?? MODE_MODEL[mode])}
+        {detail.training_steps != null && ` · ${detail.training_steps / 1_000_000}M steps per candidate`}
       </span>
       {t && (
         <span>

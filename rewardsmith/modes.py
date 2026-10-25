@@ -26,6 +26,8 @@ INSTANT, EFFORT = "instant", "effort"
 # What a message gets when it names no mode: a new task searches, a follow-up is quick.
 DEFAULT_TASK_MODE = EFFORT
 DEFAULT_FOLLOWUP_MODE = INSTANT
+MIN_TRAINING_STEPS = 1_000_000
+MAX_TRAINING_STEPS = 100_000_000
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,10 @@ MODES = {
 
 def of(req: dict[str, Any]) -> Mode:
     """A request's mode. Rows from before modes ran the full search."""
-    return MODES.get(req.get("mode") or EFFORT, MODES[EFFORT])
+    mode = MODES.get(req.get("mode") or EFFORT, MODES[EFFORT])
+    if req.get("training_steps") is not None:
+        mode = replace(mode, steps=req["training_steps"], continue_steps=req["training_steps"])
+    return mode
 
 
 def model_of(req: dict[str, Any]) -> str:

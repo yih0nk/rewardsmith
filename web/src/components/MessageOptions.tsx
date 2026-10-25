@@ -53,6 +53,31 @@ export default function MessageOptions({
           ))}
         </select>
       </label>
+      <details className="training-budget">
+        <summary>Training budget <span className="subtle">{value.training_steps == null ? "Auto" : `${value.training_steps / 1_000_000}M`}</span></summary>
+        <div className="training-budget-panel">
+          <label className="steps-pick">
+            <span className="label">Training steps (millions)</span>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              step={1}
+              value={value.training_steps == null ? "" : value.training_steps / 1_000_000}
+              placeholder="Auto"
+              aria-describedby={`${idPrefix}-steps-hint`}
+              onChange={(event) => onChange({
+                ...value,
+                training_steps: event.target.value === "" ? undefined : Number(event.target.value) * 1_000_000,
+              })}
+            />
+          </label>
+          <p className="mode-hint subtle" id={`${idPrefix}-steps-hint`}>
+            Per candidate, 1–100M. Blank uses the mode default. More steps take longer; PPO may round up.
+            {effort ? " Effort trains four candidates, so 20M means about 80M total steps." : " Instant trains one candidate."}
+          </p>
+        </div>
+      </details>
     </div>
   );
 }
