@@ -40,6 +40,7 @@ from mujoco_playground._src.locomotion.go1 import base as go1_base
 from mujoco_playground._src.locomotion.go1 import joystick
 
 from . import scene_xml
+from .bodies.base import RewardError  # noqa: F401  (raised here; the gate catches it)
 from . import warp_quiet  # noqa: F401  (silences warp's per-step solver warning)
 from .go1_spec import (  # noqa: F401
     COMMAND_LIMITS, COMMAND_SMOOTHING, STOCK_PREFIX, STOCK_PROFILES, STOCK_SCALES, STOCK_WEIGHT, features_for,
@@ -58,10 +59,6 @@ WALKER_STATE = 48  # the joystick "state" observation the walker reads; the comm
 # The robot's slice of qpos/qvel: free joint + 12 joints. Movable scene objects come after.
 ROBOT_NQ, ROBOT_NV = 19, 18
 MAX_OBS_DIST = 10.0  # m; clip object distances in the observation
-
-
-class RewardError(ValueError):
-    """The reward module is unusable. The message is meant for the reward writer."""
 
 
 @dataclass(frozen=True)

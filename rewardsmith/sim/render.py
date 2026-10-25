@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image
 
 from .base import ROLLOUT_STEPS
+from .bodies import get_body
 from .go1 import Go1Env
 from .train import TrainResult
 
@@ -41,14 +42,17 @@ class FollowCam:
     elevation: float  # degrees; negative looks down
     distance: float  # metres from the look-at point
     smooth_s: float = 0.35  # std of the Gaussian that smooths the base path, in seconds
+    lookat: tuple[float, float, float] | None = None  # a fixed look-at point instead of the base (arms)
+    lookat_drop: float = 0.12  # aim this far below the base: between trunk and feet
+    lookat_min: float = 0.08  # never aim lower than this
 
 
-CAMERAS = {
-    # In front of the robot and to its right, looking back at it, a little from above.
-    "chase": FollowCam(azimuth=140.0, elevation=-18.0, distance=1.35),
-    # Square to the robot's starting left side, near ground level: gait, height and flips.
-    "side": FollowCam(azimuth=-90.0, elevation=-14.0, distance=1.5),
-}
+def cameras_for(body: str | None = None) -> dict[str, FollowCam]:
+    """The body's views (bodies.Body.camera) by name."""
+    return {name: FollowCam(**spec) for name, spec in get_body(body).camera.items()}
+
+
+CAMERAS = cameras_for()  # the Go1's: "chase" and "side"
 
 
 def rollout_and_render(
@@ -65,18 +69,19 @@ def rollout_and_render(
     critic_height: int = 288,
     critic_width: int = 512,
     side_view: bool = False,
+    body: str | None = None,
 ) -> tuple[Path, list[bytes], dict[str, float]]:
     """Return (mp4 path, PNG frames in time order, rollout summary).
 
-    `camera` is a key of CAMERAS or a camera name from the Go1 model ("track",
-    "side", "back", "top"). With side_view, also writes SIDE_VIDEO_FILE; find it
+    `camera` is a view of the body (cameras_for) or a camera name from its model
+    (the Go1's "track", "side", "back", "top"). With side_view, also writes SIDE_VIDEO_FILE; find it
     with side_video_path(mp4 path).
     """
     qpos, summary, mocap_pos, mocap_quat = _rollout(env, result, steps, seed)
     video, pngs = render_rollout(
         env, qpos, out_dir, n_frames, height, width, camera,
         critic_height=critic_height, critic_width=critic_width, side_view=side_view,
-        mocap_pos=mocap_pos, mocap_quat=mocap_quat,
+        mocap_pos=mocap_pos, mocap_quat=mocap_quat, body=body,
     )
     return video, pngs, summary
 
@@ -95,15 +100,17 @@ def render_rollout(
     side_view: bool = False,
     mocap_pos: np.ndarray | None = None,
     mocap_quat: np.ndarray | None = None,
+    body: str | None = None,
 ) -> tuple[Path, list[bytes]]:
     """Write the videos of a rollout's qpos rows; return (mp4 path, PNG frames for the critic)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     video = out_dir / VIDEO_FILE
-    views = [(video, camera)] + ([(side_video_path(video), "side")] if side_view else [])
+    cameras = cameras_for(body)
+    views = [(video, camera)] + ([(side_video_path(video), "side")] if side_view and "side" in cameras else [])
     picks = np.linspace(0, len(qpos) - 1, num=min(n_frames, len(qpos))).round().astype(int)
     stills = render_videos(
         env.mj_model, qpos, env.dt, views, picks, height, width,
-        mocap_pos=mocap_pos, mocap_quat=mocap_quat,
+        mocap_pos=mocap_pos, mocap_quat=mocap_quat, cameras=cameras,
     )
     return video, [_png(f, critic_width, critic_height) for f in stills]
 
@@ -185,6 +192,7 @@ def render_videos(
     *,
     mocap_pos: np.ndarray | None = None,
     mocap_quat: np.ndarray | None = None,
+    cameras: dict[str, FollowCam] | None = None,
 ) -> list[np.ndarray]:
     """Write one mp4 per (path, camera) view, a frame per qpos row. Return the first view's frames at `picks`."""
     model = render_model(mj_model, height, width)
@@ -193,7 +201,7 @@ def render_videos(
         data.mocap_pos[:] = mocap_pos
     if mocap_quat is not None:
         data.mocap_quat[:] = mocap_quat
-    tracks = [_camera(model, name, qpos, dt) for _, name in views]
+    tracks = [_camera(model, name, qpos, dt, cameras or CAMERAS) for _, name in views]
     picked = set(picks.tolist())
     stills = []
     with contextlib.ExitStack() as stack:
@@ -231,16 +239,19 @@ def render_model(mj_model: mujoco.MjModel, height: int, width: int) -> mujoco.Mj
     return model
 
 
-def _camera(model: mujoco.MjModel, name: str, qpos: np.ndarray, dt: float):
+def _camera(model: mujoco.MjModel, name: str, qpos: np.ndarray, dt: float, cameras: dict[str, FollowCam] = CAMERAS):
     """Return frame index -> the camera to render it with (a model camera id, or a free camera)."""
-    if name not in CAMERAS:
+    if name not in cameras:
         cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, name)
         if cam_id < 0:
-            raise ValueError(f"unknown camera {name!r}: use one of {sorted(CAMERAS)} or a model camera")
+            raise ValueError(f"unknown camera {name!r}: use one of {sorted(cameras)} or a model camera")
         return lambda i: cam_id
-    spec = CAMERAS[name]
-    lookat = _smooth(qpos[:, :3], spec.smooth_s / dt)
-    lookat[:, 2] = np.maximum(lookat[:, 2] - 0.12, 0.08)  # aim between trunk and feet
+    spec = cameras[name]
+    if spec.lookat is not None:
+        lookat = np.tile(np.asarray(spec.lookat, dtype=np.float64), (len(qpos), 1))
+    else:
+        lookat = _smooth(qpos[:, :3], spec.smooth_s / dt)
+        lookat[:, 2] = np.maximum(lookat[:, 2] - spec.lookat_drop, spec.lookat_min)
     cam = mujoco.MjvCamera()
     cam.type = mujoco.mjtCamera.mjCAMERA_FREE
     cam.azimuth, cam.elevation, cam.distance = spec.azimuth, spec.elevation, spec.distance

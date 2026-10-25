@@ -7,13 +7,14 @@ reward writer can act on. Only genuine infrastructure bugs raise.
 
 import time
 import traceback
+from typing import Any
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from . import go1
+from .bodies import RewardError, get_body
 from .scene import SceneSpec
 
 MAX_MESSAGE = 1500
@@ -54,13 +55,16 @@ def check_reward(
     seed: int = 0,
     scene: SceneSpec | None = None,
     env_options: dict | None = None,
+    body: str | None = None,
 ) -> str | None:
     """Return None if the reward survives a short jitted rollout, else a message for the writer.
 
-    env_options are more go1.make_env arguments (stock terms, steer mode), so the gate runs the env training will.
+    env_options are more of the body's make_env arguments (stock terms, steer mode), so the gate
+    runs the env training will.
     """
     return run_gate(
-        source, impl=impl, num_envs=num_envs, steps=steps, seed=seed, scene=scene, env_options=env_options
+        source, impl=impl, num_envs=num_envs, steps=steps, seed=seed, scene=scene, env_options=env_options,
+        body=body,
     ).error
 
 
@@ -73,10 +77,11 @@ def run_gate(
     seed: int = 0,
     scene: SceneSpec | None = None,
     env_options: dict | None = None,
+    body: str | None = None,
 ) -> GateReport:
     try:
-        env = go1.make_env(source, impl=impl, scene=scene, **(env_options or {}))
-    except go1.RewardError as exc:
+        env = get_body(body).make_env(source, impl=impl, scene=scene, **(env_options or {}))
+    except RewardError as exc:
         where = _reward_lines(exc, source)  # make_env chains the original error; point at its line
         return GateReport(_clip(f"{exc}\n{where}" if where else str(exc)), 0.0, 0.0)
 
@@ -105,7 +110,7 @@ def run_gate(
     return GateReport(_clip(error) if error else None, compile_s, run_s)
 
 
-def _make_rollout(env: go1.Go1Env, num_envs: int, steps: int):
+def _make_rollout(env: Any, num_envs: int, steps: int):
     term_names = env.term_names
     reset = jax.vmap(env.reset)
     step = jax.vmap(env.step)

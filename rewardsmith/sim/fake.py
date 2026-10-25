@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .base import Cull, Job, OnDone, RunResult, Stopped, run_sequentially
+from .bodies import DEFAULT_BODY, get_body
 from .go1_spec import describe
 from .progress import ProgressWriter
 from .scene import EMPTY, SceneSpec
@@ -35,12 +36,18 @@ def _parse(source: str) -> ast.Module:
 
 class FakeSimulator:
     evaluation_spec: list[dict] | None = None
+    body: str = DEFAULT_BODY  # a bodies.BODIES key; the fake trains every body the same way
 
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
         self.evaluation_spec = spec
 
+    def set_body(self, name: str | None) -> None:
+        self.body = get_body(name).name
+
     def describe(self, scene: SceneSpec | None = None) -> str:
-        # The real Go1 contract, so prompts written against the fake match the GPU run.
+        # The real body's contract, so prompts written against the fake match the GPU run.
+        if self.body != DEFAULT_BODY:
+            return get_body(self.body).describe(scene or EMPTY)
         return describe(scene or EMPTY)
 
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
