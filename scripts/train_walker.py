@@ -10,7 +10,7 @@ robot's), on domain-randomized robots, as its notebooks train them. Writes to --
   walker.json        training time, the eval curve, and velocity tracking per command
   walker.mp4         a tour: stand, forward, turn, back, sideways, fast forward, stand
 --eval-only PARAMS skips training and measures (and films) those params.
-The weights stay on the pod; only this script is in git.
+The walkers the bodies use are also in git (assets/walkers/); scripts/fetch_walkers.sh installs them.
 """
 
 import argparse

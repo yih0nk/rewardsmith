@@ -27,7 +27,8 @@ command, after a settling second:
 | forward 0.8 + turn 0.6 | 0.76, 0.61 | 0% |
 
 It writes `params.pkl` (final), `params_<steps>.pkl` per eval, `walker.json`
-(curve, tracking) and `walker.mp4` (a command tour). The weights stay on the pod.
+(curve, tracking) and `walker.mp4` (a command tour). The final `params.pkl` and `walker.json` of the Go1
+and G1 walkers are in `assets/walkers/`; `scripts/fetch_walkers.sh` puts them in `/workspace/pretrained/`.
 
 ### The G1 walker
 
