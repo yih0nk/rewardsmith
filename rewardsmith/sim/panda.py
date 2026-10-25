@@ -300,13 +300,15 @@ def evaluate_rollouts(env: "PandaEnv", result: Any, out_dir: Any, steps: int = E
                       body: str | None = None) -> tuple[Any, list[bytes], dict[str, float], dict[str, float]]:
     """evaluation.evaluate for the arm: one compiled batch of the video episode (seed 0) and
     EVAL_EPISODES fresh ones; ARM_METRICS over the fresh ones. No robustness rollouts yet.
+    The policy acts deterministically: the gripper closes on the sign of a noisy action, and
+    sampled actions opened it mid-lift (dropped 28-47%, 0% with the mean action, same policies).
     Returns (mp4 path, critic PNGs, metrics, {})."""
     import time
 
     from . import render
 
     start = time.perf_counter()
-    policy = result.make_inference_fn(result.params, deterministic=False)
+    policy = result.make_inference_fn(result.params, deterministic=True)
 
     def one(rng):
         state = env.reset(rng)

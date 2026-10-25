@@ -15,7 +15,7 @@ from .scene import EMPTY, SceneSpec
 
 CTRL_DT = 0.02  # seconds per policy step
 EPISODE_STEPS = 500  # 10 s, the rollout and evaluation length
-TRAIN_EPISODE_STEPS = 300  # 6 s: training episodes, long enough to reach, grasp and lift
+TRAIN_EPISODE_STEPS = EPISODE_STEPS  # train on the whole 10 s: at 6 s policies let go after 6 s
 CUBE_SIZE = (0.02, 0.02, 0.03)  # m, half sizes: a 4 x 4 x 6 cm block (Playground's pick-cube block)
 CUBE_REST_Z = CUBE_SIZE[2]  # block centre height resting on the table
 REACH_M = 0.85
@@ -107,7 +107,7 @@ def describe(scene: SceneSpec = EMPTY, *, mode: str = "steer") -> str:
         "Robot: Franka Emika Panda 7-joint arm with a parallel two-finger gripper, MuJoCo Playground (JAX/MJX), "
         "bolted to a flat table at the world origin, facing +x. It has no legs and cannot move its base.",
         f"One policy step is {CTRL_DT} s; an evaluation episode is {EPISODE_STEPS} steps "
-        f"({EPISODE_STEPS * CTRL_DT:.0f} s), training episodes are {TRAIN_EPISODE_STEPS * CTRL_DT:.0f} s.",
+        f"({EPISODE_STEPS * CTRL_DT:.0f} s), the same in training.",
         "",
         "Scene (fixed for the arm; walls, ramps, balls and other scene objects are not supported):",
         *scene_notes(scene),

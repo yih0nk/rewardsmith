@@ -26,9 +26,9 @@ class PandaBody:
     skill_checkpoint = None  # the IK needs no training
     camera = {
         # In front of the arm and to its right, looking back at the gripper and the block, from above.
-        "chase": {"azimuth": 140.0, "elevation": -28.0, "distance": 1.25, "lookat": [0.45, 0.0, 0.12]},
+        "chase": {"azimuth": 150.0, "elevation": -24.0, "distance": 1.35, "lookat": [0.45, 0.0, 0.2]},
         # Square to the arm's left side, low: how high the block goes.
-        "side": {"azimuth": -90.0, "elevation": -10.0, "distance": 1.2, "lookat": [0.45, 0.0, 0.15]},
+        "side": {"azimuth": -90.0, "elevation": -10.0, "distance": 1.6, "lookat": [0.4, 0.0, 0.25]},
     }
 
     def make_env(
@@ -62,7 +62,8 @@ class PandaBody:
         return panda.randomizer()
 
     def ppo_overrides(self) -> dict:
-        return {"episode_length": panda_spec.TRAIN_EPISODE_STEPS}
+        # 20M steps train in about 2.5 min on the 4090; 10M lifted the block but dropped it 28% of the time.
+        return {"episode_length": panda_spec.TRAIN_EPISODE_STEPS, "num_timesteps": 20_000_000}
 
 
 PANDA = register(PandaBody())
