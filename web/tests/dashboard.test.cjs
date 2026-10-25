@@ -951,3 +951,95 @@ test("run control calls post to the request's action route", async () => {
     global.fetch = originalFetch;
   }
 });
+
+// Real critiques from the live board: several hundred words with numbers, lists and
+// term names. The fake LLM's one-line critiques hid how this text looked in a column.
+const realCritiques = JSON.parse(fs.readFileSync(`${__dirname}/fixtures/real-critiques.json`, "utf8"));
+const critique = require("../src/components/Critique.tsx");
+
+test("a real critique leads with what happened and keeps its lists and numbers", () => {
+  const parsed = critique.parseCritique(realCritiques.best.critique);
+  assert.deepEqual(parsed.flags, []);
+  // The numbers the critic opens with are skipped; the lead says what the video shows.
+  assert.doesNotMatch(parsed.lead, /^Key numbers/);
+  assert.match(parsed.lead, /^The robot does rear up onto its hind legs\./);
+  assert.equal(critique.sentences(parsed.lead).length, 2);
+  assert.ok(parsed.more);
+  assert.ok(parsed.words > 250);
+  const kinds = parsed.blocks.map((b) => b.kind);
+  assert.ok(kinds.includes("ul") && kinds.includes("ol"));
+  const fixes = parsed.blocks.find((b) => b.kind === "ol");
+  assert.equal(fixes.items.length, 6);
+  assert.match(fixes.items[0], /^Make the bipedal-hold term the main reward/);
+
+  const flagged = critique.parseCritique(realCritiques.hacked.critique);
+  assert.deepEqual(flagged.flags, ["Reward hacking suspected"]);
+  assert.doesNotMatch(flagged.lead, /Reward hacking suspected/);
+});
+
+test("sentences split on real prose without breaking numbers or abbreviations", () => {
+  assert.deepEqual(critique.sentences("upright 0.662 (e.g. body tilt). base_height drops to 0.196. Cut it 5×. Done"), [
+    "upright 0.662 (e.g. body tilt).",
+    "base_height drops to 0.196.",
+    "Cut it 5×.",
+    "Done",
+  ]);
+});
+
+test("Claude's notes render as a lead, a collapsed full text, lists and code names", () => {
+  const html = renderToStaticMarkup(React.createElement(critique.default, { text: realCritiques.hacked.critique }));
+  assert.match(html, /class="critique-flag">Reward hacking suspected</);
+  assert.match(html, /<p class="critique-lead">/);
+  assert.match(html, /<details class="critique-full"><summary>Read Claude&#x27;s full notes/);
+  assert.match(html, /<ol>/);
+  assert.match(html, /<code[^>]*>term_vertical_hold<\/code>/);
+  // Known metrics get their plain name on hover.
+  assert.match(html, /<code title="Body height">base_height<\/code>/);
+  assert.match(html, /<strong>Key numbers:<\/strong>/);
+  // A one-sentence note has nothing more to open.
+  const short = renderToStaticMarkup(React.createElement(critique.default, { text: "Fake critique: try a stronger task term." }));
+  assert.doesNotMatch(short, /critique-full/);
+});
+
+test("the success check table uses short headers, plain metric names and units", () => {
+  const SuccessCheck = require("../src/components/SuccessCheck.tsx").default;
+  const html = renderToStaticMarkup(React.createElement(SuccessCheck, { check: realCritiques.best.check_result }));
+  assert.match(html, /<th scope="col">Metric<\/th><th scope="col">Got<\/th><th scope="col">Need<\/th><th scope="col">Result<\/th>/);
+  assert.doesNotMatch(html, /Criterion|Measured|Required/);
+  assert.match(html, /<th scope="row" title="abs_forward_velocity">Speed forwards or backwards<\/th>/);
+  assert.match(html, /<th scope="row" title="base_height">Body height<\/th><td class="num">0.28 m<\/td><td class="num">&gt; 0.2 m<\/td>/);
+  // "fell < 0.5" reads as yes / no.
+  assert.match(html, /title="fell">Fell over<\/th><td class="num">no<\/td><td class="num">no<\/td>/);
+  assert.match(html, /3 of 3 criteria met/);
+});
+
+test("the score sits in a row over the video; the table and notes run full width under it", () => {
+  const detail = {
+    ...base,
+    status: "done",
+    best_score: realCritiques.best.score,
+    success_spec: realCritiques.success_spec,
+    rounds: [
+      scoredRound(1, 1, {
+        ...candidate,
+        score: realCritiques.best.score,
+        critique: realCritiques.best.critique,
+        check_result: realCritiques.best.check_result,
+        idea: "Classic velocity-tracking kernel on term_track_vel.",
+      }),
+    ],
+  };
+  const html = render(detail);
+  assert.match(html, /class="verdict-row summary-best"><p class="score "><span class="num">4\.0<\/span>/);
+  assert.match(html, /✓ Passed the success check/);
+  // The evaluation follows the result/status grid instead of sitting in its result column.
+  const grid = html.indexOf('class="run-grid');
+  const rollout = html.indexOf('aria-label="Robot rollout"');
+  const evaluation = html.indexOf('class="evaluation"');
+  assert.ok(grid < rollout && rollout < evaluation);
+  assert.doesNotMatch(html.slice(rollout, evaluation), /check-criteria|critique-lead/);
+  assert.match(html.slice(evaluation), /check-criteria[\s\S]*critique-lead/);
+  // What the candidate tries: two lines on its card, in full in its in-depth panel.
+  assert.match(html, /class="candidate-idea idea">Classic velocity-tracking kernel on <code>term_track_vel<\/code>/);
+  assert.match(html, /What this reward tries/);
+});
