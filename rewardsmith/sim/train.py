@@ -24,9 +24,10 @@ from mujoco_playground import wrapper
 from mujoco_playground.config import locomotion_params
 
 from . import checkpoints
-from .go1 import BASE_ENV, Go1Env
+from .bodies import get_body
+from .go1 import Go1Env
 
-# Overrides on top of Playground's tuned Go1 joystick PPO config.
+# Overrides on top of Playground's tuned PPO config for the body's env (the Go1 joystick's by default).
 # brax requires batch_size * num_minibatches to be a multiple of num_envs.
 PRESETS: dict[str, dict[str, Any]] = {
     "smoke": dict(
@@ -74,10 +75,26 @@ class TrainResult:
         return [p.episode_reward for p in self.curve]
 
 
-def ppo_kwargs(preset: str = "round", overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    cfg = locomotion_params.brax_ppo_config(BASE_ENV)
+def playground_ppo_config(env_name: str) -> Any:
+    """Playground's tuned brax PPO config for a locomotion or manipulation env."""
+    from mujoco_playground._src import manipulation
+
+    if env_name in manipulation.ALL_ENVS:
+        from mujoco_playground.config import manipulation_params
+
+        return manipulation_params.brax_ppo_config(env_name)
+    return locomotion_params.brax_ppo_config(env_name)
+
+
+def ppo_kwargs(
+    preset: str = "round", overrides: Mapping[str, Any] | None = None, body: str | None = None
+) -> dict[str, Any]:
+    """Playground's tuned config for the body's env, then the preset, then the body's own overrides."""
+    b = get_body(body)
+    cfg = playground_ppo_config(b.base_env)
     kwargs = {k: v for k, v in cfg.items() if k != "network_factory"}
     kwargs.update(PRESETS[preset])
+    kwargs.update(b.ppo_overrides())
     kwargs.update(json.loads(os.environ.get("REWARDSMITH_PPO_OVERRIDES") or "{}"))  # for tuning runs
     kwargs.update(overrides or {})
     if (kwargs["batch_size"] * kwargs["num_minibatches"]) % kwargs["num_envs"]:
@@ -140,8 +157,10 @@ def train(
     checkpoint_dir: Path | None = None,
     restore_value: bool = True,
     init_noise: float | None = None,
+    body: str | None = None,
 ) -> TrainResult:
-    """Train a policy. randomize=True gives every env its own randomized robot.
+    """Train a policy on env, built by the body called body (PPO config and randomizer).
+    randomize=True gives every env its own randomized robot.
 
     brax also randomizes its eval envs then, so the curve is measured on randomized robots.
 
@@ -152,11 +171,11 @@ def train(
     at 0: num_timesteps is how many more steps to train. With checkpoint_dir, the
     params are saved there at every eval as params_<steps>.pkl.
     """
-    kwargs = ppo_kwargs(preset, overrides)
+    kwargs = ppo_kwargs(preset, overrides, body)
     if init_params is not None:
         if isinstance(init_params, (str, Path)):
             init_params = checkpoints.load(Path(init_params))
-        init_params = fit_params(env, init_params)
+        init_params = fit_params(env, init_params, body)
         kwargs["restore_params"] = checkpoints.reset_noise(init_params, init_noise) if init_noise else init_params
         kwargs["restore_value_fn"] = restore_value
     if checkpoint_dir is not None:
@@ -185,7 +204,7 @@ def train(
         make_inference_fn, params, _ = ppo.train(
             environment=env,
             wrap_env_fn=wrapper.wrap_for_brax_training,
-            randomization_fn=randomizer() if randomize else None,
+            randomization_fn=randomizer(body) if randomize else None,
             progress_fn=progress,
             seed=seed,
             **kwargs,
@@ -204,9 +223,9 @@ def train(
     )
 
 
-def fit_params(env: Any, params: Any) -> Any:
+def fit_params(env: Any, params: Any, body: str | None = None) -> Any:
     """params fitted to env's observation sizes (see checkpoints.fit)."""
-    factory = locomotion_params.brax_ppo_config(BASE_ENV).network_factory
+    factory = playground_ppo_config(get_body(body).base_env).network_factory
     sizes = {k: int(v[-1]) for k, v in env.observation_size.items()}
     return checkpoints.fit(params, sizes, {"policy": factory.policy_obs_key, "value": factory.value_obs_key})
 

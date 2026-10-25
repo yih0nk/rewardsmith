@@ -40,8 +40,10 @@ def evaluate(
     robust: bool = True,
     steps: int = ROLLOUT_STEPS,
     success_spec: list[dict] | None = None,
+    body: str | None = None,
 ) -> tuple[Path, list[bytes], dict[str, float], dict[str, float]]:
-    """Return (mp4 path, critic PNGs, rollout + target metrics + eval_s, robust_* metrics or {})."""
+    """Return (mp4 path, critic PNGs, rollout + target metrics + eval_s, robust_* metrics or {}).
+    body names the body env was built from (its randomizer and camera)."""
     start = time.perf_counter()
     target_obj = env.scene.target_object
     selected = outcomes.requested(success_spec, env.scene)
@@ -60,7 +62,7 @@ def evaluate(
     keys = jnp.concatenate([plan.keys[:n_robots], jax.random.PRNGKey(VIDEO_SEED)[None], target_keys, plan.keys[n_robots:]])
     push_dirs = plan.push_dirs[:n_robots] + [(0.0, 0.0)] * (1 + n_target) + plan.push_dirs[n_robots:]
     if n_robots:
-        models, in_axes = robustness.models_for(env, n_robots, len(keys) - n_robots, plan.rng_models)
+        models, in_axes = robustness.models_for(env, n_robots, len(keys) - n_robots, plan.rng_models, body)
     else:
         models, in_axes = env.mjx_model, None
     extra = {"observe": scene_eval.observer(env)} if needs_outcomes else {}
@@ -79,7 +81,7 @@ def evaluate(
 
     qpos = np.concatenate([reset["qpos"][video][None], outs["qpos"][video][:n]])
     video_path, frames = render.render_rollout(
-        env, qpos, out_dir, mocap_pos=reset["mocap_pos"][video], mocap_quat=reset["mocap_quat"][video]
+        env, qpos, out_dir, mocap_pos=reset["mocap_pos"][video], mocap_quat=reset["mocap_quat"][video], body=body,
     )
     metrics = dict(summary)
     if target_obj is not None:
