@@ -837,7 +837,7 @@ test("runs and candidates have stable anchors, and reply slots stay empty until 
     rounds: [scoredRound(1, 1, { ...candidate, id: 7 })],
   };
   const plain = render(detail);
-  assert.match(plain, /<article class="cmd turn" id="run-abcd1234"/);
+  assert.match(plain, /<article class="cmd turn collapsible-turn" id="run-abcd1234"/);
   assert.match(plain, /id="candidate-7" data-round="1" data-candidate-id="7"/);
   assert.match(plain, /aria-label="Robot rollout" data-candidate-id="7"/);
   assert.doesNotMatch(plain, /reply-slot/);
