@@ -1233,3 +1233,66 @@ test("a run's time counts from when the worker picked it up, with time in line a
   assert.match(html, /<dt>Took<\/dt><dd class="num" data-testid="run-timer">2m 23s</);
   assert.match(html, /<dt>In line first<\/dt><dd class="num" data-testid="wait-timer">1h 15m</);
 });
+
+test("the new-task composer offers Auto and only the registered robots; a follow-up has no robot picker", () => {
+  const Options = require("../src/components/MessageOptions.tsx").default;
+  const { bodiesOf } = require("../src/modes.ts");
+  const g1 = { name: "g1", title: "Unitree G1", kind: "humanoid", summary: "Unitree G1: humanoid" };
+  const go1 = { name: "go1", title: "Unitree Go1", kind: "quadruped", summary: "Unitree Go1: small quadruped dog" };
+  const seen = [];
+  const element = (value, bodies) =>
+    Options({ value, onChange: (next) => seen.push(next), models: ["claude-opus-5-5"], bodies, idPrefix: "t" });
+  const html = renderToStaticMarkup(element({ mode: "effort", model: "claude-opus-5-5", body: "auto" }, bodiesOf({ ...health, bodies: [go1, g1] })));
+  assert.match(html, />Robot</);
+  assert.match(html, /<option value="auto" selected="">Auto<\/option><option value="go1">Unitree Go1<\/option><option value="g1">Unitree G1<\/option>/);
+  assert.doesNotMatch(html, /panda/i);
+  // An older server lists no bodies: the Go1 only.
+  assert.deepEqual(bodiesOf(health).map((b) => b.name), ["go1"]);
+  // Picking a robot keeps the mode and model.
+  const find = (node, pred) => {
+    if (!node || typeof node !== "object") return null;
+    if (pred(node)) return node;
+    for (const k of [].concat(node.props?.children ?? [])) {
+      const hit = find(k, pred);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const select = find(element({ mode: "effort", model: "claude-opus-5-5", body: "auto" }, [go1, g1]),
+    (n) => n.type === "select" && n.props.title?.startsWith("Claude picks"));
+  select.props.onChange({ target: { value: "g1" } });
+  assert.deepEqual(seen, [{ mode: "effort", model: "claude-opus-5-5", body: "g1" }]);
+  // A follow-up keeps its task's robot: no picker.
+  assert.doesNotMatch(renderToStaticMarkup(element({ mode: "instant", model: "claude-opus-5-5" })), /Robot/);
+});
+
+test("each run names its robot, and why Claude picked it on Auto", () => {
+  const withG1 = { ...health, bodies: [{ name: "go1", title: "Unitree Go1" }, { name: "g1", title: "Unitree G1" }] };
+  const run = (detail) => renderToStaticMarkup(React.createElement(Detail, { detail, health: withG1 }));
+  const picked = run({ ...base, status: "running", mode: "effort", body: "g1", body_reason: "the task needs two legs" });
+  assert.match(picked, /class="body-tag"[^>]*>Unitree G1</);
+  assert.match(picked, /Using the Unitree G1: the task needs two legs/);
+  const auto = run({ ...base, mode: "effort", body: null });
+  assert.match(auto, /class="body-tag"[^>]*>Auto</);
+  assert.match(auto, /Claude picks the robot when it starts/);
+  // A run from before bodies is the Go1, with no reason line.
+  const old = run({ ...base, status: "done" });
+  assert.match(old, /class="body-tag"[^>]*>Unitree Go1</);
+  assert.doesNotMatch(old, /Using the/);
+});
+
+test("the sidebar labels each task with its robot", () => {
+  const List = require("../src/components/ConversationList.tsx").default;
+  const { conversationsFromRequests } = require("../src/thread.ts");
+  const conversations = conversationsFromRequests([
+    { id: "a", text: "wave hello", status: "done", best_score: 7, created_at: 2, conversation_id: "a", turn: 1, body: "g1" },
+    { id: "b", text: "keep going", status: "queued", best_score: null, created_at: 3, conversation_id: "a", turn: 2, body: "g1" },
+    { id: "c", text: "trot", status: "queued", best_score: null, created_at: 1, conversation_id: "c", turn: 1, body: null },
+  ]);
+  const html = renderToStaticMarkup(React.createElement(List, {
+    conversations, selected: null, loading: false, onSelect: () => {},
+    health: { ...health, bodies: [{ name: "go1", title: "Unitree Go1" }, { name: "g1", title: "Unitree G1" }] },
+  }));
+  assert.match(html, /wave hello[\s\S]*class="body-tag">Unitree G1</);
+  assert.match(html, /trot[\s\S]*class="body-tag">Auto</);
+});

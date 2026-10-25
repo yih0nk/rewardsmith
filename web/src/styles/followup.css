@@ -102,3 +102,26 @@
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+
+/* ---- The robot: picker in the new-task composer, a tag on each task and run ---- */
+.body-pick select {
+  max-width: 18ch;
+}
+.body-tag {
+  padding: 0 var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-rule);
+  font-size: var(--dp-typography-label);
+  line-height: var(--dp-typography-list-leading);
+  color: var(--dp-color-ink-muted);
+  white-space: nowrap;
+}
+.conversation .body-tag {
+  margin-left: auto;
+}
+.conversation.selected .body-tag {
+  border-color: var(--dp-color-ground);
+  color: var(--dp-color-ground);
+}
+.body-why {
+  color: var(--dp-color-ink);
+}

@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { Health } from "../api";
+import { bodyLabel } from "../modes";
 import { Conversation } from "../thread";
 
 const STATUS: Record<Conversation["status"], string> = {
@@ -10,17 +12,19 @@ const STATUS: Record<Conversation["status"], string> = {
   cancelled: "cancelled",
 };
 
-// The sidebar: one row per task, newest first. Status, best score, then the task.
+// The sidebar: one row per task, newest first. Status, robot, best score, then the task.
 export default function ConversationList({
   conversations,
   selected,
   loading,
   onSelect,
+  health = null,
 }: {
   conversations: Conversation[];
   selected: string | null;
   loading: boolean;
   onSelect: (id: string) => void;
+  health?: Health | null;
 }) {
   // Keep the open task visible in a long list (a link straight to an old task).
   const current = useRef<HTMLButtonElement>(null);
@@ -53,6 +57,7 @@ export default function ConversationList({
                 <span className="conversation-title">{c.title}</span>
                 <span className="conversation-meta">
                   <span className={`run-status ${c.status}`}>{status}</span>
+                  <span className="body-tag">{bodyLabel(c.body, health)}</span>
                   <span className="num">
                     {c.bestScore != null ? (
                       <>
