@@ -109,3 +109,25 @@ def _pad_first_layer(net: dict, n: int) -> dict:
     zeros = np.zeros((n, kernel.shape[1]), kernel.dtype)
     layers["hidden_0"] = {**layers["hidden_0"], "kernel": np.concatenate([kernel, zeros], 0)}
     return {**net, "params": layers}
+
+
+MIN_STD = 0.001  # brax's NormalTanhDistribution adds this to softplus(scale)
+
+
+def reset_noise(params: Any, std: float) -> Any:
+    """The same policy mean, with every action's exploration noise reset to std.
+
+    A trained walker explores with std ~0.1 (its scale outputs shrank as it learned),
+    too little for PPO to find a new behavior. The policy's last layer outputs
+    [mean, raw scale] per action, scale = softplus(raw) + MIN_STD; this zeroes the
+    raw-scale weights and sets their bias so every state gets std.
+    """
+    normalizer, policy, value = params
+    layers = dict(policy["params"])
+    last = sorted(layers, key=lambda k: int(k.rsplit("_", 1)[1]))[-1]
+    kernel, bias = np.array(layers[last]["kernel"]), np.array(layers[last]["bias"])
+    n = bias.shape[0] // 2
+    kernel[:, n:] = 0.0
+    bias[n:] = np.log(np.expm1(std - MIN_STD))  # softplus^-1
+    layers[last] = {**layers[last], "kernel": kernel, "bias": bias}
+    return normalizer, {**policy, "params": layers}, value

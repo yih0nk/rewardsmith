@@ -189,6 +189,7 @@ def train(
     init_params: Any = None,
     checkpoint_dir: Path | None = None,
     restore_value: bool = True,
+    init_noise: float | None = None,
 ) -> TrainResult:
     """Train a policy. randomize=True gives every env its own randomized robot.
 
@@ -196,7 +197,8 @@ def train(
 
     init_params (a params tuple or a checkpoint path) starts PPO from those weights
     instead of random ones, fitted to this env's observations (checkpoints.fit);
-    restore_value=False keeps a fresh value network. The step count still starts
+    restore_value=False keeps a fresh value network, and init_noise resets the policy's
+    exploration noise to that std (checkpoints.reset_noise). The step count still starts
     at 0: num_timesteps is how many more steps to train. With checkpoint_dir, the
     params are saved there at every eval as params_<steps>.pkl.
     """
@@ -204,7 +206,8 @@ def train(
     if init_params is not None:
         if isinstance(init_params, (str, Path)):
             init_params = checkpoints.load(Path(init_params))
-        kwargs["restore_params"] = fit_params(env, init_params)
+        init_params = fit_params(env, init_params)
+        kwargs["restore_params"] = checkpoints.reset_noise(init_params, init_noise) if init_noise else init_params
         kwargs["restore_value_fn"] = restore_value
     if checkpoint_dir is not None:
         kwargs["policy_params_fn"] = lambda steps, _make_policy, params: checkpoints.save(

@@ -20,6 +20,8 @@ Settings (env vars):
                           mode (default gait; see go1.STOCK_PROFILES). Always off in steer mode.
   REWARDSMITH_STOCK_WEIGHT  multiplier on the stock terms' scales (default go1.STOCK_WEIGHT)
   REWARDSMITH_RESTORE_VALUE 1 = warm starts keep the checkpoint's value network too (default 1)
+  REWARDSMITH_TUNE_NOISE  tune mode resets the walker's exploration noise to this std (default 0.5;
+                          0 keeps the walker's own, about 0.1, too little to leave its gait)
   REWARDSMITH_STEPS       training steps per candidate (default: the preset's)
 """
 
@@ -47,6 +49,7 @@ log = logging.getLogger("rewardsmith.sim")
 
 DEFAULT_WALKER = "/workspace/pretrained/go1_walker/params.pkl"
 MODES = ("steer", "tune", "off")
+TUNE_NOISE = 0.5
 
 
 def default_walker() -> str:
@@ -77,6 +80,7 @@ class PlaygroundSimulator:
         stock_weight: float | None = None,
         steps: int | None = None,
         restore_value: bool | None = None,
+        tune_noise: float | None = None,
     ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
@@ -101,6 +105,7 @@ class PlaygroundSimulator:
         )
         self.steps = steps or int(os.environ.get("REWARDSMITH_STEPS") or 0) or None  # None: the preset's
         self.restore_value = _flag("REWARDSMITH_RESTORE_VALUE", "1") if restore_value is None else restore_value
+        self.tune_noise = float(os.environ.get("REWARDSMITH_TUNE_NOISE", TUNE_NOISE)) if tune_noise is None else tune_noise
         self._pool: parallel.WarmPool | None = None
         # The worker gates drafts in threads, but two warp rollouts at once in one
         # process crash: warp captures a CUDA graph on its first call, and any other
@@ -179,6 +184,8 @@ class PlaygroundSimulator:
         result = train.train(
             train_env, self.preset, {"num_timesteps": steps}, on_progress=progress.point, randomize=self.randomize,
             init_params=init_params, checkpoint_dir=out_dir, restore_value=self.restore_value,
+            # Fresh exploration only when starting from the walker; a candidate's own checkpoint keeps its noise.
+            init_noise=self.tune_noise if self.mode == "tune" and str(init_params) == self.walker else None,
         )
         progress.stage("rendering")
         # The video, target metrics and robustness rollouts, all in one batch (see evaluation.py).
@@ -208,6 +215,7 @@ class PlaygroundSimulator:
             "randomize": self.randomize, "push": self.push, "robustness": self.robustness,
             "evaluation_spec": self.evaluation_spec, "walker": self.walker, "mode": self.mode, "stock_profile": self.stock_profile,
             "stock_weight": self.stock_weight, "steps": self.steps, "restore_value": self.restore_value,
+            "tune_noise": self.tune_noise,
         }
 
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
