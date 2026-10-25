@@ -54,11 +54,11 @@ def target_metrics(
         return start, dists, done  # (num_envs,), (steps, num_envs), (steps, num_envs)
 
     start, dists, done = (np.asarray(x) for x in jax.jit(run)(jax.random.PRNGKey(seed)))
-    return _summarize(start, dists, done, target.reach_radius, env.dt)
+    return summarize(start, dists, done, target.reach_radius, env.dt)
 
 
-def _summarize(start, dists, done, reach_radius: float, dt: float) -> dict[str, float]:
-    """Only observations up to and including each episode's first terminal step count."""
+def summarize(start, dists, done, reach_radius: float, dt: float) -> dict[str, float]:
+    """start (num_envs,), dists and done (steps, num_envs). Only observations up to and including each episode's first terminal step count."""
     done = np.asarray(done, dtype=bool)
     valid = np.concatenate([np.ones_like(done[:1]), np.cumprod(~done[:-1], axis=0).astype(bool)])
     reached = (dists <= reach_radius) & valid
