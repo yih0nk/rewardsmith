@@ -128,3 +128,21 @@ def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
         assert in_worker == [WALK_BACKWARDS]
     finally:
         sim.close_warm_pool()
+
+
+def test_halving_gives_the_culled_steps_to_the_survivors(monkeypatch, tmp_path):
+    from rewardsmith.sim import parallel
+    seen = {}
+    monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(jobs=jobs) or [])
+    sim = PlaygroundSimulator(preset="round", walker="", steps=1_000_000)
+    sim.run_many([(WALK_BACKWARDS, tmp_path / str(i)) for i in range(4)], cull=lambda running: {})
+    assert all(len(job) == 2 for job in seen["jobs"])  # a cull without rungs: unchanged
+
+    class Cull:
+        keep = [2]
+
+        def __call__(self, running):
+            return {}
+
+    sim.run_many([(WALK_BACKWARDS, tmp_path / str(i)) for i in range(4)], cull=Cull())
+    assert [job[2]["steps"] for job in seen["jobs"]] == [1_600_000] * 4
