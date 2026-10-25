@@ -297,3 +297,13 @@ def test_the_idle_worker_warms_the_largest_round():
     orchestrator.prewarm(Sim(), config.Settings(Path("x"), Path("y"), "m", "Go1", 3, 2, 8, True, True))
     orchestrator.prewarm(FakeSimulator(), config.Settings(Path("x"), Path("y"), "m", "Go1", 3, 2, 8, True, True))
     assert calls == [4]  # Effort's K, the largest of the modes
+
+
+def test_a_draft_with_idea_and_source_swapped_is_put_right():
+    from rewardsmith.agents.base import Draft
+
+    code = "def reward(state, action, prev_action):\n    return {'x': 1.0}\n"
+    fixed = orchestrator._as_draft(Draft("Push from behind the ball, then stop in the goal.", idea=code))
+    assert (fixed.source, fixed.idea) == (code, "Push from behind the ball, then stop in the goal.")
+    fine = Draft(code, idea="def reward is mentioned in prose here")
+    assert orchestrator._as_draft(fine) == fine

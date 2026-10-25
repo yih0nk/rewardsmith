@@ -20,6 +20,7 @@ round 1 is the editor revising that candidate with its critique, the coach's not
 the user's note. Its mode (modes.py) sets K, rounds, models and the training budget.
 """
 
+import ast
 import inspect
 import json
 import logging
@@ -646,10 +647,29 @@ def _success_spec(
 def _as_draft(item: Draft | str | tuple[str, str | None]) -> Draft:
     """Writers may return plain sources and editors (source, diff) pairs; both become Drafts."""
     if isinstance(item, Draft):
-        return item
+        return _unswapped(item)
     if isinstance(item, str):
         return Draft(item)
     return Draft(item[0], item[1])
+
+
+def _parses(text: str | None) -> bool:
+    try:
+        ast.parse(text or "")
+    except SyntaxError:
+        return False
+    return True
+
+
+def _unswapped(draft: Draft) -> Draft:
+    """A draft whose idea holds the code and whose source holds the prose, put right.
+
+    Opus 5.5 at medium effort filled every candidate this way round on a live request
+    (the idea streamed as code); the gate then spent a fix call per candidate on prose.
+    """
+    if draft.idea and "def reward" in draft.idea and not _parses(draft.source) and _parses(draft.idea):
+        return replace(draft, source=draft.idea, idea=draft.source)
+    return draft
 
 
 def _revise(
