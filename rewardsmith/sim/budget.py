@@ -30,6 +30,9 @@ POSE = re.compile(
     r"\bwave|shake|stretch|play dead|wiggle",
     re.IGNORECASE,
 )
+# For a two-legged body these are just how it walks, not a pose to fine-tune into.
+BIPED_GAIT = re.compile(r"(?:on |with )?(?:its |his |her |their )?two legs|stand(?:s|ing)? (?:up|tall)|upright",
+                        re.IGNORECASE)
 STEPS = re.compile(r"\bthen\b|\bafter(?:wards)?\b|\bbefore\b|\bfinally\b|\bnext\b|\bfirst\b.*\bthen\b", re.IGNORECASE)
 MOVE_IT = re.compile(r"\b(?:push|move|shove|kick|carry|bring|deliver|roll|drag|nudge|herd|dribble)", re.IGNORECASE)
 
@@ -45,8 +48,8 @@ class Plan:
         return f"Training plan: {self.kind} task ({self.why}), {self.steps / 1e6:g}M steps per candidate, {self.family} family"
 
 
-def plan(text: str, scene: SceneSpec) -> Plan:
-    family = "pose" if POSE.search(text) else "gait"
+def plan(text: str, scene: SceneSpec, bipedal: bool = False) -> Plan:
+    family = "pose" if POSE.search(BIPED_GAIT.sub(" ", text) if bipedal else text) else "gait"
     movable = [o for o in scene.objects if o.movable]
     zones = [o for o in scene.objects if o.kind == "zone"]
     goal = getattr(scene, "goal", None)

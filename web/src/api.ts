@@ -102,6 +102,7 @@ export interface RequestSummary {
   // instant | effort, and the writer/editor/critic model. null on runs from before modes.
   mode?: Mode | null;
   model?: string | null;
+  training_steps?: number | null;
   // A follow-up's candidate to refine; null = the task's best when it starts.
   target_candidate_id?: number | null;
   // 1 when a follow-up's note changed the scene, so it trained from scratch.
@@ -239,6 +240,7 @@ export const getRequest = (id: string): Promise<RequestDetail> =>
 export interface MessageOptions {
   mode: Mode;
   model: string;
+  training_steps?: number;
   body?: string;
 }
 

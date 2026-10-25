@@ -45,6 +45,7 @@ class NewRequest(BaseModel):
     mode: str | None = Field(default=None, pattern=f"^({modes.INSTANT}|{modes.EFFORT})$")
     # The writer/editor/critic model, one of modes.MODELS. Omit it for the mode's.
     model: str | None = Field(default=None, pattern="^(" + "|".join(modes.MODELS) + ")$")
+    training_steps: int | None = Field(default=None, strict=True, ge=modes.MIN_TRAINING_STEPS, le=modes.MAX_TRAINING_STEPS)
     # The robot: a registered body's name (GET /api/health lists them), or "auto". Omit it for Auto:
     # Claude picks the body that fits the task. Follow-ups always run on the conversation's body.
     body: str | None = Field(default=None, max_length=40)
@@ -62,7 +63,8 @@ def create_request(body: NewRequest, conn: sqlite3.Connection = Depends(get_conn
     robot = None if body.body in (None, "", "auto") else body.body
     if robot is not None and robot not in bodies.BODIES:
         raise HTTPException(status_code=422, detail=f"Unknown body {robot!r}: use auto or one of {sorted(bodies.BODIES)}")
-    rid = db.create_request(conn, body.text, spec, body.coach, body.mode or modes.DEFAULT_TASK_MODE, body.model, robot)
+    rid = db.create_request(conn, body.text, spec, body.coach, body.mode or modes.DEFAULT_TASK_MODE, body.model,
+                           body.training_steps, robot)
     db.log_event(conn, rid, "queued", "Request queued")
     return {"id": rid, "conversation_id": rid}
 
@@ -78,6 +80,7 @@ class NewTurn(BaseModel):
     # Omit it for the default: Instant for a follow-up.
     mode: str | None = Field(default=None, pattern=f"^({modes.INSTANT}|{modes.EFFORT})$")
     model: str | None = Field(default=None, pattern="^(" + "|".join(modes.MODELS) + ")$")
+    training_steps: int | None = Field(default=None, strict=True, ge=modes.MIN_TRAINING_STEPS, le=modes.MAX_TRAINING_STEPS)
 
 
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201)
@@ -86,7 +89,7 @@ def add_turn(conversation_id: str, body: NewTurn, conn: sqlite3.Connection = Dep
     try:
         rid = db.add_turn(
             conn, conversation_id, body.text or "Keep going", body.target_candidate_id, body.coach,
-            body.mode or modes.DEFAULT_FOLLOWUP_MODE, body.model,
+            body.mode or modes.DEFAULT_FOLLOWUP_MODE, body.model, body.training_steps,
         )
     except db.NotInConversation as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

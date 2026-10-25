@@ -145,7 +145,10 @@ def run_request(
     if plan:  # per-request steps and stock terms (sim/budget.py); describe() names the stock terms
         message = plan(text, scene)
         steps = getattr(sim, "steps", None)
-        if settings.max_steps and steps is not None and steps > settings.max_steps:
+        if req.get("training_steps") is not None and hasattr(sim, "steps"):
+            sim.steps = req["training_steps"]  # type: ignore[attr-defined]
+            message += f"; user selected {req['training_steps'] / 1e6:g}M steps per candidate"
+        elif settings.max_steps and hasattr(sim, "steps") and (steps is None or steps > settings.max_steps):
             sim.steps = settings.max_steps  # type: ignore[attr-defined]
             message += f"; this mode caps it at {settings.max_steps / 1e6:g}M steps"
         db.log_event(conn, rid, "plan", message)

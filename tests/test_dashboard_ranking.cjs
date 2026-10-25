@@ -74,3 +74,39 @@ test('advanced outcomes display readable stages and episode success rates', () =
   assert.match(html, /87.5%/);
   assert.match(html, /&gt;= 80%/);
 });
+
+test('training budget control converts millions to steps and can restore automatic mode', () => {
+  const Options = require('../web/src/components/MessageOptions.tsx').default;
+  const changes = [];
+  const props = {value: {mode: 'effort', model: 'claude-opus-5-5', training_steps: 20000000},
+    onChange: value => changes.push(value), models: ['claude-opus-5-5'], idPrefix: 'task'};
+  const tree = Options(props);
+  const find = node => {
+    if (node?.props?.type === 'number') return node;
+    for (const child of React.Children.toArray(node?.props?.children)) {
+      const result = find(child);
+      if (result) return result;
+    }
+  };
+  const input = find(tree);
+  assert.equal(input.props.value, 20);
+  assert.equal(input.props.min, 1);
+  assert.equal(input.props.max, 100);
+  input.props.onChange({target: {value: '50'}});
+  input.props.onChange({target: {value: ''}});
+  assert.equal(changes[0].training_steps, 50000000);
+  assert.equal(changes[1].training_steps, undefined);
+  assert.equal(changes[0].model, props.value.model);
+  const html = renderToStaticMarkup(React.createElement(Options, props));
+  assert.match(html, /Training steps \(millions\)/);
+  assert.match(html, /Per candidate/);
+  assert.match(html, /Training budget/);
+  assert.match(html, /20M/);
+  assert.match(html, /Effort trains four candidates/);
+  const automatic = renderToStaticMarkup(React.createElement(Options, {
+    ...props, value: {...props.value, mode: 'instant', training_steps: undefined},
+  }));
+  assert.match(automatic, /Auto/);
+  assert.match(automatic, /Instant trains one candidate/);
+  assert.doesNotMatch(automatic, /Effort trains four candidates/);
+});

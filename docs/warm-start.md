@@ -29,6 +29,19 @@ command, after a settling second:
 It writes `params.pkl` (final), `params_<steps>.pkl` per eval, `walker.json`
 (curve, tracking) and `walker.mp4` (a command tour). The weights stay on the pod.
 
+### The G1 walker
+
+    /workspace/gpu_job.sh env MUJOCO_GL=egl .venv/bin/python scripts/train_walker.py --env g1 \
+        --out /workspace/pretrained/g1_walker
+
+Playground's stock `G1JoystickFlatTerrain` reward and PPO config, on robots randomized by the G1
+body's randomizer. On the 4090 (warp): 1001 s for 200M steps, 141 s of it compile (155-250k steps/s).
+The eval reward climbs from -6 to 14.4; Playground's termination term goes from -100 (every eval
+episode fell) to -39 at 200M, on its training conditions: random pushes up to 2 m/s every 5-10 s,
+joystick commands resampled every 10 s, joint angles x U(0.5, 1.5) at reset. Steer mode has no pushes
+and eases the command. The tracking table (`--eval-only params.pkl`) wasn't measured: the run was
+cut after `params.pkl` was saved to free the GPU for the first G1 request.
+
 ## How a candidate uses the walker (`REWARDSMITH_MODE`)
 
 With `REWARDSMITH_WALKER` present (default `/workspace/pretrained/go1_walker/params.pkl`):

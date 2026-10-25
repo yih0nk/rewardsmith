@@ -63,6 +63,7 @@ export default function RequestDetail({
 }) {
   const [round, setRound] = useState<number | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
   // Rounds and candidates are picked below the result; bring it back into view when it has scrolled away.
   const stageRef = useRef<HTMLElement>(null);
   const show = (n: number | null, id: number | null) => {
@@ -157,11 +158,28 @@ export default function RequestDetail({
 
   return (
     <article
-      className="cmd turn"
+      className="cmd turn collapsible-turn"
       id={runAnchor(detail.id)}
       aria-labelledby={`exp-${detail.id}`}
       data-n={turnLabel(detail.turn)}
     >
+        <button
+          type="button"
+          className="turn-collapse"
+          aria-label={collapsed ? "Expand run" : "Collapse run"}
+          title={collapsed ? "Expand run" : "Collapse run"}
+          aria-expanded={!collapsed}
+          aria-controls={`run-body-${detail.id}`}
+          onClick={(event) => {
+            if (!collapsed) {
+              event.currentTarget.closest("article")?.querySelectorAll("video").forEach((video) => video.pause());
+            }
+            setCollapsed(!collapsed);
+          }}
+        >
+          <span className="turn-chevron" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+          <span aria-hidden="true">{turnLabel(detail.turn)}</span>
+        </button>
       <div className="exp-head">
         <span className="who">You</span>
         <h2 className="exp-title" id={`exp-${detail.id}`}>
@@ -189,7 +207,9 @@ export default function RequestDetail({
             </>
           )}
         </span>
+
       </div>
+      <div id={`run-body-${detail.id}`} hidden={collapsed}>
       <TurnMeta detail={detail} health={health} />
       <div className="run-card">
         {/* A finished run gives the video the width; the status card moves under it. */}
@@ -618,6 +638,7 @@ export default function RequestDetail({
           {renderReply({ kind: "run", requestId: detail.id })}
         </div>
       )}
+      </div>
     </article>
   );
 }
@@ -691,6 +712,7 @@ function TurnMeta({ detail, health }: { detail: Detail; health: Health | null })
       {followUp && <span className="tag">Follow-up</span>}
       <span>
         {modeLabel(mode)} · {modelLabel(detail.model ?? MODE_MODEL[mode])}
+        {detail.training_steps != null && ` · ${detail.training_steps / 1_000_000}M steps per candidate`}
       </span>
       {why && (
         <span className="body-why">
