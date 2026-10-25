@@ -69,6 +69,13 @@ class PlaygroundSimulator:
     def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None) -> RunResult:
         progress = ProgressWriter(out_dir, train.ppo_kwargs(self.preset)["num_timesteps"])
         progress.stage("compiling")
+        progress.start_heartbeat()  # nothing else writes during the minute of JIT compile
+        try:
+            return self._run(source, out_dir, scene, progress)
+        finally:
+            progress.stop_heartbeat()
+
+    def _run(self, source: str, out_dir: Path, scene: SceneSpec | None, progress: ProgressWriter) -> RunResult:
         env = go1.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics)
         # Pushes are a training condition only: the video and metrics come from a push-free env.
         # The training env keeps the behavior metrics too: halving ranks on the training curve.

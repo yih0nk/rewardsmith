@@ -366,3 +366,199 @@ def test_unused_warm_pool_closes_on_early_exit(tmp_path, failure):
     else:
         run_request(conn, s, req, Writer(), Editor(), FakeCritic(), sim)
     assert sim.closed >= 1 and sim.active is False
+
+
+def test_ideas_and_reward_hacking_verdicts_are_stored(tmp_path):
+    from rewardsmith.agents.base import Draft, Review
+    from rewardsmith.agents.editor import unified_diff
+
+    class IdeaWriter(FakeWriter):
+        def write(self, request, env_doc, k):
+            return [Draft(src, idea=f"draft idea {i}") for i, src in enumerate(super().write(request, env_doc, k))]
+
+    class IdeaEditor(FakeEditor):
+        def revise(self, request, env_doc, best_source, critique, metrics, k):
+            out = []
+            for i in range(k):
+                new = best_source + f"# revision {i}\n"
+                out.append(Draft(new, unified_diff(best_source, new), f"revision idea {i}"))
+            return out
+
+    class SuspiciousCritic(FakeCritic):
+        def review(self, request, result):
+            return Review(score=5.0, critique="Reward hacking suspected. It vibrates.", reward_hacking=True)
+
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, IdeaWriter(), IdeaEditor(), SuspiciousCritic(), FakeSimulator())
+
+    rounds = db.get_request(conn, req["id"])["rounds"]
+    assert [c["idea"] for c in rounds[0]["candidates"]] == ["draft idea 0", "draft idea 1", "draft idea 2"]
+    assert rounds[1]["candidates"][0]["idea"].startswith("revision idea")
+    assert rounds[1]["candidates"][0]["diff"]
+    assert all(c["reward_hacking"] == 1 for r in rounds for c in r["candidates"])
+
+
+def test_plain_writers_and_editors_still_work_without_ideas(tmp_path):
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator())
+
+    candidates = [c for r in db.get_request(conn, req["id"])["rounds"] for c in r["candidates"]]
+    assert all(c["idea"] is None for c in candidates)
+    assert all(c["reward_hacking"] == 0 for c in candidates)
+
+
+def test_older_dbs_get_the_idea_and_reward_hacking_columns(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE candidates (id INTEGER PRIMARY KEY AUTOINCREMENT, round_id INTEGER NOT NULL, "
+        "idx INTEGER NOT NULL, reward_src TEXT NOT NULL, diff TEXT, status TEXT NOT NULL DEFAULT 'written', "
+        "error TEXT, metrics TEXT, video_path TEXT, score REAL, critique TEXT, created_at REAL NOT NULL)"
+    )
+    old.close()
+
+    cols = {r["name"] for r in db.connect(path).execute("PRAGMA table_info(candidates)")}
+    assert {"idea", "reward_hacking"} <= cols
+
+
+def test_editors_that_take_history_see_every_earlier_attempt(tmp_path):
+    class RecordingEditor(FakeEditor):
+        def __init__(self):
+            self.histories = []
+
+        def revise(self, request, env_doc, best_source, critique, metrics, k, history=()):
+            self.histories.append(list(history))
+            return super().revise(request, env_doc, best_source, critique, metrics, k)
+
+    s = replace(_settings(tmp_path), carry_top=1)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+    editor = RecordingEditor()
+
+    run_request(conn, s, req, FakeWriter(), editor, FakeCritic(), FakeSimulator())
+
+    # Round 2 sees round 1's 3 scored candidates; round 3 sees rounds 1 and 2.
+    assert [len(h) for h in editor.histories] == [3, 6]
+    assert [a.round for a in editor.histories[1]] == [1, 1, 1, 2, 2, 2]
+    assert sorted(a.idx for a in editor.histories[0]) == [0, 1, 2]
+
+
+def test_a_revision_fixed_by_the_gate_gets_a_fresh_diff(tmp_path):
+    class BreakingEditor(FakeEditor):
+        def revise(self, request, env_doc, best_source, critique, metrics, k):
+            new = best_source + "BROKEN\n"
+            return [(new, "stale diff")] * k
+
+    class FixingWriter(FakeWriter):
+        def fix(self, source, error, env_doc):
+            return source.replace("BROKEN\n", "# fixed\n")
+
+    class PickySim(FakeSimulator):
+        def gate(self, source, scene=None):
+            return "BROKEN is not python" if "BROKEN" in source else super().gate(source, scene)
+
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+
+    run_request(conn, s, req, FixingWriter(), BreakingEditor(), FakeCritic(), PickySim())
+
+    revised = db.get_request(conn, req["id"])["rounds"][1]["candidates"][0]
+    assert revised["status"] == "scored"
+    assert "+# fixed" in revised["diff"] and "BROKEN" not in revised["diff"]
+
+
+def test_droid_editor_workspace_and_readback(tmp_path):
+    from rewardsmith.agents.editor import DroidEditor
+
+    class StubDroid(DroidEditor):
+        """Stands in for the droid subprocess: edits two of three files like Droid would."""
+
+        def _run(self, prompt, cwd):
+            self.seen = sorted(p.name for p in cwd.iterdir())
+            self.prompt = prompt
+            for i in (0, 2):
+                path = cwd / f"candidate_{i}.py"
+                path.write_text(path.read_text() + f"# droid fix {i}\n")
+            return ["idea zero", "idea one", "idea two"]
+
+    best = FakeWriter().write("walk backwards", "", 1)[0]
+    editor = StubDroid(tmp_path / "droid")
+
+    drafts = editor.revise("walk backwards", "env notes", best, "it walked forwards", {"forward_velocity": 0.4}, 3)
+
+    assert editor.seen == [
+        "candidate_0.py", "candidate_1.py", "candidate_2.py", "critique.md", "env.md", "history.md", "metrics.json"
+    ]
+    assert "walk backwards" in editor.prompt
+    assert [d.idea for d in drafts] == ["idea zero", "idea two"]  # candidate_1 was left unchanged
+    assert all(d.diff and "+# droid fix" in d.diff for d in drafts)
+
+
+def test_droid_editor_with_no_edits_fails(tmp_path):
+    import pytest
+
+    from rewardsmith.agents.editor import DroidEditor
+
+    class LazyDroid(DroidEditor):
+        def _run(self, prompt, cwd):
+            return []
+
+    with pytest.raises(RuntimeError, match="changed no candidate files"):
+        LazyDroid(tmp_path / "droid").revise("spin", "", "def reward(s, a, p):\n    return {}\n", "", {}, 2)
+
+
+def test_stages_record_server_side_start_and_end_times(tmp_path):
+    from rewardsmith.agents.fake import FakeChecker, FakeScener
+
+    s = replace(_settings(tmp_path), max_rounds=2)
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "walk backwards")
+    req = db.claim_next_request(conn)
+    before = time.time()
+
+    run_request(
+        conn, s, req, FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(),
+        checker=FakeChecker(), scener=FakeScener(),
+    )
+
+    detail = db.get_request(conn, rid)
+    names = [(st["name"], st["round_n"]) for st in detail["stages"]]
+    assert names == [
+        ("scene", None), ("check", None),
+        ("writing", 1), ("compiling", 1), ("training", 1), ("judging", 1),
+        ("writing", 2), ("compiling", 2), ("training", 2), ("judging", 2),
+    ]
+    for st in detail["stages"]:
+        assert before <= st["started_at"] <= st["ended_at"] <= time.time()
+    assert detail["stage"] is None  # nothing open once the request is done
+    for cand in detail["rounds"][0]["candidates"]:
+        assert cand["status"] == "scored" and cand["status_at"] >= cand["created_at"]
+
+
+def test_current_stage_is_the_latest_open_one(tmp_path):
+    conn = db.connect(tmp_path / "t.db")
+    rid = db.create_request(conn, "walk backwards")
+    with db.stage(conn, rid, "writing", 1):
+        with db.stage(conn, rid, "compiling", 1) as sid:
+            assert db.get_request(conn, rid)["stage"]["id"] == sid
+            assert db.list_requests(conn)[0]["stage"]["name"] == "compiling"
+        assert db.get_request(conn, rid)["stage"]["name"] == "writing"
+    assert db.get_request(conn, rid)["stage"] is None
+    assert db.list_requests(conn)[0]["stage"] is None
+
+    db.start_stage(conn, rid, "training", 1)
+    db.fail_request(conn, rid, "boom")  # a failed run must not leave a timer running
+    assert db.get_request(conn, rid)["stage"] is None

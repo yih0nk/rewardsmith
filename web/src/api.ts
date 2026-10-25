@@ -45,12 +45,16 @@ export interface Candidate {
   idx: number;
   reward_src: string;
   diff: string | null;
+  // What the writer or editor says this candidate tries.
+  idea: string | null;
   status: CandidateStatus | (string & {});
   error: string | null;
   metrics: Record<string, unknown> | null;
   video_path: string | null;
   score: number | null;
   critique: string | null;
+  // 1 when the critic suspects reward hacking.
+  reward_hacking: number | null;
   // Set when someone flags the candidate as reward hacking (the hall of fame).
   flagged_at: number | null;
   flag_note: string | null;

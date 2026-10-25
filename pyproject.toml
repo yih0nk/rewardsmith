@@ -20,6 +20,10 @@ sim = [
     "mediapy",
     "pillow",
 ]
+# Factory Droid as the reward editor (REWARDSMITH_EDITOR=droid). Needs the droid CLI on PATH.
+droid = [
+    "droid-sdk",
+]
 dev = [
     "pytest>=8",
     "httpx>=0.27",
