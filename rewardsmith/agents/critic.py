@@ -153,10 +153,12 @@ def task_diagnosis(metrics: dict[str, Any]) -> str | None:
     shares = ", ".join(f"{name} {frac:.0%}" for name, frac in phases.items())
     done = sum(phases.get(p, 0.0) for p in SUCCESS_PHASES)
     stuck = max((p for p in phases if p in PHASES), key=lambda p: phases[p], default=None)
+    # The phases follow positions only; the success check may ask for more (stopping, holding).
     if stuck is None or phases[stuck] == 0:
-        return f"Episodes by phase: {shares}. The task got done in {done:.0%} of episodes."
+        return (f"Episodes by phase: {shares}. {done:.0%} of episodes end where the task needs the "
+                "object (or the robot); check the success check for what else it asks.")
     what, fix = PHASES[stuck]
-    return (f"Episodes by phase: {shares}. Done in {done:.0%}. Most episodes fail at '{stuck}' "
+    return (f"Episodes by phase: {shares}. {done:.0%} end in place. Most episodes fail at '{stuck}' "
             f"({phases[stuck]:.0%}): it {what}. To get past it: {fix}.")
 
 

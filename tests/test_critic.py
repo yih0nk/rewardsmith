@@ -62,9 +62,9 @@ def test_a_failed_safety_clause_alone_does_not_trigger_the_task_cap():
 
 def test_diagnosis_reports_success_and_skips_plain_tasks():
     done = {"phase_no_approach": 0.0, "phase_left": 0.1, "phase_arrived": 0.9}
-    assert "fail at 'left' (10%)" in critic.task_diagnosis(done) and "Done in 90%" in critic.task_diagnosis(done)
-    assert "got done in 100%" in critic.task_diagnosis({"phase_no_approach": 0.0, "phase_left": 0.0,
-                                                         "phase_arrived": 1.0})
+    assert "fail at 'left' (10%)" in critic.task_diagnosis(done) and "90% end in place" in critic.task_diagnosis(done)
+    assert "100% of episodes end where" in critic.task_diagnosis({"phase_no_approach": 0.0, "phase_left": 0.0,
+                                                                   "phase_arrived": 1.0})
     assert critic.task_diagnosis({"forward_velocity": 0.5}) is None
 
 

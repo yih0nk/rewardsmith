@@ -24,7 +24,9 @@ Rules:
 
 Recipe for object tasks (the environment notes list the objects):
 - Go to an object: pay for speed toward it while far (clipped to a brisk walk), a bounded
-  arrival bonus within reach, and a stop term (penalize speed) once there.
+  arrival bonus within reach, and, if it must stop there, a bonus for holding still once in
+  reach: exp(-(speed^2 / 0.01 + yaw_rate^2 / 0.02)). Turning or shuffling in place is not
+  standing still (the check wants under 0.1 m/s and 0.2 rad/s, held for a second).
 - Move an object to a goal, in phases:
   1. approach: speed toward the push spot behind the object, on the far side from the goal
      (object position - (its radius + 0.3 m) * the unit object-to-goal direction), then
