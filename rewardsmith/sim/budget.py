@@ -7,8 +7,9 @@ Keyword rules plus the scene, no Claude call, so it is instant and repeatable:
   object   the scene has objects to reach, face or avoid
   complex  a movable object with a goal or zone, or several steps in a row ("then", "after")
 
-and a family: "pose" (stand on hind legs, sit, jump, roll over, ...) drops the stock terms
-that hold the body level (go1_spec.STOCK_PROFILES), everything else keeps the full gait set.
+and a family: "pose" (stand on hind legs, sit, jump, roll over, ...) fine-tunes the walker and
+drops the stock terms that hold the body level (go1_spec.STOCK_PROFILES); "gait" steers the
+walker with velocity commands (playground.PlaygroundSimulator.plan_request).
 The step counts were measured on the 4090 with warm starts (docs/warm-start.md).
 """
 
@@ -41,7 +42,7 @@ class Plan:
     why: str
 
     def summary(self) -> str:
-        return f"Training plan: {self.kind} task ({self.why}), {self.steps / 1e6:g}M steps per candidate, {self.family} stock terms"
+        return f"Training plan: {self.kind} task ({self.why}), {self.steps / 1e6:g}M steps per candidate, {self.family} family"
 
 
 def plan(text: str, scene: SceneSpec) -> Plan:

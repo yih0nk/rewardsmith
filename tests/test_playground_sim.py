@@ -69,11 +69,12 @@ def test_children_get_the_warm_start_settings_resolved(monkeypatch, tmp_path):
     monkeypatch.delenv("REWARDSMITH_STEPS", raising=False)
     seen = {}
     monkeypatch.setattr(parallel, "run_in_processes", lambda jobs, **kwargs: seen.update(kwargs, jobs=jobs) or [])
-    sim = PlaygroundSimulator(preset="smoke", mode="tune")
-    sim.stock_profile = "pose"
+    sim = PlaygroundSimulator(preset="smoke")
+    assert "pose" in sim.plan_request("stand on your hind legs")
     sim.run_many([(WALK_BACKWARDS, tmp_path / "a"), (WALK_BACKWARDS, tmp_path / "b", {"steps": 5})])
     opts = seen["sim_options"]
-    assert opts["walker"] == str(walker) and opts["mode"] == "tune" and opts["stock_profile"] == "pose" and opts["steps"] is None
+    assert opts["walker"] == str(walker) and opts["mode"] == "tune" and opts["stock_profile"] == "pose"
+    assert opts["steps"] == 10_000_000
     assert seen["jobs"][1][2] == {"steps": 5}
     assert PlaygroundSimulator(**opts).sim_options() == opts  # a child trains exactly as the parent would
 
@@ -83,6 +84,7 @@ def test_no_walker_means_no_warm_start_and_no_stock_terms(monkeypatch, tmp_path)
     monkeypatch.delenv("REWARDSMITH_STOCK", raising=False)
     sim = PlaygroundSimulator(preset="smoke")
     assert sim.walker == "" and sim.mode == "off" and sim.env_options == {}
+    assert "no warm start" in sim.plan_request("push the ball into the goal")
     monkeypatch.setenv("REWARDSMITH_WARM_START", "0")
     assert PlaygroundSimulator(preset="smoke").walker == ""
 
@@ -97,6 +99,9 @@ def test_modes_pick_how_the_env_uses_the_walker(monkeypatch, tmp_path):
     assert tune.env_options == {"stock_profile": "pose", "stock_weight": 1.0}
     assert "stock_" in tune.describe()
     assert "steers a pretrained walker" in PlaygroundSimulator(preset="smoke").describe()
+    pushing = PlaygroundSimulator(preset="smoke")
+    pushing.plan_request("push the ball into the goal")
+    assert pushing.mode == "steer"
 
 
 def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
