@@ -1,4 +1,5 @@
-"""Structures, launched objects and terrain features in the Go1 env, and the scene gate."""
+"""Structures, launched objects and terrain features in the Go1 env, the scene gate, and the
+check code measured over evaluation episodes."""
 
 import numpy as np
 import pytest
@@ -8,7 +9,8 @@ pytest.importorskip("mujoco_playground")
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 
-from rewardsmith.sim import go1, go1_spec, scene, scene_gate  # noqa: E402
+from rewardsmith.sim import evaluation, go1, go1_spec, render, scene, scene_gate  # noqa: E402
+from rewardsmith.sim.train import TrainResult  # noqa: E402
 from rewardsmith.sim.run_one import WARM_UP_REWARD  # noqa: E402
 
 STAIRS = {"name": "stairs", "kind": "stairs", "color": "gray", "distance": 1.0, "bearing": 0}
@@ -70,3 +72,17 @@ def test_scene_gate_passes_good_scenes_and_names_overlaps():
     error = scene_gate.check_scene(scene.parse({"objects": poles}))
     assert error and "pole0: overlaps pole1" in error
 
+
+def test_check_code_is_measured_over_the_evaluation_episodes(stairs_env, tmp_path, monkeypatch):
+    monkeypatch.setattr(render, "render_rollout", lambda env, qpos, out_dir, **kw: (out_dir / "v.mp4", [b"png"]))
+    result = TrainResult(make_inference_fn=lambda p, deterministic: (lambda obs, key: (jnp.zeros(obs["state"].shape[:-1] + (12,)), {})),
+                         params=None)
+    code = ("import jax.numpy as jnp\n\ndef check(traj):\n    v = traj['valid'] > 0\n"
+            "    return {'climbed': jnp.max(jnp.where(v, traj['base_ground_z'], 0.0)) > 0.2,\n"
+            "            'steps': jnp.sum(traj['valid'])}\n")
+    spec = [{"metric": "check:climbed", "op": ">=", "value": 0.8}, {"metric": "scene_fell", "op": "<=", "value": 0.1}]
+    _, _, metrics, _ = evaluation.evaluate(stairs_env, result, tmp_path, robust=False, steps=10,
+                                           success_spec=spec, check_code=code)
+    assert metrics["check:climbed"] == 0.0  # a standing robot never climbs
+    assert metrics["check:steps"] == pytest.approx(11.0)  # the reset row plus 10 steps, none fell
+    assert metrics["scene_fell"] == 0.0

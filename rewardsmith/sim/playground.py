@@ -82,6 +82,7 @@ class PlaygroundSimulator:
         steps: int | None = None,
         restore_value: bool | None = None,
         tune_noise: float | None = None,
+        check_code: str | None = None,
     ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
@@ -92,6 +93,7 @@ class PlaygroundSimulator:
         self.push = _flag("REWARDSMITH_PUSH") if push is None else push
         self.robustness = _flag("REWARDSMITH_ROBUSTNESS", "1") if robustness is None else robustness
         self.evaluation_spec = evaluation_spec
+        self.check_code = check_code  # the checker's check(traj), measured after training (check_code.py)
         self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
         # Warm start: a checkpoint path, "" for random weights (resolved here so children get the same).
         self.walker = default_walker() if walker is None else walker
@@ -200,7 +202,8 @@ class PlaygroundSimulator:
         )
         progress.stage("rendering")
         # The video, target metrics and robustness rollouts, all in one batch (see evaluation.py).
-        video, frames, rollout, robust = evaluation.evaluate(env, result, out_dir, robust=self.robustness, success_spec=self.evaluation_spec)
+        video, frames, rollout, robust = evaluation.evaluate(env, result, out_dir, robust=self.robustness, success_spec=self.evaluation_spec,
+                                                               check_code=self.check_code)
         (out_dir / "reward.py").write_text(source)
 
         last = result.curve[-1]
@@ -227,6 +230,7 @@ class PlaygroundSimulator:
             "evaluation_spec": self.evaluation_spec, "walker": self.walker, "mode": self.mode, "stock_profile": self.stock_profile,
             "stock_weight": self.stock_weight, "steps": self.steps, "restore_value": self.restore_value,
             "tune_noise": self.tune_noise,
+            **({"check_code": self.check_code} if self.check_code else {}),
         }
 
     def plan_request(self, text: str, scene: SceneSpec | None = None) -> str:
@@ -248,6 +252,9 @@ class PlaygroundSimulator:
 
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
         self.evaluation_spec = spec
+
+    def set_check_code(self, code: str | None) -> None:
+        self.check_code = code
 
     def warm_up(self, n: int) -> None:
         """Start n training processes now, so their imports overlap the writer's Claude call."""

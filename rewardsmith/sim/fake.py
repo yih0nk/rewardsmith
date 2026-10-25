@@ -39,6 +39,9 @@ class FakeSimulator:
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
         self.evaluation_spec = spec
 
+    def set_check_code(self, code: str | None) -> None:
+        pass  # check:<key> metrics are faked from the spec's clause names
+
     def describe(self, scene: SceneSpec | None = None) -> str:
         # The real Go1 contract, so prompts written against the fake match the GPU run.
         return describe(scene or EMPTY)
@@ -81,6 +84,8 @@ class FakeSimulator:
                 **terms,
                 **_fake_target_metrics(scene, quality),
                 **{metric: round(quality / 10, 2) for metric in outcomes.requested(self.evaluation_spec, scene or EMPTY)},
+                **{c["metric"]: round(quality / 10, 2) for c in self.evaluation_spec or []
+                   if c["metric"].startswith("check:")},
                 "scene_fell": 0.0,
             },
             reward_curve=curve,

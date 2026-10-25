@@ -22,6 +22,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from . import check_code as check_code_mod
 from . import outcomes, pose, render, robustness, scene_eval
 from .base import ROLLOUT_STEPS
 from .go1 import Go1Env
@@ -40,13 +41,16 @@ def evaluate(
     robust: bool = True,
     steps: int = ROLLOUT_STEPS,
     success_spec: list[dict] | None = None,
+    check_code: str | None = None,
 ) -> tuple[Path, list[bytes], dict[str, float], dict[str, float]]:
-    """Return (mp4 path, critic PNGs, rollout + target metrics + eval_s, robust_* metrics or {})."""
+    """Return (mp4 path, critic PNGs, rollout + target metrics + eval_s, robust_* metrics or {}).
+    With check_code (the checker's check(traj), check_code.py), its check:<key> results over the
+    target episodes are added to the metrics."""
     start = time.perf_counter()
     target_obj = env.scene.target_object
     selected = outcomes.requested(success_spec, env.scene)
     needs_outcomes = bool(selected) or any(c["metric"] == "scene_fell" for c in success_spec or [])
-    n_target = TARGET_ENVS if target_obj is not None or needs_outcomes else 0
+    n_target = TARGET_ENVS if target_obj is not None or needs_outcomes or check_code else 0
     plan = robustness.plan() if robust else robustness.plan(n_robots=0, n_seeds=0, pushes=False)
     n_robots = plan.groups.count("robots")
 
@@ -63,7 +67,12 @@ def evaluate(
         models, in_axes = robustness.models_for(env, n_robots, len(keys) - n_robots, plan.rng_models)
     else:
         models, in_axes = env.mjx_model, None
-    extra = {"observe": scene_eval.observer(env)} if needs_outcomes else {}
+    observers = {}
+    if needs_outcomes:
+        observers["outcome"] = scene_eval.observer(env)
+    if check_code:  # the reward's own state, every step, for check(traj)
+        observers["check"] = lambda state: env.features(state.data, state.info, state.info["last_contact"])
+    extra = {"observe": lambda state: {k: f(state) for k, f in observers.items()}} if observers else {}
     reset, outs = robustness.run_batch(env, result, models, in_axes, keys, push_dirs, steps, **extra)
 
     summary, n = render.rollout_summary(*(outs[k][video] for k in ("qpos", "lin", "yaw", "up", "done")))
@@ -91,9 +100,30 @@ def evaluate(
         task_start, task_trace = scene_eval.batch_task_samples(env, reset, outs, target)
         metrics.update(scene_eval.summarize_task(env, task_start, task_trace, outs["done"][target].T))
     if needs_outcomes:
-        initial = jax.tree_util.tree_map(lambda value: value[target], reset["scene_outcome"])
-        samples = jax.tree_util.tree_map(lambda value: np.swapaxes(value[target], 0, 1), outs["scene_outcome"])
+        initial = jax.tree_util.tree_map(lambda value: value[target], reset["scene_outcome"]["outcome"])
+        samples = jax.tree_util.tree_map(lambda value: np.swapaxes(value[target], 0, 1),
+                                         outs["scene_outcome"]["outcome"])
         metrics.update(scene_eval.summarize_outcomes(
             env, initial, samples, selected, seed=TARGET_SEED, out_dir=out_dir))
+    if check_code:
+        traj = check_trajectories(reset["scene_outcome"]["check"], outs["scene_outcome"]["check"],
+                                  outs["done"][target], target, env.dt)
+        try:
+            metrics.update(check_code_mod.evaluate(check_code, traj))
+        except Exception as exc:  # the clauses then fail as unmeasured; keep the run
+            (out_dir / "check_error.txt").write_text(f"{type(exc).__name__}: {exc}")
+        metrics.setdefault("scene_fell", float(np.asarray(outs["done"][target]).any(axis=1).mean()))
     metrics["eval_s"] = round(time.perf_counter() - start, 1)  # the batch plus rendering the video
     return video_path, frames, metrics, robust_metrics
+
+
+def check_trajectories(reset: dict, steps: dict, done: np.ndarray, rows: slice, dt: float) -> dict[str, np.ndarray]:
+    """check(traj)'s batch from run_batch's arrays: reset[k] (env, ...) and steps[k] (env, step, ...)
+    become traj[k] (episode, 1 + step, ...) for the given rows, with valid, done and t added."""
+    traj = {k: np.concatenate([np.asarray(reset[k])[rows][:, None], np.asarray(steps[k])[rows]], axis=1)
+            for k in steps}
+    d = np.concatenate([np.zeros_like(done[:, :1]), np.asarray(done)], axis=1).astype(np.float32)
+    traj["done"] = d
+    traj["valid"] = (np.cumsum(d, axis=1) - d == 0).astype(np.float32)  # up to and including the first done
+    traj["t"] = np.broadcast_to(np.arange(d.shape[1], dtype=np.float32) * dt, d.shape).copy()
+    return traj
