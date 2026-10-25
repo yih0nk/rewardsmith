@@ -4,6 +4,7 @@
     REWARDSMITH_HOME=/workspace/rs_engine/bench REWARDSMITH_FAKE_SIM=0 REWARDSMITH_FAKE_LLM=0 \
         python scripts/warm_bench.py --label after --rounds 1 --lock /workspace/gpu.lock
     REWARDSMITH_WARM_START=0 REWARDSMITH_CONTINUE=0 ... --label before     # main's behavior
+    ... --pins pins.json     # {prompt: {"scene": ..., "success_spec": [...]}}: same scene and check every run
 
 Each prompt is a fresh request through orchestrator.run_request with the scene writer
 and checker, as the worker runs it. Per request it prints the best candidate's critic
@@ -71,6 +72,7 @@ def main() -> None:
     ap.add_argument("--label", required=True)
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--lock", help="flock this file around each request (the shared GPU lock)")
+    ap.add_argument("--pins", type=Path, help="JSON {prompt: {scene, success_spec}} to fix per prompt")
     ap.add_argument("prompts", nargs="*", default=list(PROMPTS))
     args = ap.parse_args()
 
@@ -83,8 +85,12 @@ def main() -> None:
     out_path = settings.db_path.parent / f"bench_{args.label}.json"
     rows = json.loads(out_path.read_text()) if out_path.exists() else []
 
+    pins = json.loads(args.pins.read_text()) if args.pins else {}
     for text in args.prompts:
-        rid = db.create_request(conn, text)
+        pin = pins.get(text, {})
+        rid = db.create_request(conn, text, pin.get("scene"))
+        if pin.get("success_spec"):
+            db.set_success_spec(conn, rid, pin["success_spec"])
         req = db.get_request(conn, rid)
         print(f"\n== {args.label} {rid}: {text}", flush=True)
         t0 = time.time()
