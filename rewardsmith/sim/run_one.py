@@ -1,18 +1,25 @@
 """Train one reward in its own process. parallel.py starts one of these per candidate.
 
     python -m rewardsmith.sim.run_one <reward.py> <out_dir> [--preset round] [--impl jax] [--scene scene.json] [--fake]
+        [--init-params params.pkl] [--steps N]
     python -m rewardsmith.sim.run_one --serve <job.json> [--fake]
 
-Writes <out_dir>/result.json, plus frames/NN.png for the critic. On failure,
-result.json holds {"error": "..."} and the exit code is 1.
+Writes <out_dir>/result.json, plus frames/NN.png for the critic, and the
+policy's params at every eval (params_<steps>.pkl, see checkpoints.py). On
+failure, result.json holds {"error": "..."} and the exit code is 1.
+
+--init-params starts training from a checkpoint (any params_<steps>.pkl, or the
+pretrained walker) instead of the default warm start; --steps trains that many
+steps instead of the preset's. Together they continue any job's policy under a
+new reward (docs/warm-start.md).
 
 --serve starts a warm process: it does the slow imports and a throwaway gate
 first (~30 s on the pod, overlapping the writer's Claude call), then answers
 parallel.py's messages in job.json:
-  {"kind": "gate", "seq", "source", "scene", "impl"}  gate the source and write
+  {"kind": "gate", "seq", "source", "scene", "impl", "env"}  gate the source and write
       {"seq", "error"} (or {"seq", "crash"} for a non-reward failure) to job.gate.json;
       then wait for the next message. The orchestrator's fix-retry loop reuses this.
-  {"kind": "train", "reward", "out_dir", "preset", "impl", ...}  run that job and exit.
+  {"kind": "train", "reward", "out_dir", "preset", "impl", "init_params", "steps", ...}  run that job and exit.
 """
 
 import argparse
@@ -60,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--parent-pid", type=int, default=None, help="with --serve: give up if this process exits")
     ap.add_argument("--behavior-metrics", action="store_true", help="report behavior at every eval (go1.Go1Env.behavior)")
     ap.add_argument("--sim-options", type=json.loads, default={}, help="resolved training and robustness flags")
+    ap.add_argument("--init-params", type=Path, default=None, help="checkpoint to start training from")
+    ap.add_argument("--steps", type=int, default=None, help="training steps (default: the preset's)")
     args = ap.parse_args(argv)
 
     if args.serve:
@@ -72,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         args.behavior_metrics = bool(job.get("behavior_metrics"))
         args.sim_options = job.get("sim_options") or {}
         args.scene = Path(job["scene"]) if job.get("scene") else None
+        args.init_params = Path(job["init_params"]) if job.get("init_params") else None
+        args.steps = job.get("steps")
         args.out_dir.mkdir(parents=True, exist_ok=True)
         _redirect_output(args.out_dir / "train.log")
     elif args.reward is None or args.out_dir is None:
@@ -83,7 +94,8 @@ def main(argv: list[str] | None = None) -> int:
 
         scene = parse(args.scene.read_text()) if args.scene else None
         sim = _simulator(args.fake, args.preset, args.impl, args.behavior_metrics, args.sim_options)
-        result = sim.run(args.reward.read_text(), args.out_dir, scene)
+        start = {"init_params": args.init_params, "steps": args.steps}
+        result = sim.run(args.reward.read_text(), args.out_dir, scene, **{k: v for k, v in start.items() if v})
     except Exception as exc:
         (args.out_dir / RESULT_FILE).write_text(
             json.dumps({"error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()})
@@ -167,7 +179,7 @@ def _gate(job: dict, fake: bool) -> str | None:
         return FakeSimulator().gate(job["source"], scene)
     from . import gate
 
-    return gate.check_reward(job["source"], impl=job.get("impl"), scene=scene)
+    return gate.check_reward(job["source"], impl=job.get("impl"), scene=scene, env_options=job.get("env"))
 
 
 def _wait_for_job(path: Path, parent: int) -> dict | None:

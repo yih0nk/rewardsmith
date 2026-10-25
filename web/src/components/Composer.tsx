@@ -2,9 +2,9 @@ import { FormEvent, ReactNode, RefObject, useState } from "react";
 
 const EXAMPLES = ["Walk backwards", "Spin in place", "Walk to the red ball"];
 
-// The message box, pinned to the bottom of the pane. Today it starts a new task.
-// `controls` is where per-message options (Instant/Effort, model) go once the
-// backend reads them; nothing renders there until then.
+// The message box, pinned to the bottom of the pane. It starts a new task, or, at the
+// bottom of a task, sends a follow-up. `controls` holds the per-message options
+// (Instant/Effort, model); `context` says what a follow-up refines.
 export default function Composer({
   label,
   inputRef,
@@ -15,6 +15,11 @@ export default function Composer({
   onSubmit,
   examples = true,
   controls,
+  context,
+  inputId = "behavior",
+  placeholder = "Make the robot dog walk backwards…",
+  submitLabel = "Start training",
+  allowEmpty = false,
 }: {
   label: string;
   inputRef: RefObject<HTMLInputElement>;
@@ -25,12 +30,18 @@ export default function Composer({
   onSubmit: (text: string) => void;
   examples?: boolean;
   controls?: ReactNode;
+  context?: ReactNode;
+  inputId?: string;
+  placeholder?: string;
+  submitLabel?: string;
+  // A follow-up may be empty: it means "keep going".
+  allowEmpty?: boolean;
 }) {
   const [hint, setHint] = useState("");
   function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
-    if (text.trim().length < 3) {
+    if (!(allowEmpty && !text.trim()) && text.trim().length < 3) {
       setHint(
         "Type a behavior first (at least 3 characters), or click an example.",
       );
@@ -43,15 +54,16 @@ export default function Composer({
   const message = error || hint;
   return (
     <form className="composer composer-dock" onSubmit={submit}>
-      <label htmlFor="behavior" className="composer-label">
+      <label htmlFor={inputId} className="composer-label">
         {label}
       </label>
+      {context && <div className="composer-context">{context}</div>}
       <div className="composer-row">
         <span className="prompt" aria-hidden="true">
           &gt;
         </span>
         <input
-          id="behavior"
+          id={inputId}
           ref={inputRef}
           value={text}
           onChange={(event) => {
@@ -59,18 +71,18 @@ export default function Composer({
             setHint("");
           }}
           maxLength={300}
-          placeholder="Make the robot dog walk backwards…"
-          aria-describedby="behavior-help"
+          placeholder={placeholder}
+          aria-describedby={`${inputId}-help`}
           autoComplete="off"
         />
         <button className="primary" disabled={busy}>
-          {busy ? "Starting…" : "Start training"}
+          {busy ? "Starting…" : submitLabel}
         </button>
       </div>
       {controls && <div className="composer-controls">{controls}</div>}
       <p
         className="composer-help error-text"
-        id="behavior-help"
+        id={`${inputId}-help`}
         role="alert"
         hidden={!message}
       >

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Health,
+  MessageOptions as Options,
   RequestSummary,
+  createFollowUp,
   createRequest,
   getHealth,
   listRequests,
@@ -10,8 +12,19 @@ import Composer from "./components/Composer";
 import ConversationList from "./components/ConversationList";
 import ConversationView from "./components/ConversationView";
 import HallOfFame from "./components/HallOfFame";
+import MessageOptions from "./components/MessageOptions";
 import NewTask from "./components/NewTask";
-import { conversationsFromRequests } from "./thread";
+import { FOLLOWUP_OPTIONS, TASK_OPTIONS, modelsOf } from "./modes";
+import { candidateName } from "./stages";
+import { ReplyTarget, conversationsFromRequests, runAnchor } from "./thread";
+
+// A message's options, and whether the user picked the model (then a mode switch keeps it).
+type Picked = Options & { picked?: boolean };
+// The candidate a follow-up will refine, as the composer names it.
+interface Target {
+  candidateId: number;
+  label: string;
+}
 
 // Routes live in the hash: "#new", "#hall", or "#<task id>".
 const readRoute = () => location.hash.slice(1);
@@ -30,6 +43,14 @@ export default function App() {
   // Phones: the task list opens over the page from the header.
   const [navOpen, setNavOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [taskOptions, setTaskOptions] = useState<Picked>(TASK_OPTIONS);
+  // The follow-up composer at the bottom of the open task.
+  const [followText, setFollowText] = useState("");
+  const [followOptions, setFollowOptions] = useState<Picked>(FOLLOWUP_OPTIONS);
+  const [target, setTarget] = useState<Target | null>(null);
+  const [followBusy, setFollowBusy] = useState(false);
+  const [followError, setFollowError] = useState("");
+  const followRef = useRef<HTMLInputElement>(null);
   // Open the newest task on first load only; afterwards the route is the user's.
   const firstLoad = useRef(true);
 
@@ -102,7 +123,8 @@ export default function App() {
     setBusy(true);
     setSubmitError("");
     try {
-      const result = await createRequest(prompt);
+      const { picked: _, ...options } = taskOptions;
+      const result = await createRequest(prompt, options);
       setText("");
       // Show it in the sidebar at once rather than on the next poll.
       setRuns((current) => [
@@ -112,6 +134,9 @@ export default function App() {
           status: "queued",
           best_score: null,
           created_at: Date.now() / 1000,
+          conversation_id: result.id,
+          turn: 1,
+          ...options,
         },
         ...current.filter((r) => r.id !== result.id),
       ]);
@@ -132,6 +157,135 @@ export default function App() {
   const conversations = conversationsFromRequests(runs);
   const hall = route === "hall";
   const current = conversations.find((c) => c.id === route) ?? null;
+
+  // A new task starts with an empty follow-up box aimed at its best candidate.
+  useEffect(() => {
+    setFollowText("");
+    setTarget(null);
+    setFollowError("");
+    setFollowOptions(FOLLOWUP_OPTIONS);
+  }, [current?.id]);
+
+  async function followUp(note: string) {
+    if (!current) return;
+    setFollowBusy(true);
+    setFollowError("");
+    try {
+      const { picked: _, ...options } = followOptions;
+      const result = await createFollowUp(current.id, note, options, target?.candidateId);
+      const turn = Math.max(...current.turns.map((t) => t.turn)) + 1;
+      setRuns((rs) => [
+        {
+          id: result.id,
+          text: note || "Keep going",
+          status: "queued",
+          best_score: null,
+          created_at: Date.now() / 1000,
+          conversation_id: current.id,
+          turn,
+          target_candidate_id: target?.candidateId ?? null,
+          ...options,
+        },
+        ...rs.filter((r) => r.id !== result.id),
+      ]);
+      setFollowText("");
+      setTarget(null);
+      setTimeout(
+        () => document.getElementById(runAnchor(result.id))?.scrollIntoView?.({ block: "start" }),
+        400,
+      );
+    } catch (error) {
+      setFollowError(`Could not send the follow-up: ${String(error)}`);
+    } finally {
+      setFollowBusy(false);
+    }
+  }
+
+  const turnNumber = (requestId: string) => runs.find((r) => r.id === requestId)?.turn ?? 1;
+  const name = (requestId: string, round: number, idx: number) => {
+    const base = candidateName(round, idx);
+    return (current?.turns.length ?? 1) > 1 ? `Turn ${turnNumber(requestId)} · ${base}` : base;
+  };
+  const aim = (next: Target) => {
+    setTarget(next);
+    setTimeout(() => followRef.current?.focus(), 0);
+  };
+  // "Refine this" on each scored candidate, and on the run's best after the run.
+  const renderReply = (reply: ReplyTarget) => {
+    if (reply.kind === "candidate") {
+      if (reply.scored === false) return null;
+      const on = target?.candidateId === reply.candidateId;
+      return (
+        <button
+          type="button"
+          className={`refine ${on ? "on" : ""}`}
+          aria-pressed={on}
+          onClick={() =>
+            aim({ candidateId: reply.candidateId, label: name(reply.requestId, reply.round, reply.idx) })
+          }
+        >
+          {on ? "✓ Refining this" : "Refine this"}
+        </button>
+      );
+    }
+    const run = runs.find((r) => r.id === reply.requestId);
+    if (!run?.best_candidate_id || run.status === "running" || run.status === "queued") return null;
+    return (
+      <button
+        type="button"
+        className="refine"
+        onClick={() =>
+          aim({ candidateId: run.best_candidate_id!, label: `the best of turn ${run.turn ?? 1}` })
+        }
+      >
+        Follow up on this run's best
+      </button>
+    );
+  };
+  const followComposer = current && (
+    <Composer
+      label="Follow up"
+      inputId="follow-up"
+      inputRef={followRef}
+      busy={followBusy}
+      error={followError}
+      text={followText}
+      onText={(value) => {
+        setFollowText(value);
+        setFollowError("");
+      }}
+      onSubmit={followUp}
+      examples={false}
+      allowEmpty
+      placeholder="Get behind the ball before pushing… (empty = keep going)"
+      submitLabel={followText.trim() ? "Send" : "Keep going"}
+      context={
+        <p className="refine-target">
+          <span className="label">Refines</span>{" "}
+          {target ? (
+            <>
+              <strong>{target.label}</strong>{" "}
+              <button type="button" className="link" onClick={() => setTarget(null)}>
+                Use the best instead
+              </button>
+            </>
+          ) : current.bestScore != null ? (
+            <>the best candidate so far, or pick one with Refine this</>
+          ) : (
+            <>the best candidate once one is scored; before that, your note is added to the task</>
+          )}
+        </p>
+      }
+      controls={
+        <MessageOptions
+          value={followOptions}
+          onChange={setFollowOptions}
+          models={modelsOf(health)}
+          idPrefix="follow-up"
+        />
+      }
+    />
+  );
   const running = runs.find((r) => r.status === "running")?.text ?? null;
   const mode = !health
     ? healthChecked
@@ -207,6 +361,8 @@ export default function App() {
               requests={runs}
               health={health}
               onRetry={retry}
+              renderReply={renderReply}
+              composer={followComposer}
             />
           ) : listLoading && route !== "new" ? (
             <p className="cmd-note" role="status">
@@ -234,6 +390,14 @@ export default function App() {
                       setSubmitError("");
                     }}
                     onSubmit={submit}
+                    controls={
+                      <MessageOptions
+                        value={taskOptions}
+                        onChange={setTaskOptions}
+                        models={modelsOf(health)}
+                        idPrefix="new-task"
+                      />
+                    }
                   />
                 }
               />

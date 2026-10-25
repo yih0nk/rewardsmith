@@ -21,8 +21,8 @@ export default function NewTask({
           <li>You describe a behavior</li>
           <li>Claude writes reward functions (code that scores motion)</li>
           <li>Robots train in a physics simulator</li>
-          <li>Claude judges the videos and improves the best reward</li>
-          <li className="how-time">about 5–15 min per task</li>
+          <li>Claude judges the videos; follow up to improve the best one</li>
+          <li className="how-time">about 2 min (Instant) or 5 min (Effort)</li>
         </ol>
         {busyWith && (
           <p className="intro-note">

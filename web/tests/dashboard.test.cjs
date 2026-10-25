@@ -791,7 +791,7 @@ test("each request is one conversation, newest first, with one turn", () => {
   ];
   const convos = thread.conversationsFromRequests(reqs);
   assert.deepEqual(convos.map((c) => c.id), ["b", "a"]);
-  assert.deepEqual(convos[1].turns, [{ requestId: "a", text: "walk backwards", createdAt: 10 }]);
+  assert.deepEqual(convos[1].turns, [{ requestId: "a", text: "walk backwards", createdAt: 10, turn: 1 }]);
   assert.equal(convos[1].bestScore, 6.8);
   assert.equal(convos[0].bestScore, null);
 });
@@ -853,8 +853,8 @@ test("runs and candidates have stable anchors, and reply slots stay empty until 
   );
   assert.equal((wired.match(/class="reply-slot"/g) ?? []).length, 3);
   assert.deepEqual(targets, [
-    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0 },
-    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0 },
+    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0, scored: true },
+    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0, scored: true },
     { kind: "run", requestId: "abcd1234" },
   ]);
 });
@@ -1117,4 +1117,119 @@ test("a Markdown critique gets headings, bold and a lead from what the frames sh
   assert.match(html, /<code[^>]*>term_ball_speed_track<\/code>/);
   const bold = renderToStaticMarkup(React.createElement("p", null, critique.inline("a **big** `x_y` win")));
   assert.match(bold, /a <strong>big<\/strong> <code>x_y<\/code> win/);
+});
+
+test("follow-ups join their task's conversation, in turn order", () => {
+  const reqs = [
+    { id: "t1", text: "push the ball", status: "done", best_score: 6.1, created_at: 1, conversation_id: "t1", turn: 1 },
+    { id: "f3", text: "keep going", status: "queued", best_score: null, created_at: 9, conversation_id: "t1", turn: 3 },
+    { id: "f2", text: "get behind it first", status: "running", best_score: 7.4, created_at: 5, conversation_id: "t1", turn: 2 },
+    { id: "x", text: "spin", status: "done", best_score: 5, created_at: 3, conversation_id: "x", turn: 1 },
+  ];
+  const convos = thread.conversationsFromRequests(reqs);
+  assert.deepEqual(convos.map((c) => c.id), ["x", "t1"]);
+  const task = convos[1];
+  assert.deepEqual(task.turns.map((t) => [t.requestId, t.turn]), [["t1", 1], ["f2", 2], ["f3", 3]]);
+  assert.equal(task.title, "push the ball");
+  assert.equal(task.status, "queued"); // the latest turn's
+  assert.equal(task.bestScore, 7.4);
+  // The queue names a follow-up by its task, not by its note alone.
+  assert.deepEqual(thread.queuePlace(reqs, "f3"), {
+    running: "push the ball (follow-up: get behind it first)",
+    ahead: [],
+  });
+});
+
+test("a follow-up turn says its mode, model and what it refines", () => {
+  const detail = {
+    ...base,
+    text: "get behind the ball before pushing",
+    status: "queued",
+    turn: 2,
+    conversation_id: "t1",
+    mode: "instant",
+    model: null,
+    target: { id: 7, request_id: "t1", turn: 1, round_n: 2, idx: 2, score: 6.5 },
+  };
+  const html = render(detail);
+  assert.match(html, /class="turn-meta"/);
+  assert.match(html, /Follow-up/);
+  assert.match(html, /Instant · Sonnet 5\.5/);
+  assert.match(html, /refines[\s\S]*Turn 1 · Round 2 · Candidate 3[\s\S]*6\.5\/10/);
+  const scene = render({ ...detail, target: null, status: "running", scene_changed: 1, mode: "effort", model: "claude-haiku-5-5" });
+  assert.match(scene, /Effort · Haiku 5\.5/);
+  assert.match(scene, /new scene, so it trains from scratch/);
+  // A run from before modes shows no meta line.
+  assert.doesNotMatch(render({ ...base, status: "done" }), /turn-meta/);
+});
+
+test("the mode toggle moves the model to the mode's default unless the user picked one", () => {
+  const Options = require("../src/components/MessageOptions.tsx").default;
+  const seen = [];
+  const element = (value) =>
+    Options({ value, onChange: (next) => seen.push(next), models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], idPrefix: "t" });
+  const html = renderToStaticMarkup(element({ mode: "instant", model: "claude-sonnet-5-5" }));
+  assert.match(html, /role="radio" aria-checked="true"[^>]*>Instant</);
+  assert.match(html, /role="radio" aria-checked="false"[^>]*>Effort</);
+  assert.match(html, /<option value="claude-haiku-5-5">Haiku 5\.5<\/option>/);
+  // Click Effort: the radio buttons are the first group's children.
+  const find = (node, pred) => {
+    if (!node || typeof node !== "object") return null;
+    if (pred(node)) return node;
+    const kids = [].concat(node.props?.children ?? []);
+    for (const k of kids) {
+      const hit = find(k, pred);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const effort = (value) => find(element(value), (n) => n.props?.role === "radio" && n.props.children === "Effort");
+  effort({ mode: "instant", model: "claude-sonnet-5-5" }).props.onClick();
+  effort({ mode: "instant", model: "claude-haiku-5-5", picked: true }).props.onClick();
+  assert.deepEqual(seen, [
+    { mode: "effort", model: "claude-opus-5-5" },
+    { mode: "effort", model: "claude-haiku-5-5", picked: true },
+  ]);
+});
+
+test("the follow-up composer may send an empty note (keep going)", () => {
+  const Composer = require("../src/components/Composer.tsx").default;
+  const html = renderToStaticMarkup(
+    React.createElement(Composer, {
+      label: "Follow up",
+      inputId: "follow-up",
+      inputRef: { current: null },
+      busy: false,
+      error: "",
+      text: "",
+      onText: () => {},
+      onSubmit: () => {},
+      examples: false,
+      allowEmpty: true,
+      submitLabel: "Keep going",
+      context: React.createElement("p", null, "Refines the best"),
+    }),
+  );
+  assert.match(html, /for="follow-up"/);
+  assert.match(html, /id="follow-up"/);
+  assert.match(html, />Keep going</);
+  assert.match(html, /Refines the best/);
+  assert.doesNotMatch(html, /Examples, click to use/);
+});
+
+test("a run's time counts from when the worker picked it up, with time in line apart", () => {
+  const detail = {
+    ...base,
+    status: "done",
+    created_at: T0,
+    events: [
+      { id: 1, kind: "queued", message: "Request queued", created_at: T0 },
+      { id: 2, kind: "mode", message: "Instant", created_at: T0 + 4500 },
+      { id: 3, kind: "done", message: "Finished", created_at: T0 + 4643 },
+    ],
+    rounds: [],
+  };
+  const html = renderToStaticMarkup(React.createElement(RunStatus, { detail, now: (T0 + 5000) * 1000 }));
+  assert.match(html, /<dt>Took<\/dt><dd class="num" data-testid="run-timer">2m 23s</);
+  assert.match(html, /<dt>In line first<\/dt><dd class="num" data-testid="wait-timer">1h 15m</);
 });

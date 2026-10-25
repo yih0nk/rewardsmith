@@ -75,8 +75,8 @@ FIX_SCHEMA = {
 
 
 class ClaudeWriter:
-    def __init__(self, client: anthropic.Anthropic, model: str):
-        self.client, self.model = client, model
+    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high"):
+        self.client, self.model, self.effort = client, model, effort
 
     def write(self, request: str, env_doc: str, k: int, on_idea: OnIdea | None = None) -> list[Draft]:
         """on_idea(i, idea) is called as each candidate's idea streams in."""
@@ -88,7 +88,7 @@ class ClaudeWriter:
             "not small weight changes of one idea."
         )
         out = ask_json(
-            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA,
+            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA, effort=self.effort,
             on_text=IdeaStream(on_idea) if on_idea else None,
         )
         return [Draft(c["source"], idea=c["idea"]) for c in out["candidates"]][:k]

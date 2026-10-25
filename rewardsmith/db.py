@@ -29,6 +29,14 @@ CREATE TABLE IF NOT EXISTS requests (
     succeeded    INTEGER,  -- 1 if the best candidate passed both the critic and the check
     control      TEXT      -- "pause" | "cancel": for the worker to act on at its next checkpoint
 );
+-- One task, as the board shows it: an ordered list of turns. Each turn is a request
+-- (requests.conversation_id, requests.turn). Turn 1 is the task; later turns are follow-ups
+-- that refine one of the conversation's candidates. A conversation's id is its first request's.
+CREATE TABLE IF NOT EXISTS conversations (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    created_at  REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS rounds (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id         TEXT NOT NULL REFERENCES requests(id),
@@ -92,7 +100,14 @@ def connect(path: Path) -> sqlite3.Connection:
 # existing table alone, so a db file from an older version gets them here.
 ADDED_COLUMNS = {
     "requests": {"scene": "TEXT", "success_spec": "TEXT", "succeeded": "INTEGER", "success_check_error": "TEXT", "best_candidate_id": "INTEGER", "control": "TEXT",
-                 "coach": "TEXT"},  # the live coach's model for this request, or "off"; NULL = the worker's default
+                 "coach": "TEXT",  # the live coach's model for this request, or "off"; NULL = the worker's default
+                 # Conversations (see the conversations table). NULL on rows from before them until _migrate fills them.
+                 "conversation_id": "TEXT", "turn": "INTEGER",
+                 "task": "TEXT",  # the behavior the agents work toward: the text, plus a follow-up's notes; NULL = text
+                 "mode": "TEXT",  # instant | effort (modes.py); NULL = effort, what every run was before modes
+                 "model": "TEXT",  # writer/editor/critic model; NULL = the mode's default
+                 "target_candidate_id": "INTEGER",  # a follow-up's candidate to refine; NULL = the best, when it starts
+                 "scene_changed": "INTEGER"},  # 1 when a follow-up's note changed the scene (it trains from scratch)
     "candidates": {
         "flagged_at": "REAL",
         "flag_note": "TEXT",
@@ -118,6 +133,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             except sqlite3.OperationalError as exc:  # the server and worker raced to add it
                 if "duplicate column" not in str(exc):
                     raise
+    # Requests from before conversations: each becomes a one-turn conversation with its own id.
+    # Idempotent, so the server and the worker can both run it.
+    conn.execute(
+        """INSERT OR IGNORE INTO conversations (id, title, created_at)
+           SELECT id, text, created_at FROM requests WHERE conversation_id IS NULL"""
+    )
+    conn.execute("UPDATE requests SET conversation_id = id, turn = 1 WHERE conversation_id IS NULL")
 
 
 def finite_or_none(value: Any) -> Any:
@@ -153,16 +175,112 @@ def _decode(out: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_request(
-    conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None, coach: str | None = None
+    conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None, coach: str | None = None,
+    mode: str | None = None, model: str | None = None,
 ) -> str:
-    """scene: a validated scene spec to use as is; None lets the scene writer decide.
-    coach: the live coach's model, or "off"; None leaves it to the worker's setting."""
+    """A new conversation whose first turn is this request; its id is the request's.
+
+    scene: a validated scene spec to use as is; None lets the scene writer decide.
+    coach: the live coach's model, or "off"; None leaves it to the worker's setting.
+    mode, model: see modes.py; None = the defaults."""
     rid = uuid.uuid4().hex[:8]
+    now = time.time()
+    conn.execute("INSERT INTO conversations (id, title, created_at) VALUES (?, ?, ?)", (rid, text, now))
     conn.execute(
-        "INSERT INTO requests (id, text, created_at, scene, coach) VALUES (?, ?, ?, ?, ?)",
-        (rid, text, time.time(), json.dumps(scene) if scene is not None else None, coach),
+        """INSERT INTO requests (id, text, created_at, scene, coach, conversation_id, turn, mode, model)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+        (rid, text, now, json.dumps(scene) if scene is not None else None, coach, rid, mode, model),
     )
     return rid
+
+
+class NotInConversation(ValueError):
+    """The conversation doesn't exist, or the candidate isn't one of its own."""
+
+
+def add_turn(
+    conn: sqlite3.Connection, conversation_id: str, text: str, target_candidate_id: int | None = None,
+    coach: str | None = None, mode: str | None = None, model: str | None = None,
+) -> str:
+    """A follow-up: a new request at the end of the conversation. target_candidate_id is the
+    candidate to refine; None = the conversation's best when the worker starts the turn."""
+    conn.execute("BEGIN IMMEDIATE")  # two follow-ups sent at once must not get the same turn number
+    try:
+        last = conn.execute(
+            "SELECT MAX(turn) AS turn FROM requests WHERE conversation_id = ?", (conversation_id,)
+        ).fetchone()["turn"]
+        if last is None:
+            raise NotInConversation(f"No conversation {conversation_id}")
+        if target_candidate_id is not None and conversation_of_candidate(conn, target_candidate_id) != conversation_id:
+            raise NotInConversation(f"Candidate {target_candidate_id} is not in conversation {conversation_id}")
+        rid = uuid.uuid4().hex[:8]
+        conn.execute(
+            """INSERT INTO requests (id, text, created_at, coach, conversation_id, turn, mode, model, target_candidate_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (rid, text, time.time(), coach, conversation_id, last + 1, mode, model, target_candidate_id),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return rid
+
+
+def conversation_of_candidate(conn: sqlite3.Connection, cid: int) -> str | None:
+    row = conn.execute(
+        """SELECT q.conversation_id FROM candidates c JOIN rounds r ON r.id = c.round_id
+           JOIN requests q ON q.id = r.request_id WHERE c.id = ?""",
+        (cid,),
+    ).fetchone()
+    return row["conversation_id"] if row else None
+
+
+def list_conversations(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every conversation, newest first, with its turns (request summaries) in order."""
+    turns: dict[str, list[dict[str, Any]]] = {}
+    for req in sorted(list_requests(conn), key=lambda r: r["turn"] or 1):
+        turns.setdefault(req["conversation_id"], []).append(req)
+    out = []
+    for row in conn.execute("SELECT * FROM conversations ORDER BY created_at DESC").fetchall():
+        conv = dict(row)
+        conv["turns"] = turns.get(conv["id"], [])
+        scores = [t["best_score"] for t in conv["turns"] if t["best_score"] is not None]
+        conv["best_score"] = max(scores) if scores else None
+        conv["status"] = conv["turns"][-1]["status"] if conv["turns"] else None
+        out.append(conv)
+    return out
+
+
+def scored_candidates(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
+    """Every scored candidate in a conversation, with request_id, turn and round_n."""
+    rows = conn.execute(
+        """SELECT c.*, r.n AS round_n, q.id AS request_id, q.turn AS turn
+           FROM candidates c JOIN rounds r ON r.id = c.round_id JOIN requests q ON q.id = r.request_id
+           WHERE q.conversation_id = ? AND c.status = 'scored'
+           ORDER BY q.turn, r.n, c.idx""",
+        (conversation_id,),
+    ).fetchall()
+    return [_row(r) for r in rows]
+
+
+def get_candidate(conn: sqlite3.Connection, cid: int) -> dict[str, Any] | None:
+    """One candidate with its request_id, turn and round_n."""
+    row = conn.execute(
+        """SELECT c.*, r.n AS round_n, q.id AS request_id, q.turn AS turn
+           FROM candidates c JOIN rounds r ON r.id = c.round_id JOIN requests q ON q.id = r.request_id
+           WHERE c.id = ?""",
+        (cid,),
+    ).fetchone()
+    return _row(row)
+
+
+def coach_notes(conn: sqlite3.Connection, rid: str, round_n: int, idx: int) -> list[str]:
+    """The live coach's notes on one candidate, oldest first."""
+    rows = conn.execute(
+        "SELECT message FROM events WHERE request_id = ? AND kind = 'coach' AND round_n = ? AND candidate = ? ORDER BY id",
+        (rid, round_n, idx),
+    ).fetchall()
+    return [r["message"] for r in rows]
 
 
 def list_requests(conn: sqlite3.Connection) -> list[dict[str, Any]]:

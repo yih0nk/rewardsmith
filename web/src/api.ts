@@ -93,6 +93,29 @@ export interface RequestSummary {
   // A pause or cancel the worker will act on at its next checkpoint.
   control?: "pause" | "cancel" | null;
   created_at: number;
+  // The task (conversation) this turn belongs to, and its place in it (1 = the task itself).
+  // Older servers leave them out: every request is then its own one-turn task.
+  conversation_id?: string | null;
+  turn?: number | null;
+  // instant | effort, and the writer/editor/critic model. null on runs from before modes.
+  mode?: Mode | null;
+  model?: string | null;
+  // A follow-up's candidate to refine; null = the task's best when it starts.
+  target_candidate_id?: number | null;
+  // 1 when a follow-up's note changed the scene, so it trained from scratch.
+  scene_changed?: number | null;
+}
+
+export type Mode = "instant" | "effort";
+
+// How the worker names a follow-up's target (server get_request).
+export interface TurnTarget {
+  id: number;
+  request_id: string;
+  turn: number;
+  round_n: number;
+  idx: number;
+  score: number | null;
 }
 
 // One clause of the pass/fail check Claude writes before training (agents/checker.py).
@@ -124,14 +147,19 @@ export interface RequestDetail extends RequestSummary {
   }[];
   // Every timed step so far; older servers leave it out.
   stages?: ServerStage[];
+  // The candidate a follow-up refines, once the worker picked it.
+  target?: TurnTarget | null;
 }
 
 export interface Health {
   ok: boolean;
   fake_sim: boolean;
   fake_llm: boolean;
-  // Not served yet (requested): rewards Claude writes per round.
+  // Rewards Claude writes per round in Effort mode (older servers leave it out).
   candidates_per_round?: number;
+  max_rounds?: number;
+  // The models a message may pick, strongest first (modes.py).
+  models?: string[];
 }
 
 export class ApiError extends Error {
@@ -189,12 +217,36 @@ export const getRequest = (id: string): Promise<RequestDetail> =>
     return json<RequestDetail>(r);
   });
 
-export const createRequest = (text: string) =>
+// Per-message options: Instant or Effort, and the writer/editor/critic model.
+export interface MessageOptions {
+  mode: Mode;
+  model: string;
+}
+
+// A new task: a conversation whose first turn is this request (same id).
+export const createRequest = (text: string, options?: MessageOptions) =>
   fetch("/api/requests", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  }).then((r) => json<{ id: string }>(r));
+    body: JSON.stringify({ text, ...options }),
+  }).then((r) => json<{ id: string; conversation_id?: string }>(r));
+
+// A follow-up turn. An empty text means "keep going"; no target = the task's best candidate.
+export const createFollowUp = (
+  conversationId: string,
+  text: string,
+  options: MessageOptions,
+  targetCandidateId?: number | null,
+) =>
+  fetch(`/api/conversations/${encodeURIComponent(conversationId)}/turns`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      ...options,
+      ...(targetCandidateId != null ? { target_candidate_id: targetCandidateId } : {}),
+    }),
+  }).then((r) => json<{ id: string; conversation_id: string }>(r));
 
 export const listHallOfFame = (): Promise<HallEntry[]> =>
   fetch("/api/hall-of-fame").then((r) => json<HallEntry[]>(r));

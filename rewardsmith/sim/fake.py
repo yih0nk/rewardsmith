@@ -2,12 +2,14 @@
 
 import ast
 import hashlib
+import json
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
-from .base import Cull, OnDone, RunResult, Stopped, run_sequentially
+from .base import Cull, Job, OnDone, RunResult, Stopped, run_sequentially
 from .go1_spec import describe
 from .progress import ProgressWriter
 from .scene import EMPTY, SceneSpec
@@ -50,8 +52,9 @@ class FakeSimulator:
             return "reward.py must define reward(state, action, prev_action)"
         return None
 
-    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None) -> RunResult:
+    def run(self, source: str, out_dir: Path, scene: SceneSpec | None = None, **start: Any) -> RunResult:
         out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "start.json").write_text(json.dumps({k: str(v) for k, v in start.items()}))  # for tests
         (out_dir / "reward.py").write_text(source)
         h = int(hashlib.sha256(source.encode()).hexdigest()[:8], 16)
         quality = round(3 + (h % 70) / 10, 1)  # 3.0 to 9.9
@@ -77,7 +80,7 @@ class FakeSimulator:
         )
 
     def run_many(
-        self, jobs: list[tuple[str, Path]], scene: SceneSpec | None = None, cull: Cull | None = None,
+        self, jobs: list[Job], scene: SceneSpec | None = None, cull: Cull | None = None,
         on_done: OnDone | None = None,
     ) -> list[RunResult | Stopped | str]:
         if cull is None:

@@ -6,6 +6,7 @@ import {
   metricInfo,
   successSentence,
 } from "../explain";
+import { MODE_MODEL, modeLabel, modelLabel } from "../modes";
 import { candidateName, candidateState, isScored } from "../stages";
 import { QueuePlace, RenderReply, runAnchor } from "../thread";
 import CandidateCard from "./CandidateCard";
@@ -31,6 +32,8 @@ const EVENT_KINDS: Record<string, string> = {
   halving: "early stop",
   done: "finished",
   error: "error",
+  followup: "follow-up",
+  mode: "mode",
 };
 
 // One turn of a conversation: the user's message and the run it started.
@@ -177,12 +180,15 @@ export default function RequestDetail({
           )}
         </span>
       </div>
+      <TurnMeta detail={detail} />
       <div className="run-card">
         <div className={`run-grid ${showResult ? "" : "status-only"}`}>
           <div className="run-side">
             <RunStatus
               detail={detail}
-              candidatesPerRound={health?.candidates_per_round}
+              candidatesPerRound={
+                detail.mode === "instant" ? 1 : health?.candidates_per_round
+              }
               queue={queue}
               now={now}
             />
@@ -393,6 +399,7 @@ export default function RequestDetail({
                   round: shown.round.n,
                   candidateId: shown.c.id,
                   idx: shown.c.idx,
+                  scored: isScored(shown.c),
                 })}
               </div>
             )}
@@ -461,6 +468,7 @@ export default function RequestDetail({
                           round: explored.n,
                           candidateId: c.id,
                           idx: c.idx,
+                          scored: isScored(c),
                         })}
                       />
                     ))}
@@ -652,5 +660,42 @@ function RunProblem({
         </button>
       )}
     </div>
+  );
+}
+
+// Under the message: the turn's mode and model, and for a follow-up what it refines.
+function TurnMeta({ detail }: { detail: Detail }) {
+  const followUp = (detail.turn ?? 1) > 1;
+  if (!detail.mode && !followUp) return null; // a run from before modes
+  const mode = detail.mode ?? "effort";
+  const t = detail.target;
+  return (
+    <p className="turn-meta">
+      {followUp && <span className="tag">Follow-up</span>}
+      <span>
+        {modeLabel(mode)} · {modelLabel(detail.model ?? MODE_MODEL[mode])}
+      </span>
+      {t && (
+        <span>
+          refines{" "}
+          <button
+            type="button"
+            className="link"
+            onClick={() =>
+              document
+                .getElementById(runAnchor(t.request_id))
+                ?.scrollIntoView({ block: "start" })
+            }
+          >
+            Turn {t.turn} · {candidateName(t.round_n, t.idx)}
+          </button>
+          {t.score != null && <> ({t.score.toFixed(1)}/10)</>}
+        </span>
+      )}
+      {followUp && !t && detail.status === "queued" && (
+        <span>refines the best candidate when it starts</span>
+      )}
+      {detail.scene_changed ? <span>new scene, so it trains from scratch</span> : null}
+    </p>
   );
 }

@@ -4,6 +4,16 @@ Built on Playground's Go1 joystick env: same robot, observations, physics and
 termination. We replace its reward terms with the generated ones, and zero its
 velocity command (our behaviors don't track a joystick).
 
+Under the generated terms the env keeps Playground's tuned gait and stability
+terms (STOCK_SCALES), the ones the pretrained walker learned with, so a policy
+warm-started from it keeps walking like it while it learns the task. A reward
+module can rescale or drop them with a STOCK_TERMS dict (go1_spec.describe).
+
+In steer mode (walker=params) the policy doesn't move the joints: each step it
+picks a velocity command (forward, sideways, turn) and the frozen pretrained
+walker turns it into joint targets. Exploration then happens in command space,
+where every random action is a walk somewhere, which is what object tasks need.
+
 With a scene (see scene.py), the env loads the compiled scene instead of the
 stock flat floor, places every object afresh at each reset, adds per-object
 features for the reward, and appends each object's relative position to the
@@ -31,7 +41,9 @@ from mujoco_playground._src.locomotion.go1 import joystick
 
 from . import scene_xml
 from . import warp_quiet  # noqa: F401  (silences warp's per-step solver warning)
-from .go1_spec import features_for
+from .go1_spec import (  # noqa: F401
+    COMMAND_LIMITS, COMMAND_SMOOTHING, STOCK_PREFIX, STOCK_PROFILES, STOCK_SCALES, STOCK_WEIGHT, features_for,
+)
 from .reward_slot import load_reward
 from .scene import EMPTY, SceneObject, SceneSpec
 
@@ -40,6 +52,8 @@ BASE_ENV = "Go1JoystickFlatTerrain"
 # of up to 3 m/s, in a random horizontal direction, lasting 0.05-0.2 s.
 PUSH_OVERRIDES: dict[str, Any] = {"pert_config.enable": True}
 RewardFn = Callable[[dict[str, jax.Array], jax.Array, jax.Array], Mapping[str, Any]]
+
+WALKER_STATE = 48  # the joystick "state" observation the walker reads; the command is its last 3
 
 # The robot's slice of qpos/qvel: free joint + 12 joints. Movable scene objects come after.
 ROBOT_NQ, ROBOT_NV = 19, 18
@@ -69,9 +83,13 @@ class Go1Env(joystick.Joystick):
         config: config_dict.ConfigDict,
         scene: SceneSpec = EMPTY,
         behavior_metrics: bool = False,
+        stock: Mapping[str, float] | None = None,
+        walker: Any = None,
     ):
         self._reward_fn = reward_fn
         self._term_names = term_names
+        self._stock = tuple(stock or ())  # STOCK_SCALES names; their scales are in config
+        self._walker = walker_policy(walker) if walker is not None else None  # steer mode
         self._scene = scene
         self._behavior_metrics = behavior_metrics
         if scene.is_empty:
@@ -98,6 +116,14 @@ class Go1Env(joystick.Joystick):
             joint = self.mj_model.joint(scene_xml.body_name(obj))
             qpos_adr, dof_adr = int(self.mj_model.jnt_qposadr[joint.id]), int(self.mj_model.jnt_dofadr[joint.id])
         return _Placed(obj, body.id, mocap_id, qpos_adr, dof_adr)
+
+    @property
+    def action_size(self) -> int:
+        return len(COMMAND_LIMITS) if self._walker is not None else super().action_size
+
+    @property
+    def steers(self) -> bool:
+        return self._walker is not None
 
     @property
     def term_names(self) -> tuple[str, ...]:
@@ -298,10 +324,23 @@ class Go1Env(joystick.Joystick):
 
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        if self._walker is not None:
+            state, action = self._steer(state, action)
         state = super().step(state, action)
         if self._behavior_metrics:
             state.metrics.update(self.behavior(state.data))
         return state
+
+    def _steer(self, state: mjx_env.State, action: jax.Array) -> tuple[mjx_env.State, jax.Array]:
+        """Steer mode: action -> smoothed command -> the walker's joint action for this step."""
+        target = jnp.clip(action, -1.0, 1.0) * jnp.asarray(COMMAND_LIMITS)
+        command = state.info["command"] + COMMAND_SMOOTHING * (target - state.info["command"])
+        state.info["command"] = command
+        # Joystick resamples the command when this runs out; keep ours.
+        state.info["steps_until_next_cmd"] = jnp.full_like(state.info["steps_until_next_cmd"], 10**6)
+        walker_obs = state.obs["state"][:WALKER_STATE].at[WALKER_STATE - 3:].set(command)
+        joints, _ = self._walker({"state": walker_obs}, jax.random.PRNGKey(0))  # deterministic: the key is unused
+        return state, joints
 
     def behavior(self, data: mjx.Data) -> dict[str, jax.Array]:
         """What the robot is doing, reward aside. With behavior_metrics on, every eval
@@ -324,9 +363,37 @@ class Go1Env(joystick.Joystick):
         return out
 
     def _get_reward(self, data, action, info, metrics, done, first_contact, contact):
-        del metrics, done, first_contact
         terms = self._reward_fn(self.features(data, info, contact), action, info["last_act"])
-        return {k: jnp.asarray(terms[k], dtype=jnp.float32).reshape(()) for k in self._term_names}
+        out = {k: jnp.asarray(terms[k], dtype=jnp.float32).reshape(()) for k in self._term_names}
+        if self._stock:
+            robot = data.replace(qpos=data.qpos[:ROBOT_NQ], qvel=data.qvel[:ROBOT_NV])
+            # A nonzero command opens the gates on the feet terms ("only while walking");
+            # every term read here ignores the command's value.
+            moving = {**info, "command": jnp.array([1.0, 0.0, 0.0])}
+            stock = super()._get_reward(robot, action, moving, metrics, done, first_contact, contact)
+            out.update({STOCK_PREFIX + k: stock[k] for k in self._stock})
+        return out
+
+
+def walker_policy(params: Any) -> Callable[..., Any]:
+    """The walker's deterministic policy from its checkpoint params (scripts/train_walker.py)."""
+    from brax.training.acme import running_statistics
+    from brax.training.agents.ppo import networks as ppo_networks
+    from mujoco_playground.config import locomotion_params
+
+    from . import checkpoints
+
+    if isinstance(params, (str, os.PathLike)):
+        params = checkpoints.load(params)
+    sizes = {k: (n,) for k, n in checkpoints.obs_sizes(params).items()}
+    if sizes.get("state") != (WALKER_STATE,):
+        raise ValueError(f"not a walker checkpoint: its state observation is {sizes.get('state')}, not ({WALKER_STATE},)")
+    nets = ppo_networks.make_ppo_networks(
+        sizes, 12, preprocess_observations_fn=running_statistics.normalize,
+        **dict(locomotion_params.brax_ppo_config(BASE_ENV).network_factory),
+    )
+    params = jax.tree_util.tree_map(jnp.asarray, params)
+    return ppo_networks.make_inference_fn(nets)(params, deterministic=True)
 
 
 def dummy_state(scene: SceneSpec = EMPTY) -> dict[str, jax.Array]:
@@ -364,15 +431,39 @@ def discover_terms(reward_fn: RewardFn, scene: SceneSpec = EMPTY) -> tuple[str, 
     return tuple(sorted(terms))
 
 
+def stock_scales(
+    reward_fn: RewardFn, profile: str | None = "gait", weight: float = STOCK_WEIGHT
+) -> dict[str, float]:
+    """The stock terms a reward trains with, and their scales.
+
+    profile picks the defaults (STOCK_PROFILES; None turns them all off), and the
+    reward module's own STOCK_TERMS = {"orientation": 0.0, ...} multipliers win.
+    Raises RewardError for a malformed STOCK_TERMS.
+    """
+    own = getattr(reward_fn, "__globals__", {}).get("STOCK_TERMS", {})
+    if not isinstance(own, Mapping) or not all(isinstance(k, str) and isinstance(v, (int, float)) for k, v in own.items()):
+        raise RewardError("STOCK_TERMS must be a dict of stock term name -> multiplier, e.g. {\"orientation\": 0.0}")
+    unknown = sorted(set(own) - set(STOCK_SCALES))
+    if unknown:
+        raise RewardError(f"STOCK_TERMS has unknown terms {unknown}; the stock terms are {sorted(STOCK_SCALES)}")
+    if profile is None:
+        return {}
+    defaults = STOCK_PROFILES[profile]
+    mult = {k: float(own.get(k, defaults.get(k, 1.0))) for k in STOCK_SCALES}
+    return {k: weight * STOCK_SCALES[k] * m for k, m in mult.items() if m != 0.0}
+
+
 def make_config(
     term_names: tuple[str, ...],
     impl: str = "jax",
     overrides: Mapping[str, Any] | None = None,
     scene: SceneSpec = EMPTY,
+    stock: Mapping[str, float] | None = None,
 ):
     config = registry.get_default_config(BASE_ENV)
     # Must happen before the env locks its config: scales are looked up by term name.
-    config.reward_config.scales = config_dict.ConfigDict({k: 1.0 for k in term_names})
+    scales = {k: 1.0 for k in term_names} | {STOCK_PREFIX + k: v for k, v in (stock or {}).items()}
+    config.reward_config.scales = config_dict.ConfigDict(scales)
     config.command_config.a = [0.0, 0.0, 0.0]  # no joystick command
     config.impl = impl
     if not scene.is_empty:
@@ -397,8 +488,16 @@ def make_env(
     overrides: Mapping[str, Any] | None = None,
     scene: SceneSpec | None = None,
     behavior_metrics: bool = False,
+    stock_profile: str | None = None,
+    stock_weight: float = STOCK_WEIGHT,
+    walker: Any = None,
 ) -> Go1Env:
-    """Build a Go1 env from reward source code. Raises RewardError for bad rewards."""
+    """Build a Go1 env from reward source code. Raises RewardError for bad rewards.
+
+    stock_profile (a STOCK_PROFILES key) adds the stock gait terms under the reward's
+    own; None leaves the reward exactly as written. walker (checkpoint params or a
+    path) turns on steer mode: the policy commands that frozen walker.
+    """
     impl = impl or default_impl()
     scene = scene or EMPTY
     try:
@@ -406,5 +505,10 @@ def make_env(
     except Exception as exc:
         raise RewardError(f"{type(exc).__name__}: {exc}") from exc
     term_names = discover_terms(reward_fn, scene)
+    stock = stock_scales(reward_fn, stock_profile, stock_weight)
+    clash = sorted(k for k in term_names if k.startswith(STOCK_PREFIX))
+    if stock and clash:
+        raise RewardError(f"term names starting with {STOCK_PREFIX!r} are taken by the stock terms: rename {clash}")
     mjx_env.ensure_menagerie_exists()
-    return Go1Env(reward_fn, term_names, make_config(term_names, impl, overrides, scene), scene, behavior_metrics)
+    config = make_config(term_names, impl, overrides, scene, stock)
+    return Go1Env(reward_fn, term_names, config, scene, behavior_metrics, stock, walker)

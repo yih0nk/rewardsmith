@@ -85,8 +85,8 @@ MAX_FRAMES = 10
 
 
 class ClaudeCritic:
-    def __init__(self, client: anthropic.Anthropic, model: str):
-        self.client, self.model = client, model
+    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high"):
+        self.client, self.model, self.effort = client, model, effort
 
     def review(self, request: str, result: RunResult, check: dict[str, Any] | None = None) -> Review:
         content: list[dict] = []
@@ -108,7 +108,7 @@ class ClaudeCritic:
                 + (f"\n\nTask diagnosis (computed from the 32 episodes):\n{diagnosis}" if diagnosis else "")
             ),
         })
-        out = ask_json(self.client, self.model, SYSTEM, content, SCHEMA)
+        out = ask_json(self.client, self.model, SYSTEM, content, SCHEMA, effort=self.effort)
         return apply_limits(float(out["score"]), bool(out["reward_hacking"]), out["critique"], result.metrics, check)
 
 

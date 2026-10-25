@@ -46,8 +46,8 @@ def format_history(history: Sequence[Attempt]) -> str:
 
 
 class ClaudeEditor:
-    def __init__(self, client: anthropic.Anthropic, model: str):
-        self.client, self.model = client, model
+    def __init__(self, client: anthropic.Anthropic, model: str, effort: str = "high"):
+        self.client, self.model, self.effort = client, model, effort
 
     def revise(
         self,
@@ -79,7 +79,7 @@ class ClaudeEditor:
             "Each idea should say what you changed and why."
         )
         out = ask_json(
-            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA,
+            self.client, self.model, SYSTEM, [{"type": "text", "text": prompt}], WRITE_SCHEMA, effort=self.effort,
             on_text=IdeaStream(on_idea) if on_idea else None,
         )
         return [Draft(c["source"], unified_diff(best_source, c["source"]), c["idea"]) for c in out["candidates"]][:k]
