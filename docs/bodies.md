@@ -123,3 +123,23 @@ returns is used by the gate, trainer, evaluator, renderer and robustness rollout
   (`sim/pose.py` is Go1-shaped; a `pose_metrics(qpos)` method on the env overrides it, per the G1 session).
 - `_yaw(data)`, `scene_features(data)`, `_placed`: scene outcomes (`scene_eval.py`), only with scene objects.
 - `state.done` must go true when the robot falls; the rollout stops there.
+
+## The G1 humanoid (`bodies/g1.py`, `sim/g1.py`, `sim/g1_spec.py`)
+
+- Builds on Playground's `G1JoystickFlatTerrain` (`G1JoystickRoughTerrain` for `terrain="rough"`): 29 joints
+  (legs, waist, arms), `nq, nv = 36, 35`, the pelvis is the base (body 1), floor geom 0, so it reuses
+  `legged_randomizer`. Standing: pelvis 0.755 m, torso 0.80 m, head about 1.2 m.
+- **Fell**: the stock env only ends an episode once the torso is upside down (its feet-only collision
+  model lets a fallen body sink through the floor). `G1Env` adds: torso up axis z < 0.35 or pelvis < 0.35 m.
+  The stock foot-on-other-leg termination stays.
+- Reward: the generated terms, plus `g1_spec.STOCK_SCALES` (Playground's G1 gait terms, minus tracking,
+  stand_still and its -100 termination) in tune mode. Clipped below at 0 like the Go1's (the stock G1 isn't).
+- Command zeroed via `lin_vel_x/lin_vel_y/ang_vel_yaw = [0, 0]`; random pushes off unless `push_overrides`.
+- Steer mode: action in [-1, 1]^3 scaled to Playground's G1 ranges (1.0 m/s forward, 0.5 m/s sideways,
+  1.0 rad/s turn), eased 20% per step; the walker's command lives at `state[9:12]` of its 103-wide
+  observation (not the end, unlike the Go1). The walker's gait clock keeps running, so command 0 steps in place.
+- Walker: `scripts/train_walker.py --env g1 --out /workspace/pretrained/g1_walker` (`REWARDSMITH_G1_WALKER`
+  overrides the path). `docs/warm-start.md` has its training time and tracking.
+- Metrics: `G1Env.pose_metrics` (via `sim/pose.py`) returns `g1_spec.POSE_METRICS`: single_support,
+  double_support, flight, flight_held_s, step_count, pitch_deg, abs_roll_deg (torso).
+- No scene objects yet: `make_env` raises `RewardError` for a scene with objects.

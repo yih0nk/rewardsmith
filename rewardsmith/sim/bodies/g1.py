@@ -24,6 +24,7 @@ class G1Body:
                 "turns, steps sideways, can wave its arms; no hand or gripper control, no scene objects yet",
     )
     nq, nv = 36, 35  # free joint + 29 joints (sim/g1.py ROBOT_NQ, ROBOT_NV)
+    standing_height = g1_spec.STANDING_HEIGHT  # pelvis, m (the checker prompt reads it)
     skill = "walker"
     camera = {
         # Front-right, a few metres back so the whole 1.3 m body is in frame; aim at the hips.
