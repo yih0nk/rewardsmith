@@ -7,7 +7,7 @@ import {
   getRequest,
 } from "../api";
 import { Conversation, RenderReply, queuePlace } from "../thread";
-import RequestDetail from "./RequestDetail";
+import RequestDetail, { turnLabel } from "./RequestDetail";
 
 // One request's details, polled fast while it runs and slowly after.
 function useRequest(id: string, live: boolean) {
@@ -43,6 +43,8 @@ function useRequest(id: string, live: boolean) {
 
 function TurnView({
   requestId,
+  text,
+  turn,
   summary,
   requests,
   health,
@@ -50,6 +52,8 @@ function TurnView({
   renderReply,
 }: {
   requestId: string;
+  text: string;
+  turn: number;
   summary: RequestSummary | undefined;
   requests: RequestSummary[];
   health: Health | null;
@@ -58,15 +62,24 @@ function TurnView({
 }) {
   const live = summary?.status === "running" || summary?.status === "queued";
   const { detail, error } = useRequest(requestId, live);
+  // Until the run loads, its message already says which turn this is.
   if (!detail)
-    return error ? (
-      <div className="error" role="alert">
-        {error}
-      </div>
-    ) : (
-      <p className="cmd-note" role="status">
-        Loading this run…
-      </p>
+    return (
+      <article className="cmd turn" data-n={turnLabel(turn)}>
+        <div className="exp-head">
+          <span className="who">You</span>
+          <h2 className="exp-title">{text}</h2>
+        </div>
+        {error ? (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        ) : (
+          <p className="turn-loading subtle" role="status">
+            Loading…
+          </p>
+        )}
+      </article>
     );
   return (
     <RequestDetail
@@ -103,6 +116,8 @@ export default function ConversationView({
         <TurnView
           key={turn.requestId}
           requestId={turn.requestId}
+          text={turn.text}
+          turn={turn.turn}
           summary={requests.find((r) => r.id === turn.requestId)}
           requests={requests}
           health={health}

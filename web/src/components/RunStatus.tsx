@@ -63,6 +63,8 @@ export default function RunStatus({
     ["compiling", "training", "rendering", "judging"].includes(stage.key)
       ? last.candidates
       : [];
+  // One candidate (Instant): the stage under the video already shows its progress.
+  const showLanes = lanes.length > 1;
 
   return (
     <div
@@ -159,7 +161,7 @@ export default function RunStatus({
           </p>
         </>
       )}
-      {lanes.length > 0 && (
+      {showLanes && (
         <ul className="lanes" aria-label={`Candidates in round ${last!.n}`}>
           {lanes.map((c) => {
             const live = liveState(c);

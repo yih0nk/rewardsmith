@@ -14,6 +14,7 @@ export interface Turn {
   createdAt: number;
   // 1 for the task itself.
   turn: number;
+  status: RequestSummary["status"];
 }
 
 export interface Conversation {
@@ -60,6 +61,7 @@ export function conversationsFromRequests(
           text: t.text,
           createdAt: t.created_at,
           turn: turnOf(t),
+          status: t.status,
         })),
       };
     })
@@ -95,6 +97,10 @@ export function queuePlace(
       .map((r) => taskName(requests, r)),
   };
 }
+
+// A prompt as a list shows it: people type "walk sideways", the list reads "Walk sideways".
+export const titleCase = (text: string) =>
+  text.charAt(0).toUpperCase() + text.slice(1);
 
 // A run as the queue names it: its task, and the note when it is a follow-up
 // ("Walk to the ball (follow-up: faster)"), so a note alone never stands for a task.

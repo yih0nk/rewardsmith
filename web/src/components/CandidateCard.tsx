@@ -79,7 +79,7 @@ export default function CandidateCard({
           <Sparkline
             curve={c.progress?.curve}
             width={90}
-            caption="how it learned"
+            caption="final reward"
           />
         )
       )}

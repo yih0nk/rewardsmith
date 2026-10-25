@@ -34,6 +34,12 @@ const HEADING = /^\s*(?:#{1,4}\s+(.+?)|\*\*([^*]+?)\*\*:?)\s*$/;
 const plain = (text: string) => text.replace(/\*\*(.+?)\*\*/g, "$1");
 const LEAD_MAX = 320;
 const NUMBERS = /^(?:key numbers|(?:the )?score rests on|numbers)\b/i;
+// Lines the critic is handed rather than writes ("Episodes by phase: no_approach 0%, …")
+// and lists of readings: the success check table already shows those, so the lead skips them.
+const BOILERPLATE = /^(?:episodes by phase|key numbers)\b|check the success check for what else/i;
+const readings = (sentence: string) =>
+  (sentence.match(/\d+(?:\.\d+)?\s*%|=\s*-?\d/g) ?? []).length >= 3;
+const noisy = (sentence: string) => BOILERPLATE.test(sentence) || readings(sentence);
 // "What the frames show: the robot walks…" → "The robot walks…"
 const withoutLabel = (sentence: string) => {
   const m = sentence.match(/^([A-Z][^.:!?]{0,40}):\s+(\S)/);
@@ -123,7 +129,9 @@ export function parseCritique(raw: string): ParsedCritique {
         ? rest
         : [...usable(first.slice(1)), ...rest]
       : [...usable(first), ...rest]
-  ).map(withoutLabel);
+  )
+    .filter((sentence) => !noisy(sentence))
+    .map(withoutLabel);
   // Little prose outside the lists (Markdown critiques): lead with the first bullet
   // list, which is what the frames show; numbered lists are the fixes.
   if (prose.length < 2) {

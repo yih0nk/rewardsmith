@@ -16,6 +16,7 @@ import SuccessCheck from "./SuccessCheck";
 import DiffView from "./DiffView";
 import FlagControl from "./FlagControl";
 import RewardTerms from "./RewardTerms";
+import RolloutVideo from "./RolloutVideo";
 import RoundGallery from "./RoundGallery";
 import RoundTimeline, { formatDelta, roundScore } from "./RoundTimeline";
 import RunControls from "./RunControls";
@@ -35,6 +36,10 @@ const EVENT_KINDS: Record<string, string> = {
   followup: "follow-up",
   mode: "mode",
 };
+
+// The gutter number: a conversation's turns count 01, 02, … rather than sharing the page counter.
+export const turnLabel = (turn: number | null | undefined) =>
+  String(turn ?? 1).padStart(2, "0");
 
 // One turn of a conversation: the user's message and the run it started.
 export default function RequestDetail({
@@ -154,6 +159,7 @@ export default function RequestDetail({
       className="cmd turn"
       id={runAnchor(detail.id)}
       aria-labelledby={`exp-${detail.id}`}
+      data-n={turnLabel(detail.turn)}
     >
       <div className="exp-head">
         <span className="who">You</span>
@@ -182,7 +188,12 @@ export default function RequestDetail({
       </div>
       <TurnMeta detail={detail} />
       <div className="run-card">
-        <div className={`run-grid ${showResult ? "" : "status-only"}`}>
+        {/* A finished run gives the video the width; the status card moves under it. */}
+        <div
+          className={["run-grid", !showResult && "status-only", !running && "settled"]
+            .filter(Boolean)
+            .join(" ")}
+        >
           <div className="run-side">
             <RunStatus
               detail={detail}
@@ -194,12 +205,15 @@ export default function RequestDetail({
             />
             <RunControls run={detail} />
             <CoachFeed events={detail.events} />
+            {/* A verified pass is already in the check table under the video; keep
+                this box for a run still going, a miss or a checker failure. */}
+            {!(check && !running && !detail.success_check_error && detail.succeeded) && (
             <div className="success-spec">
               <span className="label">
                 <Explain term="successCheck">Success check</Explain>
               </span>
               <div>
-                <p>
+                <p hidden={Boolean(check && !running)}>
                   {sentence ??
                     (running
                       ? "Claude writes a pass/fail test from your prompt before training starts."
@@ -222,6 +236,7 @@ export default function RequestDetail({
                 ) : null}
               </div>
             </div>
+            )}
           </div>
 
           {showResult && (
@@ -255,15 +270,12 @@ export default function RequestDetail({
                     {viewingBest && (
                       <span className="winner-tag">Best overall</span>
                     )}
-                    <span
-                      className={`tag ${candidate?.video_path ? "rollout" : live ? "live" : ""}`}
-                    >
-                      {candidate?.video_path
-                        ? "VIDEO"
-                        : live
-                          ? "LIVE"
-                          : "NO VIDEO"}
-                    </span>
+                    {/* The video speaks for itself; only say LIVE, or that there is none. */}
+                    {!candidate?.video_path && (
+                      <span className={`tag ${live ? "live" : ""}`}>
+                        {live ? "LIVE" : "NO VIDEO"}
+                      </span>
+                    )}
                   </span>
                 )}
               </h3>
@@ -327,14 +339,9 @@ export default function RequestDetail({
                   <div className="stage">
                     <div className="well">
                       {candidate?.video_path ? (
-                        <video
+                        <RolloutVideo
                           key={candidate.id}
                           src={artifactUrl(candidate.video_path)}
-                          controls
-                          muted
-                          loop
-                          autoPlay
-                          playsInline
                         />
                       ) : candidate && live ? (
                         <TrainingProgress c={candidate} large />
@@ -386,10 +393,6 @@ export default function RequestDetail({
                   ? "Claude's notes appear here after it watches the video."
                   : "Claude left no notes for this candidate."}
               </p>
-            )}
-            {(candidate.status === "trained" ||
-              candidate.status === "scored") && (
-              <FlagControl key={candidate.id} candidate={candidate} />
             )}
             {renderReply && shown && (
               <div className="reply-slot">
@@ -483,7 +486,7 @@ export default function RequestDetail({
                 {name}, in depth{" "}
                 <span>
                   {candidate.idea ? "the idea · " : ""}learning curve · reward
-                  breakdown · measurements
+                  breakdown · measurements · flag
                 </span>
               </summary>
               <div>
@@ -492,6 +495,11 @@ export default function RequestDetail({
                     <h3 className="sub-title">What this reward tries</h3>
                     <p>{inline(candidate.idea)}</p>
                   </div>
+                )}
+                {/* Here rather than next to Refine this, so it is never clicked by mistake. */}
+                {(candidate.status === "trained" ||
+                  candidate.status === "scored") && (
+                  <FlagControl key={candidate.id} candidate={candidate} />
                 )}
                 {candidate.error && (
                   <pre className="error" role="alert">
