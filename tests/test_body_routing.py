@@ -193,6 +193,11 @@ def test_run_turn_sets_the_simulators_body_before_it_describes_the_env(tmp_path,
     run_turn(conn, s, db.claim_next_request(conn), sim)
     assert seen == ["go1"]
     assert db.get_request(conn, rid)["best_score"] is not None
+    rid2 = db.create_request(conn, "wave", body="g1")
+    sim.describe = lambda scene=None: (seen.append(sim.body), "notes")[1]
+    run_turn(conn, s, db.claim_next_request(conn), sim)
+    assert seen == ["go1", "g1"] and sim.body == "go1"  # back to the worker's body after the run
+    assert db.get_request(conn, rid2)["body"] == "g1"
     sim.set_body("g1")
     assert sim.body == "g1"
     sim.set_body(None)

@@ -1134,16 +1134,29 @@ def run_turn(
     # Instant runs without the coach unless the request asked for one.
     coach = build_coach(settings, req, body) if mode.coach or req.get("coach") else None
     db.log_event(conn, req["id"], "mode", describe_run(run_settings, req, coach))
-    set_body = getattr(sim, "set_body", None)
-    if set_body is not None:  # before run_request's plan_request and describe (sim/playground.py)
-        set_body(body)
-    with training_budget(sim, mode):
+    with training_budget(sim, mode), on_body(sim, body):
         return run_request(
             conn, run_settings, req, writer, editor, critic, sim,
             ranker=ranker if run_settings.halving else None,
             checker=build_checker(scene_settings, body), scener=build_scener(scene_settings, body), coach=coach,
             follow_up=follow_up,
         )
+
+
+@contextmanager
+def on_body(sim: Simulator, body: str) -> Iterator[None]:
+    """Train on body for one request, then put the simulator's previous body back. set_body
+    also picks the body's walker and mode, so it runs before plan_request and describe."""
+    set_body = getattr(sim, "set_body", None)
+    if set_body is None:
+        yield
+        return
+    before = getattr(sim, "body", None)
+    set_body(body)
+    try:
+        yield
+    finally:
+        set_body(before)
 
 
 def main() -> None:
