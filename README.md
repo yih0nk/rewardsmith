@@ -58,23 +58,6 @@ Built from scratch at **Cal Hacks 13.0** (October 23–25, 2026).
 
 ## How it works
 
-```mermaid
-flowchart LR
-    req(["Request"]) --> router["Body router"]
-    router --> scene["Scene writer"]
-    scene --> check["Checker<br/>fixed pass/fail spec"]
-    scene --> write["Writer · Editor<br/>candidate rewards"]
-    write --> gate["Gate<br/>compile + short rollout"]
-    gate -- "errors" --> write
-    gate --> train["PPO training<br/>MuJoCo Playground on GPU"]
-    coach["Live coach"] -.-> train
-    train --> eval["Render + measure"]
-    eval --> judge["Check + critic<br/>pass/fail, score 0–10"]
-    check --> judge
-    judge --> best(["Best candidate"])
-    best -. "follow-up" .-> write
-```
-
 | Stage | Model | What it does |
 |---|---|---|
 | **Body router** | Claude | When the robot is left on Auto, picks the body whose capabilities the task needs. |
