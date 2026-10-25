@@ -11,7 +11,7 @@ from rewardsmith.agents import coach as coach_mod
 from rewardsmith.agents.base import Observation
 from rewardsmith.agents.coach import ClaudeCoach, check_now, cost, prompt
 from rewardsmith.agents.fake import FakeCoach, FakeCritic, FakeEditor, FakeWriter
-from rewardsmith.coaching import ACTED, LAST_RUNNER, NOTHING, TOO_EARLY, LiveCoach
+from rewardsmith.coaching import ACTED, LAST_RUNNER, NOTHING, QUOTA, TOO_EARLY, LiveCoach
 from rewardsmith.orchestrator import build_coach, run_request
 from rewardsmith.sim.base import RunResult
 from rewardsmith.sim.fake import FakeSimulator
@@ -84,6 +84,16 @@ def test_never_kills_the_last_runner(tmp_path):
     stop = _poll(live, {0, 1}, until=lambda s: len(notes) == 2, timeout=2.0)
     assert len(stop) == 1  # one goes, the other is the last one training
     assert sorted(notes) == sorted([ACTED, LAST_RUNNER])
+
+
+def test_stops_at_most_half_the_round(tmp_path):
+    dirs = [tmp_path / f"c{i}" for i in range(4)]
+    for d in dirs:
+        _evals(d, 3)
+    notes = []
+    live = LiveCoach(ScriptedCoach(bad=set("abc")), "r", list(zip("abcd", dirs)), on_note=lambda c, a: notes.append(a))
+    stop = _poll(live, {0, 1, 2, 3}, until=lambda s: len(notes) == 4, timeout=2.0)
+    assert len(stop) == 2 and sorted(notes) == sorted([ACTED, ACTED, QUOTA, NOTHING])
 
 
 def test_asks_once_per_new_eval_and_skips_the_final_one(tmp_path):

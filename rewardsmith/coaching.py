@@ -7,6 +7,7 @@ candidate, within the guard rails:
 
 - never before eval MIN_EVAL (eval 0 is the untrained policy; eval 1 is too noisy),
 - never the last candidate still training,
+- never more than half the round (max_stops), so a too-eager coach can't empty it,
 - every decision, acted on or not, is reported with its reason.
 
 LiveCoach is the cull run_many polls (see sim.base.Cull). With successive halving on,
@@ -30,7 +31,8 @@ MIN_EVAL = 2
 STOP_VERDICTS = ("kill", "revise")
 
 # What happened to a verdict: the board says so next to the note.
-ACTED, TOO_EARLY, LAST_RUNNER, FINISHED, NOTHING = "stopped", "too_early", "last_runner", "finished", "none"
+ACTED, TOO_EARLY, LAST_RUNNER, QUOTA, FINISHED, NOTHING = (
+    "stopped", "too_early", "last_runner", "quota", "finished", "none")
 
 
 @dataclass
@@ -62,6 +64,7 @@ class LiveCoach:
         on_note: OnNote | None = None,
         on_stop: OnStop | None = None,
         min_eval: int = MIN_EVAL,
+        max_stops: int | None = None,
         max_workers: int = 4,
     ):
         self.coach, self.request, self.spec = coach, request, spec
@@ -71,6 +74,7 @@ class LiveCoach:
         self.on_note = on_note or (lambda call, action: None)
         self.on_stop = on_stop or (lambda idx, call, metrics: None)
         self.min_eval = min_eval
+        self.max_stops = len(jobs) // 2 if max_stops is None else max_stops
         self.calls: list[Call] = []
         self._seen = [0] * len(jobs)  # curve length last sent to the coach, per job
         self._pending: dict[int, tuple[Call, Future]] = {}  # at most one call per job at a time
@@ -167,4 +171,6 @@ class LiveCoach:
             return TOO_EARLY
         if len(alive) <= 1:
             return LAST_RUNNER
+        if len(self._stopped) >= self.max_stops:
+            return QUOTA
         return ACTED

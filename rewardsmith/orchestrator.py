@@ -30,7 +30,7 @@ from . import config, db
 from .agents import checker as check_spec
 from .agents.base import Attempt, Checker, Coach, Critic, Draft, Editor, Ranker, Scener, Writer
 from .agents.editor import unified_diff
-from .coaching import ACTED, LAST_RUNNER, TOO_EARLY, Call, LiveCoach
+from .coaching import ACTED, LAST_RUNNER, QUOTA, TOO_EARLY, Call, LiveCoach
 from .search import Halving
 from .sim import scene as scene_spec
 from .sim.base import RunResult, Simulator, Stopped
@@ -375,7 +375,8 @@ def _live_coach(
         obs = call.observation
         assert obs is not None
         after = {ACTED: " Stopping it.", TOO_EARLY: " (Too early to stop it.)",
-                 LAST_RUNNER: " (Kept: it is the last one still training.)"}.get(action, "")
+                 LAST_RUNNER: " (Kept: it is the last one still training.)",
+                 QUOTA: " (Kept: half the round always finishes.)"}.get(action, "")
         message = f"Candidate {idx[call.idx] + 1} at {call.steps / 1e6:.1f}M steps: {obs.note}{after}"
         _locked(lock, db.log_event, conn, rid, "coach", message, round_n=round_n, candidate=idx[call.idx])
 
