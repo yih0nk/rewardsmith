@@ -18,6 +18,10 @@ Each request is one turn of a conversation. A follow-up turn (prepare_turn) refi
 one candidate of an earlier turn: same scene and check, no scene or checker call, and
 round 1 is the editor revising that candidate with its critique, the coach's notes and
 the user's note. Its mode (modes.py) sets K, rounds, models and the training budget.
+
+Every request runs on one body (sim/bodies). A new task on Auto gets one from the body
+router (agents/router.py) before anything else, when there is more than one to pick
+from; follow-ups run on their conversation's body (route_body).
 """
 
 import ast
@@ -39,8 +43,10 @@ from . import config, db, modes
 from .agents import checker as check_spec
 from .agents.base import Attempt, Checker, Coach, Critic, Draft, Editor, Ranker, Scener, Writer
 from .agents.editor import unified_diff
+from .agents.router import cards as body_cards
 from .coaching import ACTED, ADVISORY, LAST_RUNNER, QUOTA, TOO_EARLY, Call, LiveCoach
 from .search import Halving
+from .sim import bodies
 from .sim import progress as sim_progress
 from .sim import scene as scene_spec
 from .sim import checkpoints
@@ -81,6 +87,14 @@ class Paused(Exception):
 
 class Cancelled(Exception):
     """A cancel was requested and the run reached a checkpoint."""
+
+
+class Refused(Exception):
+    """The scene writer judged the request impossible for this robot; nothing was trained."""
+
+    def __init__(self, feasibility: dict[str, Any]):
+        super().__init__(feasibility.get("reason") or "refused")
+        self.feasibility = feasibility
 
 
 def _checkpoint(conn: sqlite3.Connection, rid: str, *, round_boundary: bool) -> None:
@@ -939,7 +953,61 @@ def describe_run(settings: config.Settings, req: dict[str, Any], coach: Coach | 
             f"{rounds}{steps}, live coach {'on' if coach is not None else 'off'}")
 
 
-def build_scener(settings: config.Settings) -> Scener:
+def build_router(settings: config.Settings) -> Any:
+    """Picks a body for a request on Auto (agents/router.py)."""
+    if settings.fake_llm:
+        from .agents.router import FakeRouter
+
+        return FakeRouter()
+    import anthropic
+
+    from .agents.router import ClaudeRouter
+
+    return ClaudeRouter(anthropic.Anthropic(), settings.model)
+
+
+def route_body(conn: sqlite3.Connection, settings: config.Settings, req: dict[str, Any], router: Any = None) -> str:
+    """The request's body, stored on it: the one the user picked, the conversation's for a
+    follow-up, else the router's pick for the task. With one body registered there is
+    nothing to pick: it is used without a Claude call. Raises Refused when no body can
+    do the task."""
+    rid = req["id"]
+    body = req.get("body") or ((req.get("turn") or 1) > 1 and db.conversation_body(conn, req["conversation_id"])) or None
+    if body is None and len(bodies.BODIES) > 1:
+        try:
+            with db.stage(conn, rid, "body"):
+                pick = (router or build_router(settings)).pick(_task(req), body_cards(bodies.BODIES))
+        except Exception as exc:  # the router's Claude call failed: don't lose the request
+            log.exception("body router failed for %s", rid)
+            pick = {"body": bodies.DEFAULT_BODY, "reason": f"couldn't choose a body ({_describe(exc)}), so the default"}
+        if pick["body"] is None:
+            reason = pick["reason"] or "No available robot can do this"
+            db.set_request(conn, rid, body_reason=reason)
+            db.log_event(conn, rid, "refusal", f"Can't train this: {reason}."
+                         + (f" Try instead: {pick['suggestion']}" if pick.get("suggestion") else ""))
+            raise Refused({"verdict": "refuse", "reason": f"{reason}.", "simplification": "",
+                           "suggestion": pick.get("suggestion", "")})
+        body = pick["body"]
+        db.set_request(conn, rid, body=body, body_reason=pick["reason"])
+        db.log_event(conn, rid, "body", f"Using the {bodies.get_body(body).title}: {pick['reason']}")
+    body = body or bodies.DEFAULT_BODY
+    if req.get("body") != body:
+        db.set_request(conn, rid, body=body)
+    return body
+
+
+@contextmanager
+def on_body(sim: Simulator, body: str) -> Iterator[None]:
+    """Run the simulator on one body (sim/bodies) for one request, and put the last one back after."""
+    before = getattr(sim, "body", bodies.DEFAULT_BODY)
+    sim.body = body  # type: ignore[attr-defined]
+    try:
+        yield
+    finally:
+        sim.body = before  # type: ignore[attr-defined]
+
+
+def build_scener(settings: config.Settings, body: str | None = None) -> Scener:
     if settings.fake_llm:
         from .agents.fake import FakeScener
 
@@ -948,11 +1016,14 @@ def build_scener(settings: config.Settings) -> Scener:
 
     from .agents.scener import ClaudeScener
 
-    return ClaudeScener(anthropic.Anthropic(), settings.model)
+    return ClaudeScener(anthropic.Anthropic(), settings.model, body=body)
 
 
-def build_agents(settings: config.Settings, effort: str = "high") -> tuple[Writer, Editor, Critic]:
-    """The writer, editor and critic on settings.model (a request's mode and model, see modes.py)."""
+def build_agents(
+    settings: config.Settings, effort: str = "high", body: str | None = None,
+) -> tuple[Writer, Editor, Critic]:
+    """The writer, editor and critic on settings.model (a request's mode and model, see modes.py),
+    for one body (None: the Go1)."""
     if settings.fake_llm:
         from .agents.fake import FakeCritic, FakeEditor, FakeWriter
 
@@ -967,10 +1038,11 @@ def build_agents(settings: config.Settings, effort: str = "high") -> tuple[Write
     editor: Editor
     if settings.editor == "droid":
         droid_model = os.environ.get("REWARDSMITH_DROID_MODEL") or None
-        editor = DroidEditor(settings.artifacts_dir / "droid", model=droid_model)
+        editor = DroidEditor(settings.artifacts_dir / "droid", model=droid_model, body=body)
     else:
-        editor = ClaudeEditor(client, settings.model, effort)
-    return ClaudeWriter(client, settings.model, effort), editor, ClaudeCritic(client, settings.model, effort)
+        editor = ClaudeEditor(client, settings.model, effort, body=body)
+    return (ClaudeWriter(client, settings.model, effort, body=body), editor,
+            ClaudeCritic(client, settings.model, effort, body=body))
 
 
 def build_reader(settings: config.Settings) -> Any:
@@ -1014,7 +1086,7 @@ def build_ranker(settings: config.Settings) -> Ranker | None:
     return ClaudeRanker(anthropic.Anthropic(), settings.model)
 
 
-def build_coach(settings: config.Settings, req: dict[str, Any] | None = None) -> Coach | None:
+def build_coach(settings: config.Settings, req: dict[str, Any] | None = None, body: str | None = None) -> Coach | None:
     """The live coach for a request: its own choice ("off" or a model), else the worker's setting.
     Offline (fake LLM) any choice but "off" gets the fake coach."""
     model = (req or {}).get("coach") or settings.coach
@@ -1028,10 +1100,10 @@ def build_coach(settings: config.Settings, req: dict[str, Any] | None = None) ->
 
     from .agents.coach import ClaudeCoach
 
-    return ClaudeCoach(anthropic.Anthropic(), model)
+    return ClaudeCoach(anthropic.Anthropic(), model, body=body)
 
 
-def build_checker(settings: config.Settings) -> Checker:
+def build_checker(settings: config.Settings, body: str | None = None) -> Checker:
     if settings.fake_llm:
         from .agents.fake import FakeChecker
 
@@ -1040,7 +1112,7 @@ def build_checker(settings: config.Settings) -> Checker:
 
     from .agents.checker import ClaudeChecker
 
-    return ClaudeChecker(anthropic.Anthropic(), settings.model)
+    return ClaudeChecker(anthropic.Anthropic(), settings.model, body=body)
 
 
 def prewarm(sim: Simulator, settings: config.Settings) -> None:
@@ -1058,22 +1130,26 @@ def prewarm(sim: Simulator, settings: config.Settings) -> None:
 
 def run_turn(
     conn: sqlite3.Connection, settings: config.Settings, req: dict[str, Any], sim: Simulator, *,
-    ranker: Ranker | None = None, reader: Any = None,
+    ranker: Ranker | None = None, reader: Any = None, router: Any = None,
 ) -> Best | None:
-    """One request with its own mode and model: per-request agents, budget and coach."""
+    """One request with its own mode, model and body: per-request agents, budget and coach."""
     mode = modes.of(req)
     run_settings = modes.settings_for(settings, req)
-    writer, editor, critic = build_agents(run_settings, mode.effort)
     scene_settings = replace(settings, model=modes.scene_model(settings, req))
+    body = route_body(conn, scene_settings, req, router)
+    for shared in (ranker, reader):  # built once per worker: they name the robot in their prompts
+        if shared is not None:
+            shared.body = body
+    writer, editor, critic = build_agents(run_settings, mode.effort, body)
     req, follow_up = prepare_turn(conn, run_settings, req, reader)
     # Instant runs without the coach unless the request asked for one.
-    coach = build_coach(settings, req) if mode.coach or req.get("coach") else None
+    coach = build_coach(settings, req, body) if mode.coach or req.get("coach") else None
     db.log_event(conn, req["id"], "mode", describe_run(run_settings, req, coach))
-    with training_budget(sim, mode):
+    with training_budget(sim, mode), on_body(sim, body):
         return run_request(
             conn, run_settings, req, writer, editor, critic, sim,
             ranker=ranker if run_settings.halving else None,
-            checker=build_checker(scene_settings), scener=build_scener(scene_settings), coach=coach,
+            checker=build_checker(scene_settings, body), scener=build_scener(scene_settings, body), coach=coach,
             follow_up=follow_up,
         )
 
@@ -1088,6 +1164,7 @@ def main() -> None:
     _, _, _, sim = build(settings)
     ranker = build_ranker(settings)
     reader = build_reader(settings)
+    router = build_router(replace(settings, model=modes.SONNET))
     log.info(
         "worker up (fake_sim=%s, fake_llm=%s, editor=%s, coach=%s)",
         settings.fake_sim, settings.fake_llm, settings.editor, settings.coach,
@@ -1101,7 +1178,7 @@ def main() -> None:
             continue
         log.info("running %s: %s", req["id"], req["text"])
         try:
-            best = run_turn(conn, settings, req, sim, ranker=ranker, reader=reader)
+            best = run_turn(conn, settings, req, sim, ranker=ranker, reader=reader, router=router)
             db.set_request(conn, req["id"], status="done", control=None)  # a late pause has nothing left to pause
             db.log_event(conn, req["id"], "done", f"Finished, best score {best.score if best else 'n/a'}")
         except Paused:
@@ -1111,6 +1188,9 @@ def main() -> None:
         except Cancelled:
             log.info("request %s cancelled", req["id"])
             db.finish_cancelled(conn, req["id"])
+        except Refused as exc:
+            log.info("request %s refused: %s", req["id"], exc)
+            db.set_request(conn, req["id"], status="refused", control=None)
         except Exception as exc:
             log.exception("request %s failed", req["id"])
             db.fail_request(conn, req["id"], _describe(exc))
