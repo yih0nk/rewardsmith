@@ -6,7 +6,7 @@ from typing import Any
 from ..sim import scene
 from ..sim.base import RunResult
 from .base import Review
-from .checker import NO_FALL, SpecError, required_actions, requires_reach, validate_for_scene
+from .checker import NO_FALL, SpecError, core_intents, required_actions, requires_reach, validate_for_scene
 from .editor import unified_diff
 
 TEMPLATE = '''\
@@ -196,7 +196,10 @@ class FakeChecker:
                 {"metric": "target_fell", "op": "<=", "value": 0.1},
             ], request, scene)
         text = request.lower()
-        if "backward" in text:
+        if "pose" in core_intents(request):  # a stand on the hind legs, by default
+            core = [{"metric": "front_feet_off", "op": ">=", "value": 0.6},
+                    {"metric": "pitch_deg", "op": ">=", "value": 45.0}]
+        elif "backward" in text:
             core = [{"metric": "forward_velocity", "op": "<", "value": -0.3}]
         elif "spin" in text or "turn" in text:
             core = [{"metric": "abs_yaw_rate", "op": ">", "value": 1.0},

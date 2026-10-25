@@ -10,20 +10,10 @@ import mujoco
 import numpy as np
 
 from .go1 import Go1Env
+from .go1_spec import POSE_METRICS as METRICS  # noqa: F401  (what each metric means)
 
 OFF_FLOOR = 0.04  # m; a foot site higher than this is off the floor (standing, it is at 6.5 mm)
 ROUGH_EXTRA = 0.05  # m; rough ground has bumps up to 5 cm
-
-# name: meaning, for the checker, critic and docs. All are over the steps up to the first fall.
-METRICS = {
-    "front_feet_off": "fraction of the rollout with BOTH front feet off the floor (e.g. standing on the hind legs)",
-    "rear_feet_off": "fraction of the rollout with BOTH rear feet off the floor (e.g. a handstand on the front legs)",
-    "feet_off_mean": "mean number of feet off the floor, 0 to 4 (about 2 in a trot, 0 standing)",
-    "front_off_held_s": "longest unbroken stretch with both front feet off the floor, s",
-    "rear_off_held_s": "longest unbroken stretch with both rear feet off the floor, s",
-    "pitch_deg": "mean body pitch, degrees; positive = nose up (about 60 to 90 standing on the hind legs)",
-    "abs_roll_deg": "mean absolute body roll, degrees (0 level, 90 on its side)",
-}
 
 
 def counted(done: np.ndarray) -> int:

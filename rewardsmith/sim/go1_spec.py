@@ -39,6 +39,21 @@ FEATURES: tuple[Feature, ...] = (
     Feature("time", (), "seconds since the episode started"),
 )
 
+# Rollout pose metrics (sim/pose.py), for pose tasks: name -> (meaning, lowest sensible, highest).
+# All are over the rollout's steps up to the first fall.
+POSE_METRICS: dict[str, tuple[str, float, float]] = {
+    "front_feet_off": ("fraction of the rollout with BOTH front feet off the floor (e.g. standing on the hind legs)",
+                       0.0, 1.0),
+    "rear_feet_off": ("fraction of the rollout with BOTH rear feet off the floor (e.g. a handstand on the front legs)",
+                      0.0, 1.0),
+    "feet_off_mean": ("mean number of feet off the floor, 0 to 4 (about 2 in a trot, 0 standing)", 0.0, 4.0),
+    "front_off_held_s": ("longest unbroken stretch with both front feet off the floor, s", 0.0, 20.0),
+    "rear_off_held_s": ("longest unbroken stretch with both rear feet off the floor, s", 0.0, 20.0),
+    "pitch_deg": ("mean body pitch, degrees; positive = nose up (about 60 to 90 standing on the hind legs)",
+                  -90.0, 90.0),
+    "abs_roll_deg": ("mean absolute body roll, degrees (0 level, 90 on its side)", 0.0, 180.0),
+}
+
 # Per-object features: state[f"{name}_{suffix}"], and state[f"target_{suffix}"] for the target object.
 OBJECT_FEATURES: tuple[tuple[str, tuple[int, ...], str], ...] = (
     ("rel_pos", (3,), "object centre relative to the robot base, m, in the robot's heading frame: "
@@ -100,6 +115,10 @@ def describe(scene: SceneSpec = EMPTY) -> str:
     lines.append(
         "- action, prev_action (shape (12,)): the policy's joint offsets in [-1, 1]; the motor target is "
         "the standing pose + 0.5 rad * action, joint order as above"
+    )
+    lines.append(
+        "- Body pitch (nose up positive) is arcsin(-gravity[0]) and roll (left side up) is arcsin(-gravity[1]), "
+        "in radians; a foot is off the floor when its foot_contact is 0."
     )
     if scene.terrain == "rough":
         lines.append("- On rough ground, base_height and feet_height are world z, so they vary with the bumps (up to 5 cm).")

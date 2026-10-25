@@ -282,3 +282,48 @@ def test_checker_runs_while_the_writer_writes_and_settles_before_training(tmp_pa
     assert detail["success_spec"] == spec and sim.spec_at_training == spec
     kinds = [e["kind"] for e in detail["events"]]
     assert kinds.index("check") < kinds.index("train")  # still settled before anything trains
+
+
+# Pose and locomotion requests need a clause that measures what they name, scene or not.
+
+# What the checker wrote for "Make the robot dog stand on two legs" on the live pod: it passed
+# while the critic saw the robot rear up and drop back (mean tilt ~48 degrees).
+STAYS_PUT = [{"metric": "fell", "op": "<", "value": 0.5}, {"metric": "base_height", "op": ">", "value": 0.2},
+             {"metric": "abs_forward_velocity", "op": "<", "value": 0.3}]
+
+
+@pytest.mark.parametrize("request_text", [
+    "Make the robot dog stand on two legs", "stand on your hind legs", "lift a front paw",
+    "rear up and hold it for 2 seconds", "do a handstand",
+])
+def test_pose_requests_need_a_pose_clause(request_text):
+    with pytest.raises(checker.SpecError, match="pose"):
+        checker.validate_for_scene(STAYS_PUT, request_text, None)
+
+
+def test_a_pose_clause_satisfies_the_pose_rule():
+    spec = STAYS_PUT + [{"metric": "front_feet_off", "op": ">=", "value": 0.6},
+                        {"metric": "pitch_deg", "op": ">=", "value": 45}]
+    assert checker.validate_for_scene(spec, "Make the robot dog stand on two legs", None) == spec
+    assert {"front_feet_off", "front_off_held_s", "pitch_deg"} <= set(checker.METRICS)
+    assert "front_feet_off" in checker.SYSTEM
+
+
+@pytest.mark.parametrize("request_text, spec", [
+    ("walk forward", [{"metric": "upright", "op": ">", "value": 0.8}]),
+    ("spin in place", [{"metric": "abs_forward_velocity", "op": "<", "value": 0.3}]),
+])
+def test_locomotion_requests_need_their_velocity(request_text, spec):
+    with pytest.raises(checker.SpecError, match="needs a clause"):
+        checker.validate_for_scene(spec + [checker.NO_FALL], request_text, None)
+
+
+def test_unmeasurable_requests_may_check_only_that_it_stays_up():
+    assert checker.validate_for_scene([checker.NO_FALL], "do a little dance", None) == [checker.NO_FALL]
+
+
+def test_fake_checker_checks_the_pose():
+    from rewardsmith.agents.fake import FakeChecker
+
+    spec = FakeChecker().write_spec("stand on your hind legs")
+    assert {c["metric"] for c in spec} >= {"front_feet_off", "pitch_deg"}
