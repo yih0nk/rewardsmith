@@ -122,6 +122,9 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
   upright never count on their own: "stand on two legs" is not "didn't fall".
 - A code check must fail for a robot that just stands where it starts (unless standing still
   is the task): it is tested on one, and rejected if it passes.
+- Things that must happen together need code that tests them at the same step: "all four feet off
+  at once" (a hop or pronk) is jnp.all(traj["foot_contact"] < 0.5, axis=-1) per step, not front and
+  rear airtime measured separately, which an alternating bound also passes.
 - Measure over traj["valid"] steps only (jnp.where(traj["valid"] > 0, x, fallback)); for "for N
   seconds", count consecutive steps (a cumulative sum that resets, e.g. via jax.lax.associative_scan
   or a jnp.cumsum trick) and compare with N / 0.02. For order ("A then B"), compare the first step

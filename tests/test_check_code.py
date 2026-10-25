@@ -82,3 +82,34 @@ def test_trajectories_mask_after_the_first_fall_and_aggregate():
     assert traj["valid"].tolist() == [[1, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 0, 0, 0]]
     src = "import jax.numpy as jnp\ndef check(t):\n    return {'long': jnp.sum(t['valid']) > 3, 'n': jnp.sum(t['valid'])}\n"
     assert check_code.evaluate(src, traj) == {"check:long": pytest.approx(2 / 3), "check:n": pytest.approx(11 / 3)}
+
+
+def _gait(contacts, steps=100):
+    """An episode whose feet repeat the given contact patterns (rows of 4, FR FL RR RL)."""
+    pattern = np.array(contacts, dtype=np.float32)
+    feet = np.tile(pattern, (steps // len(pattern) + 1, 1))[:steps]
+    return {"foot_contact": feet[None], "valid": np.ones((1, steps), np.float32)}
+
+
+HOP = '''import jax.numpy as jnp
+
+def check(traj):
+    v = traj["valid"] > 0
+    flight = jnp.all(traj["foot_contact"] < 0.5, axis=-1) & v
+    takeoff = flight[1:] & ~flight[:-1]
+    return {"flight_frac": jnp.sum(flight) / jnp.maximum(jnp.sum(v), 1), "flights": jnp.sum(takeoff)}
+'''
+
+
+def test_a_hop_needs_all_four_feet_off_at_the_same_step():
+    # Live request 5b84e1b9 "hop with all four feet leaving the ground at the same time" got front feet off
+    # >= 0.25, rear feet off >= 0.25 and mean feet off >= 1.5: separate airtimes, which a bound passes.
+    bound = _gait([[0, 0, 1, 1], [1, 1, 0, 0]])  # front pair up, then rear pair up: never all four
+    pronk = _gait([[1, 1, 1, 1], [0, 0, 0, 0]])  # all four down, then all four up
+    front_off = (bound["foot_contact"][0, :, :2].max(axis=-1) == 0).mean()
+    rear_off = (bound["foot_contact"][0, :, 2:].max(axis=-1) == 0).mean()
+    feet_off_mean = (1 - bound["foot_contact"][0]).sum(axis=-1).mean()
+    assert front_off >= 0.25 and rear_off >= 0.25 and feet_off_mean >= 1.5  # the vocabulary check passes the bound
+    assert check_code.evaluate(HOP, bound)["check:flight_frac"] == 0.0
+    hop = check_code.evaluate(HOP, pronk)
+    assert hop["check:flight_frac"] == pytest.approx(0.5) and hop["check:flights"] == pytest.approx(50)
