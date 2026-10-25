@@ -675,6 +675,13 @@ button.round:hover .label {
 .check-criteria td.pass {
   color: var(--dp-color-emphasis);
 }
+/* A criterion kept out of the table (the single-run "fell" when a per-episode fall
+   rate is shown) still fails the check: say so under the table. */
+.check-note {
+  margin-top: var(--dp-spacing-inset);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-emphasis);
+}
 
 /* ---- Pause, resume and cancel ---- */
 .badge.paused,

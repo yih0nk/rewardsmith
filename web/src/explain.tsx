@@ -327,5 +327,6 @@ const joinAnd = (parts: string[]) =>
 
 export function successSentence(spec: SuccessClause[] | null | undefined) {
   if (!spec?.length) return null;
-  return `Pass = the robot ${joinAnd(spec.map(describeClause))}.`;
+  const { shown } = visibleClauses(spec);
+  return `Pass = the robot ${joinAnd(shown.map(describeClause))}.`;
 }
