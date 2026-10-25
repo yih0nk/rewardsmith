@@ -235,5 +235,5 @@ class FakeCoach:
         trend = "rising" if reward > before else "flat"
         top = max(terms, key=lambda k: abs(terms[k]), default=None)
         lead = f"; the biggest term is {top} ({terms[top]:.2f})" if top else ""
-        note = f"Episode reward {reward:.2f} and {trend} at {point.get('steps', 0):,} steps{lead}."
+        note = f"Episode reward {reward:.2f} and {trend}{lead}."
         return Observation(verdict="continue", note=note, diagnosis="Fake coach: nothing to change yet.")
