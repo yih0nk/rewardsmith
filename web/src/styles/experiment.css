@@ -246,10 +246,69 @@
 .metric dd {
   color: var(--dp-color-ink);
 }
-.evaluation > .subtle {
-  margin-top: var(--dp-spacing-row-compact);
+/* Claude's notes: who, a two-sentence lead, then the full text on request. */
+.critique {
+  padding-left: var(--dp-spacing-gutter);
+  border-left: var(--dp-border-hairline) solid var(--dp-color-ink);
 }
-/* A quoted statement with its attribution. */
+.critique-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-gutter);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.critique-flag {
+  padding: 0 var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-emphasis);
+  color: var(--dp-color-emphasis);
+}
+.critique-lead {
+  max-width: 80ch;
+  margin-top: var(--dp-spacing-inset);
+  color: var(--dp-color-emphasis);
+}
+.critique-full {
+  max-width: 80ch;
+  margin-top: var(--dp-spacing-inset);
+}
+.critique-full summary {
+  cursor: pointer;
+  color: var(--dp-color-ink);
+}
+.critique-full summary span {
+  margin-left: var(--dp-spacing-cell);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.critique-full p,
+.critique-full ul,
+.critique-full ol {
+  margin: var(--dp-spacing-inset) 0 0;
+}
+.critique-full ul,
+.critique-full ol {
+  padding-left: 3ch;
+}
+.critique-full li + li {
+  margin-top: 4px;
+}
+.critique-full strong {
+  color: var(--dp-color-emphasis);
+}
+.idea p {
+  max-width: 80ch;
+}
+.idea .sub-title {
+  margin-top: 0;
+}
+.critique code,
+.idea code {
+  color: var(--dp-color-emphasis);
+  overflow-wrap: anywhere;
+}
+/* A quoted statement with its attribution (the hall of fame's notes). */
 .critic {
   margin-top: var(--dp-spacing-row);
   padding-left: var(--dp-spacing-gutter);
