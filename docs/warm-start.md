@@ -1,8 +1,8 @@
 # Warm starts and checkpoints
 
 Every candidate used to learn to walk *and* its task from random weights in 10M
-steps. Now it starts from a pretrained Go1 walker, keeps Playground's gait terms
-under its own reward, and any training job can continue from any saved policy.
+steps. Now every candidate builds on a pretrained Go1 walker, in one of two ways,
+and any training job can continue from any saved policy.
 
 ## The pretrained walker
 
@@ -29,10 +29,31 @@ command, after a settling second:
 It writes `params.pkl` (final), `params_<steps>.pkl` per eval, `walker.json`
 (curve, tracking) and `walker.mp4` (a command tour). The weights stay on the pod.
 
-## How a candidate starts
+## How a candidate uses the walker (`REWARDSMITH_MODE`)
 
-`PlaygroundSimulator` starts every job from `REWARDSMITH_WALKER` (default
-`/workspace/pretrained/go1_walker/params.pkl`) when the file exists.
+With `REWARDSMITH_WALKER` present (default `/workspace/pretrained/go1_walker/params.pkl`):
+
+- **steer** (default): the policy steers the frozen walker. Its action is a
+  command target in [-1, 1]^3, scaled to Playground's command ranges (forward
+  1.5 m/s, sideways 0.8 m/s, turn 1.2 rad/s). The command eases 20% of the way
+  to the target each step (the walker learned commands held for seconds), the
+  policy observes it, and the walker's deterministic policy turns it into joint
+  targets (`go1.Go1Env._steer`). Exploration happens in command space, so every
+  random action is a real walk somewhere. The gait is the walker's: stock terms
+  are off and `describe()` tells the writer to reward outcomes, not gait.
+- **tune**: the policy *is* the walker's network, fine-tuned on the reward
+  under the stock gait terms (below). For poses the walker can't be commanded
+  into (stand on hind legs, sit, jump).
+- **off**: random weights, the reward alone. The old behavior, and what you
+  get with `REWARDSMITH_WARM_START=0` or no walker file.
+
+Why two modes: on the 4 Claude rewards of the live "move ball to a target"
+request, tune left every candidate standing still (ball reached in 0% of
+episodes; standing already scores well and the walker's small action noise
+never finds the ball), while cold training reached it in 28-100%. Steering
+explores by walking.
+
+### Tune mode details
 
 - **Observations.** Our env's observation is the joystick observation (command
   fixed at 0) plus scene features appended at the end (`Go1Env._scene_obs`).
@@ -52,8 +73,8 @@ It writes `params.pkl` (final), `params_<steps>.pkl` per eval, `walker.json`
   can override per term with a module-level `STOCK_TERMS = {"orientation": 0.0}`;
   `go1_spec.describe()` tells the writer all this.
 
-`REWARDSMITH_WARM_START=0` turns all of it off (random weights, no stock terms):
-the old behavior.
+A steer-mode checkpoint has a 3-action policy; continue it only in steer mode
+(and tune / off checkpoints only outside it).
 
 ## Checkpoints (interface for the live coach)
 
@@ -96,9 +117,10 @@ the checkpoint.
 
 | variable | default | |
 |---|---|---|
-| `REWARDSMITH_WARM_START` | 1 | start from the walker |
+| `REWARDSMITH_WARM_START` | 1 | build on the walker |
 | `REWARDSMITH_WALKER` | /workspace/pretrained/go1_walker/params.pkl | the walker checkpoint |
-| `REWARDSMITH_STOCK` | gait (off without a walker) | gait / pose / off |
+| `REWARDSMITH_MODE` | steer (off without a walker) | steer / tune / off |
+| `REWARDSMITH_STOCK` | gait | tune mode's stock profile: gait / pose / off |
 | `REWARDSMITH_STOCK_WEIGHT` | 1.0 | multiplier on the stock scales |
-| `REWARDSMITH_RESTORE_VALUE` | 1 | keep the checkpoint's value network |
+| `REWARDSMITH_RESTORE_VALUE` | 1 | tune mode keeps the checkpoint's value network |
 | `REWARDSMITH_STEPS` | the preset's | steps per candidate |
