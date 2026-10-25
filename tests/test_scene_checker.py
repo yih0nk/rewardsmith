@@ -231,3 +231,54 @@ def test_real_checker_can_return_a_concrete_push_plan(monkeypatch):
         return {"clauses": expected, "unsupported_reason": None}
     monkeypatch.setattr(checker, "ask_json", ask)
     assert checker.ClaudeChecker(None, "test").write_spec("push the box into the zone", scene) == expected
+
+
+def test_checker_runs_while_the_writer_writes_and_settles_before_training(tmp_path):
+    import threading
+    from dataclasses import replace
+
+    from rewardsmith import config, db
+    from rewardsmith.agents.fake import FakeCritic, FakeEditor, FakeWriter
+    from rewardsmith.orchestrator import run_request
+    from rewardsmith.sim.fake import FakeSimulator
+    from rewardsmith.sim import scene as scene_mod
+
+    writing = threading.Event()
+    spec = [{"metric": "target_reached", "op": ">=", "value": 0.8},
+            {"metric": "target_fell", "op": "<=", "value": 0.1}]
+
+    class SlowChecker:
+        def write_spec(self, request, scene=None):
+            # Run before the writer (scene -> checker -> writer, one after another), this times out.
+            if not writing.wait(timeout=5):
+                raise TimeoutError("the writer never started while the check was being written")
+            self.scene = scene
+            return spec
+
+    class WaitingWriter(FakeWriter):
+        def write(self, request, env_doc, k, **kw):
+            writing.set()
+            return super().write(request, env_doc, k, **kw)
+
+    class Recording(FakeSimulator):
+        def run_many(self, jobs, scene=None, cull=None):
+            self.spec_at_training = self.evaluation_spec
+            return super().run_many(jobs, scene, cull)
+
+    s = config.Settings(
+        db_path=tmp_path / "t.db", artifacts_dir=tmp_path / "artifacts", model="claude-opus-5-5",
+        env_name="Go1JoystickFlatTerrain", candidates_per_round=2, max_rounds=1, success_score=0,
+        fake_sim=True, fake_llm=True, min_rounds=1,
+    )
+    conn = db.connect(s.db_path)
+    box = scene_mod.parse({"objects": [{"name": "box", "kind": "box", "color": "blue", "size": [0.4, 0.4, 0.3],
+                                        "distance": [1.5, 3]}]})
+    rid = db.create_request(conn, "walk to the box", scene=box.to_dict())
+    checker_, sim = SlowChecker(), Recording()
+    run_request(conn, s, db.claim_next_request(conn), WaitingWriter(), FakeEditor(), FakeCritic(), sim,
+                checker=checker_)
+    detail = db.get_request(conn, rid)
+    assert detail["success_check_error"] is None and checker_.scene == box
+    assert detail["success_spec"] == spec and sim.spec_at_training == spec
+    kinds = [e["kind"] for e in detail["events"]]
+    assert kinds.index("check") < kinds.index("train")  # still settled before anything trains
