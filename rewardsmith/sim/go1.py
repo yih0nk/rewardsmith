@@ -4,6 +4,11 @@ Built on Playground's Go1 joystick env: same robot, observations, physics and
 termination. We replace its reward terms with the generated ones, and zero its
 velocity command (our behaviors don't track a joystick).
 
+Under the generated terms the env keeps Playground's tuned gait and stability
+terms (STOCK_SCALES), the ones the pretrained walker learned with, so a policy
+warm-started from it keeps walking like it while it learns the task. A reward
+module can rescale or drop them with a STOCK_TERMS dict (go1_spec.describe).
+
 With a scene (see scene.py), the env loads the compiled scene instead of the
 stock flat floor, places every object afresh at each reset, adds per-object
 features for the reward, and appends each object's relative position to the
@@ -31,7 +36,7 @@ from mujoco_playground._src.locomotion.go1 import joystick
 
 from . import scene_xml
 from . import warp_quiet  # noqa: F401  (silences warp's per-step solver warning)
-from .go1_spec import features_for
+from .go1_spec import STOCK_PREFIX, STOCK_PROFILES, STOCK_SCALES, STOCK_WEIGHT, features_for  # noqa: F401
 from .reward_slot import load_reward
 from .scene import EMPTY, SceneObject, SceneSpec
 
@@ -69,9 +74,11 @@ class Go1Env(joystick.Joystick):
         config: config_dict.ConfigDict,
         scene: SceneSpec = EMPTY,
         behavior_metrics: bool = False,
+        stock: Mapping[str, float] | None = None,
     ):
         self._reward_fn = reward_fn
         self._term_names = term_names
+        self._stock = tuple(stock or ())  # STOCK_SCALES names; their scales are in config
         self._scene = scene
         self._behavior_metrics = behavior_metrics
         if scene.is_empty:
@@ -324,9 +331,16 @@ class Go1Env(joystick.Joystick):
         return out
 
     def _get_reward(self, data, action, info, metrics, done, first_contact, contact):
-        del metrics, done, first_contact
         terms = self._reward_fn(self.features(data, info, contact), action, info["last_act"])
-        return {k: jnp.asarray(terms[k], dtype=jnp.float32).reshape(()) for k in self._term_names}
+        out = {k: jnp.asarray(terms[k], dtype=jnp.float32).reshape(()) for k in self._term_names}
+        if self._stock:
+            robot = data.replace(qpos=data.qpos[:ROBOT_NQ], qvel=data.qvel[:ROBOT_NV])
+            # A nonzero command opens the gates on the feet terms ("only while walking");
+            # every term read here ignores the command's value.
+            moving = {**info, "command": jnp.array([1.0, 0.0, 0.0])}
+            stock = super()._get_reward(robot, action, moving, metrics, done, first_contact, contact)
+            out.update({STOCK_PREFIX + k: stock[k] for k in self._stock})
+        return out
 
 
 def dummy_state(scene: SceneSpec = EMPTY) -> dict[str, jax.Array]:
@@ -364,15 +378,39 @@ def discover_terms(reward_fn: RewardFn, scene: SceneSpec = EMPTY) -> tuple[str, 
     return tuple(sorted(terms))
 
 
+def stock_scales(
+    reward_fn: RewardFn, profile: str | None = "gait", weight: float = STOCK_WEIGHT
+) -> dict[str, float]:
+    """The stock terms a reward trains with, and their scales.
+
+    profile picks the defaults (STOCK_PROFILES; None turns them all off), and the
+    reward module's own STOCK_TERMS = {"orientation": 0.0, ...} multipliers win.
+    Raises RewardError for a malformed STOCK_TERMS.
+    """
+    own = getattr(reward_fn, "__globals__", {}).get("STOCK_TERMS", {})
+    if not isinstance(own, Mapping) or not all(isinstance(k, str) and isinstance(v, (int, float)) for k, v in own.items()):
+        raise RewardError("STOCK_TERMS must be a dict of stock term name -> multiplier, e.g. {\"orientation\": 0.0}")
+    unknown = sorted(set(own) - set(STOCK_SCALES))
+    if unknown:
+        raise RewardError(f"STOCK_TERMS has unknown terms {unknown}; the stock terms are {sorted(STOCK_SCALES)}")
+    if profile is None:
+        return {}
+    defaults = STOCK_PROFILES[profile]
+    mult = {k: float(own.get(k, defaults.get(k, 1.0))) for k in STOCK_SCALES}
+    return {k: weight * STOCK_SCALES[k] * m for k, m in mult.items() if m != 0.0}
+
+
 def make_config(
     term_names: tuple[str, ...],
     impl: str = "jax",
     overrides: Mapping[str, Any] | None = None,
     scene: SceneSpec = EMPTY,
+    stock: Mapping[str, float] | None = None,
 ):
     config = registry.get_default_config(BASE_ENV)
     # Must happen before the env locks its config: scales are looked up by term name.
-    config.reward_config.scales = config_dict.ConfigDict({k: 1.0 for k in term_names})
+    scales = {k: 1.0 for k in term_names} | {STOCK_PREFIX + k: v for k, v in (stock or {}).items()}
+    config.reward_config.scales = config_dict.ConfigDict(scales)
     config.command_config.a = [0.0, 0.0, 0.0]  # no joystick command
     config.impl = impl
     if not scene.is_empty:
@@ -397,8 +435,14 @@ def make_env(
     overrides: Mapping[str, Any] | None = None,
     scene: SceneSpec | None = None,
     behavior_metrics: bool = False,
+    stock_profile: str | None = None,
+    stock_weight: float = STOCK_WEIGHT,
 ) -> Go1Env:
-    """Build a Go1 env from reward source code. Raises RewardError for bad rewards."""
+    """Build a Go1 env from reward source code. Raises RewardError for bad rewards.
+
+    stock_profile (a STOCK_PROFILES key) adds the stock gait terms under the reward's
+    own; None leaves the reward exactly as written.
+    """
     impl = impl or default_impl()
     scene = scene or EMPTY
     try:
@@ -406,5 +450,10 @@ def make_env(
     except Exception as exc:
         raise RewardError(f"{type(exc).__name__}: {exc}") from exc
     term_names = discover_terms(reward_fn, scene)
+    stock = stock_scales(reward_fn, stock_profile, stock_weight)
+    clash = sorted(k for k in term_names if k.startswith(STOCK_PREFIX))
+    if stock and clash:
+        raise RewardError(f"term names starting with {STOCK_PREFIX!r} are taken by the stock terms: rename {clash}")
     mjx_env.ensure_menagerie_exists()
-    return Go1Env(reward_fn, term_names, make_config(term_names, impl, overrides, scene), scene, behavior_metrics)
+    config = make_config(term_names, impl, overrides, scene, stock)
+    return Go1Env(reward_fn, term_names, config, scene, behavior_metrics, stock)
