@@ -1,6 +1,14 @@
 import { FormEvent, ReactNode, RefObject, useState } from "react";
 
-const EXAMPLES = ["Walk backwards", "Spin in place", "Walk to the red ball"];
+// Prompts that have trained well on the pod (8/10 runs), so a live click doesn't flop.
+const EXAMPLES = [
+  { label: "Walk sideways", prompt: "walk sideways to the left" },
+  { label: "Trot fast", prompt: "trot forward as fast as you can without falling" },
+  {
+    label: "Hop",
+    prompt: "hop with all four feet leaving the ground at the same time",
+  },
+];
 
 // The message box, pinned to the bottom of the pane. It starts a new task, or, at the
 // bottom of a task, sends a follow-up. `controls` holds the per-message options
@@ -17,9 +25,10 @@ export default function Composer({
   controls,
   context,
   inputId = "behavior",
-  placeholder = "Make the robot dog walk backwards…",
+  placeholder = "What should the robot learn?",
   submitLabel = "Start training",
   allowEmpty = false,
+  compact = false,
 }: {
   label: string;
   inputRef: RefObject<HTMLInputElement>;
@@ -36,6 +45,8 @@ export default function Composer({
   submitLabel?: string;
   // A follow-up may be empty: it means "keep going".
   allowEmpty?: boolean;
+  // One line until focused: the label, context and options open with the box.
+  compact?: boolean;
 }) {
   const [hint, setHint] = useState("");
   function submit(event: FormEvent) {
@@ -53,33 +64,36 @@ export default function Composer({
   }
   const message = error || hint;
   return (
-    <form className="composer composer-dock" onSubmit={submit}>
-      <label htmlFor={inputId} className="composer-label">
+    <form
+      className={`composer composer-dock ${compact && !message ? "compact" : ""}`}
+      onSubmit={submit}
+    >
+      {/* The placeholder asks the question; the label stays for screen readers. */}
+      <label htmlFor={inputId} className="composer-label sr-only">
         {label}
       </label>
-      {context && <div className="composer-context">{context}</div>}
-      <div className="composer-row">
-        <span className="prompt" aria-hidden="true">
-          &gt;
-        </span>
-        <input
-          id={inputId}
-          ref={inputRef}
-          value={text}
-          onChange={(event) => {
-            onText(event.target.value);
-            setHint("");
-          }}
-          maxLength={300}
-          placeholder={placeholder}
-          aria-describedby={`${inputId}-help`}
-          autoComplete="off"
-        />
-        <button className="primary" disabled={busy}>
-          {busy ? "Starting…" : submitLabel}
-        </button>
+      <div className="composer-card">
+        {context && <div className="composer-context">{context}</div>}
+        <div className="composer-row">
+          <input
+            id={inputId}
+            ref={inputRef}
+            value={text}
+            onChange={(event) => {
+              onText(event.target.value);
+              setHint("");
+            }}
+            maxLength={300}
+            placeholder={placeholder}
+            aria-describedby={`${inputId}-help`}
+            autoComplete="off"
+          />
+          <button className="primary" disabled={busy}>
+            {busy ? "Starting…" : submitLabel}
+          </button>
+        </div>
+        {controls && <div className="composer-controls">{controls}</div>}
       </div>
-      {controls && <div className="composer-controls">{controls}</div>}
       <p
         className="composer-help error-text"
         id={`${inputId}-help`}
@@ -89,23 +103,25 @@ export default function Composer({
         {message}
       </p>
       {examples && (
-        <div className="suggestions">
-          <span className="label">Examples, click to use</span>
-          {EXAMPLES.map((example) => (
-            <button
-              type="button"
-              className="link"
-              key={example}
-              onClick={() => {
-                onText(`Make the robot dog ${example.toLowerCase()}`);
-                setHint("");
-                inputRef.current?.focus();
-              }}
-            >
-              {example}
-            </button>
+        <p className="suggestions">
+          <span className="label">Try</span>{" "}
+          {EXAMPLES.map((example, i) => (
+            <span key={example.label}>
+              {i > 0 && <span aria-hidden="true"> · </span>}
+              <button
+                type="button"
+                className="example"
+                onClick={() => {
+                  onText(example.prompt);
+                  setHint("");
+                  inputRef.current?.focus();
+                }}
+              >
+                {example.label.toLowerCase()}
+              </button>
+            </span>
           ))}
-        </div>
+        </p>
       )}
     </form>
   );

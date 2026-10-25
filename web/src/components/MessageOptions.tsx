@@ -1,9 +1,9 @@
 import { MessageOptions as Options } from "../api";
 import { MODES, MODE_MODEL, modelLabel } from "../modes";
 
-// The composer's per-message controls: Instant / Effort, and the Claude model that
-// writes, revises and judges the rewards. Switching mode moves the model to that
-// mode's default unless the user picked one for this message.
+// The composer's per-message controls: an Effort switch (off = Instant), and the
+// Claude model that writes, revises and judges the rewards. Switching mode moves the
+// model to that mode's default unless the user picked one for this message.
 export default function MessageOptions({
   value,
   onChange,
@@ -15,29 +15,31 @@ export default function MessageOptions({
   models: string[];
   idPrefix: string;
 }) {
+  const effort = value.mode === "effort";
   const hint = MODES.find((m) => m.id === value.mode)?.hint;
+  const next = effort ? "instant" : "effort";
   return (
     <div className="message-options">
-      <div className="mode-toggle" role="radiogroup" aria-label="Mode" aria-describedby={`${idPrefix}-mode-hint`}>
-        {MODES.map((m) => (
-          <button
-            type="button"
-            key={m.id}
-            role="radio"
-            aria-checked={value.mode === m.id}
-            className={`mode-option ${value.mode === m.id ? "on" : ""}`}
-            onClick={() =>
-              onChange({
-                ...value,
-                mode: m.id,
-                model: value.picked ? value.model : MODE_MODEL[m.id],
-              })
-            }
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={effort}
+        aria-describedby={`${idPrefix}-mode-hint`}
+        className="toggle"
+        onClick={() =>
+          onChange({
+            ...value,
+            mode: next,
+            model: value.picked ? value.model : MODE_MODEL[next],
+          })
+        }
+      >
+        <span className="toggle-track" aria-hidden="true" />
+        Effort
+      </button>
+      <span className="mode-hint subtle" id={`${idPrefix}-mode-hint`}>
+        {hint}
+      </span>
       <label className="model-pick">
         <span className="label">Model</span>
         <select
@@ -51,9 +53,6 @@ export default function MessageOptions({
           ))}
         </select>
       </label>
-      <span className="mode-hint subtle" id={`${idPrefix}-mode-hint`}>
-        {hint}
-      </span>
     </div>
   );
 }

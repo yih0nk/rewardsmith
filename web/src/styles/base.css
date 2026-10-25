@@ -1,26 +1,27 @@
-/* Terminal: a black page in green IBM Plex Mono, laid out as commands and their output. */
+/* Lab notebook: a warm dark page, cream Courier Prime for reading, VT323 (a CRT
+   terminal face) for headings, numbers and labels, lime green only for actions. */
 
-/* "TerminalPlex" is the one face. It binds to an installed IBM Plex Mono first,
-   then to the Google Fonts copy loaded in index.html. */
+/* VT323 sits small next to Courier Prime: "Readout" is the same file scaled up so
+   one font-size works for both. Courier Prime is loaded in index.html. */
 @font-face {
-  font-family: "TerminalPlex";
+  font-family: "Readout";
   font-weight: 400;
-  src: local("IBM Plex Mono"), local("IBMPlexMono");
-}
-@font-face {
-  font-family: "TerminalPlex";
-  font-weight: 500;
-  src: local("IBM Plex Mono Medium"), local("IBMPlexMono-Medium");
+  font-display: swap;
+  size-adjust: 128%;
+  src: url(https://fonts.gstatic.com/s/vt323/v18/pxiKyp0ihIEF2isfFJXUdVNF.woff2)
+    format("woff2");
 }
 
 :root {
-  --dp-color-ground: #000000;
-  --dp-color-ink: #66ff66;
-  --dp-color-ink-muted: #58ca58;
-  --dp-color-rule: #255325;
-  --dp-color-emphasis: #ffffff;
-  --dp-typography-face: "TerminalPlex", "IBM Plex Mono", ui-monospace, Menlo,
-    monospace;
+  --dp-color-ground: #15140f;
+  --dp-color-surface: #1e1c16;
+  --dp-color-ink: #b6e36b;
+  --dp-color-ink-muted: #9c9584;
+  --dp-color-rule: #34312a;
+  --dp-color-text: #ece6d6;
+  --dp-color-emphasis: #fffaf0;
+  --dp-typography-face: "Courier Prime", ui-monospace, Menlo, monospace;
+  --dp-typography-readout: "Readout", "VT323", ui-monospace, monospace;
   --dp-typography-body: 18px;
   --dp-typography-label: 16px;
   --dp-typography-heading: 24px;
@@ -39,7 +40,7 @@
   --dp-spacing-row: 27px;
   --dp-spacing-section-compact: 36px;
   --dp-spacing-section: 54px;
-  --dp-radius-control: 0;
+  --dp-radius-control: 6px;
   --dp-border-hairline: 1px;
   --dp-motion-cursor: 1.2s;
 
@@ -51,7 +52,7 @@
   font-size: var(--dp-typography-body);
   font-weight: 400;
   line-height: var(--dp-typography-body-leading);
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
   background: var(--dp-color-ground);
   font-synthesis: none;
   font-variant-ligatures: none;
@@ -79,6 +80,15 @@ button {
 button:disabled {
   cursor: default;
 }
+/* Rounded corners are for controls; full-width rows and inline text buttons stay square. */
+.conversation,
+.round,
+.candidate-select,
+.explain-term,
+.link,
+.nav-link {
+  border-radius: 0;
+}
 a {
   color: inherit;
 }
@@ -103,7 +113,50 @@ dd {
 h1,
 h2,
 h3 {
-  font-weight: 500;
+  font-weight: 400;
+}
+/* The readout face: headings, numbers, labels, tags and controls. Reading text
+   (prompts, notes, ideas, inputs) stays in Courier Prime. */
+h1,
+h2,
+h3,
+.wordmark,
+.num,
+.label,
+.eyebrow,
+.subtle,
+.mode,
+.primary,
+.control,
+.refine,
+.badge,
+.tag,
+.now-tag,
+.step,
+.steps-round,
+.who,
+.exp-id,
+.winner-tag,
+.score,
+.track,
+.meter,
+.lane-bar,
+.score-bar,
+.details-title,
+.technical summary,
+.check-criteria th,
+.check-criteria td,
+.log,
+.conversation-meta,
+.timers,
+.mode-hint,
+.model-pick,
+.toggle,
+.showcase-title,
+.stage-foot,
+.critique-who,
+.turn-meta {
+  font-family: var(--dp-typography-readout);
 }
 strong,
 b {

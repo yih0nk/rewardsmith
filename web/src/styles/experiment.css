@@ -42,6 +42,10 @@
   color: var(--dp-color-ink-muted);
 }
 
+.turn-loading {
+  margin-top: var(--dp-spacing-row-compact);
+}
+
 /* ---- Stage: the rollout and its reward curve, with the evaluation beside ---- */
 .stage-title {
   color: var(--dp-color-emphasis);
@@ -72,6 +76,7 @@
   min-width: 0;
 }
 .well {
+  border-radius: 10px;
   position: relative;
   display: grid;
   place-items: center;
@@ -87,6 +92,13 @@
   height: 100%;
   object-fit: contain;
   background: var(--dp-color-ground);
+}
+/* Over the video until its first frame: the video sits hidden under it. */
+.well video:not(.ready) {
+  visibility: hidden;
+}
+.video-wait {
+  position: relative;
 }
 .well-empty {
   display: grid;
@@ -175,7 +187,7 @@
 }
 .curve-y {
   position: absolute;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dp-color-ink-muted);
 }
 /* Curves mostly rise, so the top-left and bottom-right corners are free. */
@@ -191,7 +203,7 @@
   display: flex;
   justify-content: space-between;
   margin-top: 4px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dp-color-ink-muted);
 }
 .curve.empty .curve-plot {
@@ -272,7 +284,7 @@
   color: var(--dp-color-ink-muted);
 }
 .metric dd {
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 /* Claude's notes: who, a two-sentence lead, then the full text on request. */
 .critique {
@@ -303,7 +315,7 @@
 }
 .critique-full summary {
   cursor: pointer;
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 .critique-full summary span {
   margin-left: var(--dp-spacing-cell);
@@ -385,7 +397,7 @@
   border: 0;
   border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
   background: none;
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
   text-align: left;
   line-height: var(--dp-typography-list-leading);
 }
@@ -455,7 +467,7 @@ button.round:hover .label {
   color: var(--dp-color-ink-muted);
 }
 .round.pending strong {
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
   font-weight: 400;
   overflow-wrap: anywhere;
 }
@@ -591,7 +603,7 @@ button.round:hover .label {
   border-left: var(--dp-border-hairline) solid var(--dp-color-rule);
   font-size: var(--dp-typography-label);
   line-height: var(--dp-typography-list-leading);
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
   overflow-x: auto;
   tab-size: 4;
 }
@@ -672,7 +684,7 @@ button.round:hover .label {
   min-width: 18ch;
   max-width: 40ch;
   font-weight: 400;
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 .check-criteria thead th {
   color: var(--dp-color-ink-muted);

@@ -1,6 +1,8 @@
 /* Run status: what is happening now, the timers, the step strip and the
    per-candidate lanes. Then the success check sentence and the no-result panel. */
 .run-status-panel {
+  border-radius: 10px;
+  background: var(--dp-color-surface);
   margin-top: var(--dp-spacing-row-compact);
   padding: var(--dp-spacing-row-compact) var(--dp-spacing-gutter);
   border: var(--dp-border-hairline) solid var(--dp-color-ink);
@@ -82,7 +84,7 @@
 }
 .step.done {
   border-color: var(--dp-color-ink-muted);
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 .step.current {
   border-color: var(--dp-color-ink);
@@ -104,7 +106,7 @@
   color: var(--dp-color-ink-muted);
 }
 .steps-note strong {
-  color: var(--dp-color-ink);
+  color: var(--dp-color-text);
 }
 /* Two lanes per row on wide screens, so four candidates take two lines. */
 .lanes {
@@ -158,6 +160,12 @@
 }
 .result {
   scroll-margin-top: var(--dp-spacing-inset);
+}
+/* Stacked (phones, narrow panes): the result comes before the status card. */
+@container (max-width: 819px) {
+  .run-grid > .result {
+    order: -1;
+  }
 }
 .result > .cmd-title {
   justify-content: flex-start;
@@ -243,6 +251,29 @@
   .run-side .success-spec {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* Finished: the video is the hero, full width, and the status is one strip under it. */
+  .run-grid.settled {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "result" "side";
+    row-gap: var(--dp-spacing-row);
+  }
+  .run-grid.settled .now {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .run-grid.settled .now-label {
+    margin-top: 0;
+  }
+  .run-grid.settled .timers {
+    grid-column: auto;
+    margin-top: 0;
+  }
+  .run-grid.settled .timers div {
+    justify-items: end;
+  }
+}
+/* The hero video stays above the fold: no taller than 60% of the screen. */
+.run-grid.settled .stage {
+  max-width: min(100%, calc(60vh * 16 / 9));
 }
 .result-who {
   display: inline-flex;
@@ -283,6 +314,7 @@
 
 /* A finished run with no robot: what happened and what to do. */
 .run-problem {
+  border-radius: 10px;
   display: grid;
   gap: var(--dp-spacing-inset);
   justify-items: start;
