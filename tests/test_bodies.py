@@ -66,6 +66,10 @@ def test_simulator_takes_a_body(monkeypatch):
         PlaygroundSimulator(preset="smoke", body="hexapod")
     with pytest.raises(ValueError, match="unknown body"):
         sim.set_body("hexapod")
+    sim.body = "go1"
+    assert sim.body == "go1"
+    with pytest.raises(ValueError, match="unknown body"):
+        sim.body = "hexapod"
 
 
 def test_the_registry_imports_without_jax():

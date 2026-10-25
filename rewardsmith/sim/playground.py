@@ -86,9 +86,9 @@ class PlaygroundSimulator:
         tune_noise: float | None = None,
         body: str | None = None,
     ):
-        self.body = get_body(body or os.environ.get("REWARDSMITH_BODY") or DEFAULT_BODY).name
-        if env_name is not None and env_name != get_body(self.body).base_env:
-            raise ValueError(f"the {self.body} body builds on {get_body(self.body).base_env}, not {env_name}")
+        self._body = get_body(body or os.environ.get("REWARDSMITH_BODY") or DEFAULT_BODY).name
+        if env_name is not None and env_name != get_body(self._body).base_env:
+            raise ValueError(f"the {self._body} body builds on {get_body(self._body).base_env}, not {env_name}")
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
@@ -253,10 +253,20 @@ class PlaygroundSimulator:
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
         self.evaluation_spec = spec
 
+    @property
+    def body(self) -> str:
+        """The robot every call trains, gates and describes (a bodies.BODIES key)."""
+        return self._body
+
+    @body.setter
+    def body(self, name: str | None) -> None:
+        self.set_body(name)
+
     def set_body(self, name: str | None) -> None:
         """Train the next request on this body (None: the default). Its walker replaces the
-        current one unless a walker was given explicitly; call before plan_request."""
-        self.body = get_body(name or os.environ.get("REWARDSMITH_BODY") or DEFAULT_BODY).name
+        current one unless a walker was given explicitly; call before plan_request.
+        `sim.body = name` does the same."""
+        self._body = get_body(name or os.environ.get("REWARDSMITH_BODY") or DEFAULT_BODY).name
         if self._auto_walker:
             self.walker = default_walker(self.body)
         self.mode = (self._mode_arg or os.environ.get("REWARDSMITH_MODE") or "steer") if self.walker else "off"
