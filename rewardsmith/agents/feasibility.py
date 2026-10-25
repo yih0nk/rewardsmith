@@ -49,7 +49,7 @@ APPROXIMATE: tuple[tuple[str, str], ...] = (
 def classify(request: str) -> dict[str, Any]:
     for pattern, reason, suggestion in REFUSE:
         if re.search(pattern, request, re.I):
-            return {"verdict": "refuse", "reason": f"Can't train this: {reason}.", "simplification": "",
+            return {"verdict": "refuse", "reason": reason[0].upper() + reason[1:] + ".", "simplification": "",
                     "suggestion": suggestion}
     for pattern, simplification in APPROXIMATE:
         if re.search(pattern, request, re.I):
