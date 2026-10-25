@@ -104,6 +104,35 @@ def test_modes_pick_how_the_env_uses_the_walker(monkeypatch, tmp_path):
     assert pushing.mode == "steer"
 
 
+def test_a_run_from_a_checkpoint_resets_its_exploration_noise(monkeypatch, tmp_path):
+    from rewardsmith.sim import evaluation, go1, playground, train
+    from rewardsmith.sim.train import CurvePoint, TrainResult
+
+    walker = tmp_path / "params.pkl"
+    walker.write_bytes(b"")
+    monkeypatch.setenv("REWARDSMITH_WALKER", str(walker))
+    monkeypatch.delenv("REWARDSMITH_MODE", raising=False)
+    monkeypatch.delenv("REWARDSMITH_CONTINUE_NOISE", raising=False)
+    monkeypatch.delenv("REWARDSMITH_TUNE_NOISE", raising=False)
+    seen = []
+    monkeypatch.setattr(go1, "make_env", lambda *a, **k: object())
+    monkeypatch.setattr(train, "train", lambda *a, **k: seen.append(k["init_noise"]) or TrainResult(
+        None, None, [CurvePoint(0, 0.0, 1.0, {})]))
+    monkeypatch.setattr(evaluation, "evaluate", lambda *a, **k: (None, [], {}, {}))
+
+    steer = PlaygroundSimulator(preset="smoke")
+    parent = tmp_path / "params_4000000.pkl"
+    steer.run(WALK_BACKWARDS, tmp_path / "fresh")  # a fresh steer policy keeps brax's own init
+    steer.run(WALK_BACKWARDS, tmp_path / "cont", init_params=parent, steps=4_000_000)
+    tune = PlaygroundSimulator(preset="smoke", mode="tune")
+    tune.run(WALK_BACKWARDS, tmp_path / "walker")  # tune starts from the walker
+    tune.run(WALK_BACKWARDS, tmp_path / "tcont", init_params=parent)
+    assert seen == [None, playground.CONTINUE_NOISE, playground.TUNE_NOISE, playground.TUNE_NOISE]
+    assert playground.CONTINUE_NOISE == 0.6
+    assert PlaygroundSimulator(preset="smoke", continue_noise=0).start_noise(parent) is None  # 0 keeps its own
+    assert steer.sim_options()["continue_noise"] == 0.6  # training children get it too
+
+
 def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
     from rewardsmith.sim import gate, parallel
 
