@@ -50,7 +50,7 @@ The live prompt (`LIVE_PROMPT` below) is whatever passed its two morning rehears
 
 ### 2:20 – 2:45 · Why it's different
 
-> Eureka showed that LLMs can write rewards, but a human still writes each task's environment and success measure, and the search takes hours. Language-to-Rewards fills in a fixed reward template for a controller. Generalist models like RT-2 and π0 need huge demonstration datasets. Rewardsmith writes the scene, the test and the reward, checks its own work against that test, and gives you a policy file in minutes. It also tells you no: ask it to pick up a ball with its mouth and it explains that a Go1 has no mouth.
+> Eureka showed that LLMs can write rewards, but a human still writes each task's environment and success measure, and its search runs many full trainings. Language-to-Rewards fills in a fixed reward template for a controller. Generalist models like RT-2 and π0 need huge demonstration datasets. Rewardsmith writes the scene, the test and the reward, checks its own work against that test, and hands you a trained policy in minutes. It also tells you no: ask it to pick up a ball with its mouth and it explains that a Go1 has no mouth.
 
 ### 2:45 – 3:00 · Close
 
@@ -67,6 +67,6 @@ The live prompt (`LIVE_PROMPT` below) is whatever passed its two morning rehears
 
 - **The live run won't finish inside 3:00** if you start it at 0:40, because Instant measured 2m 23s to 2m 34s end to end. That's fine. The close works either way, and the result is ready by the first Q&A answer. Don't stall waiting for it.
 - **Say numbers exactly as written.** Every one is sourced in `qa.md` § Numbers. If you blank, say "most" and keep going rather than guessing.
-- **The refusal line in 2:20–2:45 depends on #48.** If #48 isn't merged and deployed, cut it ("...gives you a policy file in minutes.") and save the refusal for Q&A as roadmap.
+- **The refusal line in 2:20–2:45 depends on #48.** If #48 isn't merged and deployed, cut it ("...hands you a trained policy in minutes.") and save the refusal for Q&A as roadmap.
 - **The 78% → 100% follow-up number was measured on the chat-runs test server, not the live board.** On the live board, two "stop the ball inside the goal" follow-ups on 9d26b109 made it worse: it overshot the goal in 72–88% of episodes. If this morning's golden follow-up didn't improve, drop the "78% to 100%" sentence and say: "The follow-up continues from the trained policy instead of starting over." Never show a follow-up that got worse.
 - **If a judge interrupts,** answer and skip ahead to "Why it's different". The close matters more than the numbers.
