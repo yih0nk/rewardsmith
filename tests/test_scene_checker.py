@@ -327,3 +327,17 @@ def test_fake_checker_checks_the_pose():
 
     spec = FakeChecker().write_spec("stand on your hind legs")
     assert {c["metric"] for c in spec} >= {"front_feet_off", "pitch_deg"}
+
+
+def test_a_scene_check_keeps_one_fall_criterion():
+    # Request 6d9cfe59's check had both: 37.5% of episodes fell while "fell" (one video) was 0.
+    scene = parse({"objects": [
+        {"name": "ball", "kind": "ball", "size": [0.15], "distance": [1, 1.5], "movable": True, "mass": 0.4},
+        {"name": "goal", "kind": "zone", "size": [0.5], "distance": [2.5, 3]},
+    ], "target": "ball"})
+    both = [{"metric": "all:reach:ball&push:ball:goal", "op": ">=", "value": 0.8},
+            {"metric": "scene_fell", "op": "<=", "value": 0.1}, checker.NO_FALL]
+    spec = checker.validate_for_scene(both, "make robot move ball to a target destination", scene)
+    assert [c["metric"] for c in spec] == ["all:reach:ball&push:ball:goal", "scene_fell"]
+    # Without an episode fall bound, the video's fall clause stays.
+    assert checker.validate_for_scene([checker.NO_FALL], "do a little dance", None) == [checker.NO_FALL]

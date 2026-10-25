@@ -57,7 +57,9 @@ Write 1 to {MAX_CLAUSES} clauses, each "metric op value" with op "<", ">", "<=" 
 - Use the abs_ metrics when the request does not say which way.
 - Add a clause against the obvious way to fake it (for example spinning in place:
   abs_forward_velocity < 0.3), but don't demand more than the user asked for.
-- Include fell < 0.5 unless the request is to fall or flip.
+- Include fell < 0.5 unless the request is to fall or flip. With a scene, use only
+  scene_fell (or target_fell) instead: those count falls over the same fresh episodes as the
+  task, and a second fall clause on the one video only disagrees with them.
 - For reaching a fixed object or entering a zone, require target_reached >= 0.8 and
   target_fell <= 0.1 by default (adjust only if the request explicitly demands otherwise).
   These are rates across fresh episodes. Do not require continued forward speed:
@@ -236,10 +238,17 @@ def _kinds(metric: str, scene: SceneSpec) -> set[str]:
     return kinds
 
 
+EPISODE_FALLS = frozenset({"scene_fell", "target_fell"})
+
+
 def validate_for_scene(clauses: Any, request: str, scene: SceneSpec | None) -> list[dict[str, Any]]:
-    """Require concrete, scene-valid outcomes and same-episode/order constraints."""
+    """Require concrete, scene-valid outcomes and same-episode/order constraints.
+    With a fall bound over the evaluation episodes, a `fell` clause on the single video
+    rollout is dropped: two fall criteria disagree on the board (37% vs 0)."""
     scene = scene or EMPTY
     spec = validate(clauses, scene)
+    if any(c["metric"] in EPISODE_FALLS for c in spec):
+        spec = [c for c in spec if c["metric"] != "fell"]
     target = scene.target_object
     if any(c["metric"] in TARGET_METRICS for c in spec) and (target is None or target.movable):
         raise SpecError("target metrics require a fixed scene target; use named outcomes for movable objects")
