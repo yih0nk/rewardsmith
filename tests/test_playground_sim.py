@@ -97,3 +97,29 @@ def test_modes_pick_how_the_env_uses_the_walker(monkeypatch, tmp_path):
     assert tune.env_options == {"stock_profile": "pose", "stock_weight": 1.0}
     assert "stock_" in tune.describe()
     assert "steers a pretrained walker" in PlaygroundSimulator(preset="smoke").describe()
+
+
+def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
+    from rewardsmith.sim import gate, parallel
+
+    in_worker = []
+    monkeypatch.setattr(gate, "check_reward", lambda source, impl=None, scene=None, env_options=None: in_worker.append(source))
+    sim = PlaygroundSimulator(preset="smoke")
+    sim._pool = parallel.WarmPool(1, fake=True)
+    try:
+        assert "SyntaxError" in sim.gate("def reward(:")  # answered by the warm (fake) child
+        assert sim.gate(WALK_BACKWARDS) is None
+        assert in_worker == []
+        taken = sim._pool.take(WALK_BACKWARDS)
+        assert taken.gated == WALK_BACKWARDS
+        taken.kill()
+    finally:
+        sim.close_warm_pool()
+
+    sim._pool = parallel.WarmPool(1, fake=True)
+    try:
+        sim._pool.procs[0].proc.kill()
+        assert sim.gate(WALK_BACKWARDS) is None  # the dead child is dropped; the worker gates it
+        assert in_worker == [WALK_BACKWARDS]
+    finally:
+        sim.close_warm_pool()
