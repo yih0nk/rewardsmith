@@ -48,11 +48,11 @@ class Mode:
 MODES = {
     INSTANT: Mode(
         INSTANT, model=SONNET, effort="medium", scene_model=SONNET,
-        k=1, min_rounds=1, max_rounds=1, steps=3_000_000, continue_steps=2_000_000, coach=False, robustness=False,
+        k=1, min_rounds=1, max_rounds=1, steps=3_000_000, continue_steps=4_000_000, coach=False, robustness=False,
     ),
     EFFORT: Mode(
         EFFORT, model=OPUS, effort="medium", scene_model=SONNET,
-        k=4, min_rounds=1, max_rounds=1, steps=5_000_000, continue_steps=2_000_000, coach=True, robustness=False,
+        k=4, min_rounds=1, max_rounds=1, steps=5_000_000, continue_steps=4_000_000, coach=True, robustness=False,
     ),
 }
 

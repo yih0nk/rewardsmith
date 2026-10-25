@@ -260,6 +260,20 @@ def test_follow_up_trains_from_the_targets_weights_when_the_engine_can(tmp_path,
     assert all(len(job) == 2 for job in sim.jobs[1])  # later rounds use the simulator's default start
 
 
+def test_an_instant_follow_up_trains_on_for_the_modes_continue_budget(tmp_path):
+    s = _settings(tmp_path)
+    conn = db.connect(s.db_path)
+    rid = _first_turn(conn, s)
+    target = db.scored_candidates(conn, rid)[0]
+    ckpt = s.artifacts_dir / rid / f"r{target['round_n']}c{target['idx']}" / "params_3276800.pkl"
+    ckpt.write_bytes(b"")
+    db.add_turn(conn, rid, "keep going", target["id"], mode=modes.INSTANT)
+    sim = RecordingSim()
+    run_turn(conn, s, db.claim_next_request(conn), sim)
+    # 4M steps on from the parent's policy, above Instant's 3M cap for a fresh run.
+    assert [job[2] for job in sim.jobs[0]] == [{"init_params": str(ckpt), "steps": 4_000_000}]
+
+
 def test_run_turn_applies_the_mode(tmp_path):
     s = _settings(tmp_path, candidates_per_round=3, max_rounds=3, min_rounds=2)
     conn = db.connect(s.db_path)
@@ -276,7 +290,7 @@ def test_settings_for_each_mode():
                         halving=(8, 4))
     effort = modes.settings_for(s, {"mode": "effort"})
     assert (effort.candidates_per_round, effort.min_rounds, effort.max_rounds, effort.model) == (4, 1, 1, modes.OPUS)
-    assert (effort.max_steps, effort.continue_steps) == (5_000_000, 2_000_000)
+    assert (effort.max_steps, effort.continue_steps) == (5_000_000, 4_000_000)
     assert modes.settings_for(s, {"mode": "effort", "model": modes.SONNET}).model == modes.SONNET
     instant = modes.settings_for(s, {"mode": "instant"})
     assert (instant.candidates_per_round, instant.max_rounds, instant.min_rounds, instant.model, instant.halving) == (

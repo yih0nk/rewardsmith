@@ -22,6 +22,9 @@ Settings (env vars):
   REWARDSMITH_RESTORE_VALUE 1 = warm starts keep the checkpoint's value network too (default 1)
   REWARDSMITH_TUNE_NOISE  tune mode resets the walker's exploration noise to this std (default 0.5;
                           0 keeps the walker's own, about 0.1, too little to leave its gait)
+  REWARDSMITH_CONTINUE_NOISE  a run training on from a candidate's checkpoint (a follow-up, a revision)
+                          resets its exploration noise to this std, in steer and off mode (default 0.6;
+                          0 keeps the checkpoint's own). Tune mode uses REWARDSMITH_TUNE_NOISE.
   REWARDSMITH_STEPS       training steps per candidate (default: budget.py's per-request plan with a
                           warm start, else the preset's)
 """
@@ -51,6 +54,13 @@ log = logging.getLogger("rewardsmith.sim")
 DEFAULT_WALKER = "/workspace/pretrained/go1_walker/params.pkl"
 MODES = ("steer", "tune", "off")
 TUNE_NOISE = 0.5
+# A steer policy's noise shrinks as it trains and keeps shrinking when it trains on: median std per
+# command (vx, vy, yaw) on the ball task was 0.64/0.73/0.69 fresh, 0.43/0.58/0.62 after 3M steps,
+# 0.35/0.43/0.51 two follow-ups later, with the forward command saturated (|tanh mean| ~0.9). The
+# revised reward then barely moved it (eval reward flat over 2M steps, PR #52). 0.6 is about a fresh
+# policy's noise, above every value measured, so a continued run explores again. The mean is kept,
+# so it starts from the parent's behavior, and in steer mode noise only perturbs the walker's commands.
+CONTINUE_NOISE = 0.6
 
 
 def default_walker() -> str:
@@ -82,6 +92,7 @@ class PlaygroundSimulator:
         steps: int | None = None,
         restore_value: bool | None = None,
         tune_noise: float | None = None,
+        continue_noise: float | None = None,
     ):
         if env_name != go1.BASE_ENV:
             raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
@@ -111,6 +122,9 @@ class PlaygroundSimulator:
         self._auto_mode = mode is None and not os.environ.get("REWARDSMITH_MODE")
         self.restore_value = _flag("REWARDSMITH_RESTORE_VALUE", "1") if restore_value is None else restore_value
         self.tune_noise = float(os.environ.get("REWARDSMITH_TUNE_NOISE", TUNE_NOISE)) if tune_noise is None else tune_noise
+        self.continue_noise = (
+            float(os.environ.get("REWARDSMITH_CONTINUE_NOISE", CONTINUE_NOISE)) if continue_noise is None else continue_noise
+        )
         self._pool: parallel.WarmPool | None = None
         # The worker gates drafts in threads, but two warp rollouts at once in one
         # process crash: warp captures a CUDA graph on its first call, and any other
@@ -189,8 +203,7 @@ class PlaygroundSimulator:
         result = train.train(
             train_env, self.preset, {"num_timesteps": steps}, on_progress=progress.point, randomize=self.randomize,
             init_params=init_params, checkpoint_dir=out_dir, restore_value=self.restore_value,
-            # Fresh exploration only when starting from the walker; a candidate's own checkpoint keeps its noise.
-            init_noise=self.tune_noise if self.mode == "tune" and str(init_params) == self.walker else None,
+            init_noise=self.start_noise(init_params),
         )
         progress.stage("rendering")
         # The video, target metrics and robustness rollouts, all in one batch (see evaluation.py).
@@ -214,13 +227,23 @@ class PlaygroundSimulator:
         progress.stage("done")
         return RunResult(metrics=metrics, frames=frames, video_path=video, reward_curve=result.reward_curve)
 
+    def start_noise(self, init_params: str | Path | None) -> float | None:
+        """The exploration std a run starting from init_params resets to, or None to keep the checkpoint's.
+
+        Tune mode fine-tunes the walker's own network: any checkpoint gets tune_noise. In steer and off
+        mode a candidate's checkpoint gets continue_noise (see CONTINUE_NOISE). 0 keeps the checkpoint's.
+        """
+        if init_params is None:
+            return None
+        return (self.tune_noise if self.mode == "tune" else self.continue_noise) or None
+
     def sim_options(self) -> dict[str, object]:
         """Everything a training child needs to train as this simulator would (PlaygroundSimulator(**these))."""
         return {
             "randomize": self.randomize, "push": self.push, "robustness": self.robustness,
             "evaluation_spec": self.evaluation_spec, "walker": self.walker, "mode": self.mode, "stock_profile": self.stock_profile,
             "stock_weight": self.stock_weight, "steps": self.steps, "restore_value": self.restore_value,
-            "tune_noise": self.tune_noise,
+            "tune_noise": self.tune_noise, "continue_noise": self.continue_noise,
         }
 
     def plan_request(self, text: str, scene: SceneSpec | None = None) -> str:
