@@ -995,7 +995,7 @@ def build(settings: config.Settings) -> tuple[Writer, Editor, Critic, Simulator]
     else:
         from .sim.playground import PlaygroundSimulator
 
-        sim = PlaygroundSimulator(settings.env_name)
+        sim = PlaygroundSimulator()  # the robot: REWARDSMITH_BODY (default go1)
     return writer, editor, critic, sim
 
 

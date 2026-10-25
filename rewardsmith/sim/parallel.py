@@ -49,7 +49,8 @@ class WarmProcess:
         return self.proc.poll() is None
 
     def gate(
-        self, source: str, scene: SceneSpec | None = None, impl: str | None = None, env_options: dict | None = None
+        self, source: str, scene: SceneSpec | None = None, impl: str | None = None, env_options: dict | None = None,
+        body: str | None = None,
     ) -> str | None:
         """Gate source in the child: None if it passes, else the message for the writer."""
         self._seq += 1
@@ -57,6 +58,7 @@ class WarmProcess:
         send(self.job, {
             "kind": "gate", "seq": self._seq, "source": source, "impl": impl,
             "scene": scene.to_dict() if scene is not None and not scene.is_empty else None, "env": env_options,
+            "body": body,
         })
         deadline = time.monotonic() + GATE_TIMEOUT_S
         while True:

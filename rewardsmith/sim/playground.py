@@ -1,6 +1,7 @@
 """MuJoCo Playground backend: the real simulator behind the worker.
 
 Settings (env vars):
+  REWARDSMITH_BODY    the robot (default go1; a bodies.BODIES key)
   REWARDSMITH_PRESET  smoke | round | final   (default round; use smoke on a laptop)
   REWARDSMITH_IMPL    jax | warp              (default: warp on a CUDA GPU, jax elsewhere)
   REWARDSMITH_PARALLEL  candidates trained at once, one process each (default 4)
@@ -9,9 +10,9 @@ Settings (env vars):
   REWARDSMITH_PUSH      1 = train with random pushes (default 0)
   REWARDSMITH_ROBUSTNESS  1 = score the policy on unseen robots, seeds and pushes (default 1)
   REWARDSMITH_XLA_AUTOTUNE  1 to keep XLA's GPU autotuner on (off by default, see below)
-  REWARDSMITH_WARM_START  1 = build on the pretrained walker (default 1, when the file exists)
-  REWARDSMITH_WALKER      the walker checkpoint (default /workspace/pretrained/go1_walker/params.pkl;
-                          scripts/train_walker.py makes it)
+  REWARDSMITH_WARM_START  1 = build on the body's pretrained skill (default 1, when the file exists)
+  REWARDSMITH_WALKER      the Go1 walker checkpoint (default /workspace/pretrained/go1_walker/params.pkl;
+                          scripts/train_walker.py makes it); other bodies name theirs in skill_checkpoint
   REWARDSMITH_MODE        how a candidate uses the walker (default steer with a walker, off without):
                           steer = the policy outputs velocity commands to the frozen walker;
                           tune  = the policy is the walker's own network, fine-tuned on the reward;
@@ -42,24 +43,25 @@ if os.environ.get("REWARDSMITH_XLA_AUTOTUNE") != "1" and "xla_gpu_autotune_level
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_autotune_level=0".strip()
 
 from . import budget, evaluation, gate, go1, go1_spec, parallel, train  # noqa: E402
+from .bodies import DEFAULT_BODY, get_body  # noqa: E402
 from .base import Cull, Job, OnDone, RunResult, Stopped  # noqa: E402
 from .progress import ProgressWriter  # noqa: E402
 from .scene import EMPTY, SceneSpec  # noqa: E402
 
 log = logging.getLogger("rewardsmith.sim")
 
-DEFAULT_WALKER = "/workspace/pretrained/go1_walker/params.pkl"
 MODES = ("steer", "tune", "off")
 TUNE_NOISE = 0.5
 
 
-def default_walker() -> str:
-    """The walker checkpoint every candidate starts from, or "" for random weights."""
+def default_walker(body: str | None = None) -> str:
+    """The body's skill checkpoint every candidate starts from (the Go1's walker), or "" for random weights."""
     if not _flag("REWARDSMITH_WARM_START", "1"):
         return ""
-    path = os.environ.get("REWARDSMITH_WALKER", DEFAULT_WALKER)
-    if not Path(path).is_file():
-        log.warning("no walker checkpoint at %s: candidates start from random weights", path)
+    b = get_body(body)
+    path = b.skill_checkpoint if b.skill == "walker" else None
+    if not path or not Path(path).is_file():
+        log.warning("no %s walker checkpoint at %s: candidates start from random weights", b.name, path)
         return ""
     return path
 
@@ -67,7 +69,7 @@ def default_walker() -> str:
 class PlaygroundSimulator:
     def __init__(
         self,
-        env_name: str = go1.BASE_ENV,
+        env_name: str | None = None,
         preset: str | None = None,
         impl: str | None = None,
         randomize: bool | None = None,
@@ -82,9 +84,11 @@ class PlaygroundSimulator:
         steps: int | None = None,
         restore_value: bool | None = None,
         tune_noise: float | None = None,
+        body: str | None = None,
     ):
-        if env_name != go1.BASE_ENV:
-            raise ValueError(f"only {go1.BASE_ENV} is supported so far, got {env_name}")
+        self.body = get_body(body or os.environ.get("REWARDSMITH_BODY") or DEFAULT_BODY).name
+        if env_name is not None and env_name != get_body(self.body).base_env:
+            raise ValueError(f"the {self.body} body builds on {get_body(self.body).base_env}, not {env_name}")
         self.preset = preset or os.environ.get("REWARDSMITH_PRESET", "round")
         self.impl = impl or go1.default_impl()
         self.max_parallel = int(os.environ.get("REWARDSMITH_PARALLEL", "4"))
@@ -94,7 +98,8 @@ class PlaygroundSimulator:
         self.evaluation_spec = evaluation_spec
         self.behavior_metrics = behavior_metrics  # see go1.Go1Env.behavior
         # Warm start: a checkpoint path, "" for random weights (resolved here so children get the same).
-        self.walker = default_walker() if walker is None else walker
+        self._auto_walker, self._mode_arg = walker is None, mode
+        self.walker = default_walker(self.body) if walker is None else walker
         self.mode = (mode or os.environ.get("REWARDSMITH_MODE") or "steer") if self.walker else "off"
         if self.mode not in MODES:
             raise ValueError(f"unknown mode {self.mode!r}: use one of {MODES}")
@@ -118,7 +123,7 @@ class PlaygroundSimulator:
         self._gate_lock = threading.Lock()
 
     def describe(self, scene: SceneSpec | None = None) -> str:
-        return go1_spec.describe(
+        return get_body(self.body).describe(
             scene or EMPTY, mode=self.mode, stock_profile=self.env_options.get("stock_profile") or "off",
             stock_weight=self.stock_weight,
         )
@@ -134,7 +139,7 @@ class PlaygroundSimulator:
         warm = pool.reserve() if pool else None
         if warm is not None:
             try:
-                error = warm.gate(source, scene, self.impl, self.env_options)
+                error = warm.gate(source, scene, self.impl, self.env_options, self.body)
             except parallel.WarmProcessError:
                 log.exception("warm gate failed; gating in the worker instead")
                 pool.discard(warm)
@@ -142,11 +147,11 @@ class PlaygroundSimulator:
                 pool.release(warm)
                 return error
         with self._gate_lock:
-            return gate.check_reward(source, impl=self.impl, scene=scene, env_options=self.env_options)
+            return gate.check_reward(source, impl=self.impl, scene=scene, env_options=self.env_options, body=self.body)
 
     @property
     def env_options(self) -> dict:
-        """go1.make_env's arguments for this mode: the walker to steer, or the stock terms to tune under."""
+        """The body's make_env arguments for this mode: the walker to steer, or the stock terms to tune under."""
         if self.mode == "steer":
             return {"walker": self.walker}
         if self.mode == "tune":
@@ -161,7 +166,7 @@ class PlaygroundSimulator:
 
         Without init_params, tune mode starts from the walker's weights; steer and off start from random ones.
         """
-        steps = steps or self.steps or train.ppo_kwargs(self.preset)["num_timesteps"]
+        steps = steps or self.steps or train.ppo_kwargs(self.preset, body=self.body)["num_timesteps"]
         progress = ProgressWriter(out_dir, steps)
         progress.stage("compiling")
         progress.start_heartbeat()  # nothing else writes during the minute of JIT compile
@@ -175,15 +180,17 @@ class PlaygroundSimulator:
         self, source: str, out_dir: Path, scene: SceneSpec | None, progress: ProgressWriter,
         init_params: str | Path | None, steps: int,
     ) -> RunResult:
-        env = go1.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics, **self.env_options)
+        body = get_body(self.body)
+        env = body.make_env(source, impl=self.impl, scene=scene, behavior_metrics=self.behavior_metrics, **self.env_options)
         # Pushes are a training condition only: the video and metrics come from a push-free env.
         # The training env keeps the behavior metrics too: halving ranks on the training curve.
+        push_overrides = getattr(body, "push_overrides", None)
         train_env = (
-            go1.make_env(
-                source, impl=self.impl, overrides=go1.PUSH_OVERRIDES, scene=scene,
+            body.make_env(
+                source, impl=self.impl, overrides=push_overrides, scene=scene,
                 behavior_metrics=self.behavior_metrics, **self.env_options,
             )
-            if self.push
+            if self.push and push_overrides
             else env
         )
         result = train.train(
@@ -191,10 +198,13 @@ class PlaygroundSimulator:
             init_params=init_params, checkpoint_dir=out_dir, restore_value=self.restore_value,
             # Fresh exploration only when starting from the walker; a candidate's own checkpoint keeps its noise.
             init_noise=self.tune_noise if self.mode == "tune" and str(init_params) == self.walker else None,
+            body=self.body,
         )
         progress.stage("rendering")
         # The video, target metrics and robustness rollouts, all in one batch (see evaluation.py).
-        video, frames, rollout, robust = evaluation.evaluate(env, result, out_dir, robust=self.robustness, success_spec=self.evaluation_spec)
+        video, frames, rollout, robust = evaluation.evaluate(
+            env, result, out_dir, robust=self.robustness, success_spec=self.evaluation_spec, body=self.body,
+        )
         (out_dir / "reward.py").write_text(source)
 
         last = result.curve[-1]
@@ -220,7 +230,7 @@ class PlaygroundSimulator:
             "randomize": self.randomize, "push": self.push, "robustness": self.robustness,
             "evaluation_spec": self.evaluation_spec, "walker": self.walker, "mode": self.mode, "stock_profile": self.stock_profile,
             "stock_weight": self.stock_weight, "steps": self.steps, "restore_value": self.restore_value,
-            "tune_noise": self.tune_noise,
+            "tune_noise": self.tune_noise, "body": self.body,
         }
 
     def plan_request(self, text: str, scene: SceneSpec | None = None) -> str:
@@ -242,6 +252,14 @@ class PlaygroundSimulator:
 
     def set_evaluation_spec(self, spec: list[dict] | None) -> None:
         self.evaluation_spec = spec
+
+    def set_body(self, name: str | None) -> None:
+        """Train the next request on this body (None: the default). Its walker replaces the
+        current one unless a walker was given explicitly; call before plan_request."""
+        self.body = get_body(name or os.environ.get("REWARDSMITH_BODY") or DEFAULT_BODY).name
+        if self._auto_walker:
+            self.walker = default_walker(self.body)
+        self.mode = (self._mode_arg or os.environ.get("REWARDSMITH_MODE") or "steer") if self.walker else "off"
 
     def warm_up(self, n: int) -> None:
         """Start n training processes now, so their imports overlap the writer's Claude call."""
@@ -279,7 +297,7 @@ class PlaygroundSimulator:
         """Give the steps halving culls to the survivors (search.survivor_stretch)."""
         from ..search import survivor_stretch
 
-        kwargs = train.ppo_kwargs(self.preset)
+        kwargs = train.ppo_kwargs(self.preset, body=self.body)
         stretch = survivor_stretch(len(jobs), keep, kwargs["num_evals"])
         out: list[Job] = []
         for source, out_dir, *rest in jobs:

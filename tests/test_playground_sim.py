@@ -31,7 +31,7 @@ def test_gates_from_threads_take_turns(monkeypatch):
 
     inside, peak, lock = [0], [0], threading.Lock()
 
-    def slow_check(source, impl=None, scene=None, env_options=None):
+    def slow_check(source, impl=None, scene=None, env_options=None, body=None):
         with lock:
             inside[0] += 1
             peak[0] = max(peak[0], inside[0])
@@ -108,7 +108,7 @@ def test_gates_run_in_warm_processes_and_fall_back_when_one_dies(monkeypatch):
     from rewardsmith.sim import gate, parallel
 
     in_worker = []
-    monkeypatch.setattr(gate, "check_reward", lambda source, impl=None, scene=None, env_options=None: in_worker.append(source))
+    monkeypatch.setattr(gate, "check_reward", lambda source, impl=None, scene=None, env_options=None, body=None: in_worker.append(source))
     sim = PlaygroundSimulator(preset="smoke")
     sim._pool = parallel.WarmPool(1, fake=True)
     try:
