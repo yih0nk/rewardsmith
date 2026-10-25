@@ -74,16 +74,25 @@ def main() -> None:
         print(f"\n== {rid}: {text}", flush=True)
         t0 = time.time()
         with gpu_lock(args.lock):
-            orchestrator.run_request(conn, settings, req, writer, editor, critic, sim, checker=checker, scener=scener)
+            try:
+                orchestrator.run_request(conn, settings, req, writer, editor, critic, sim, checker=checker,
+                                         scener=scener)
+            except orchestrator.Refused:
+                db.set_request(conn, rid, status="refused")
         req = db.get_request(conn, rid)
         row = {"label": args.label, "request": rid, "text": text, "wall_s": round(time.time() - t0, 1),
-               "scene": req.get("scene"), "success_spec": req.get("success_spec"), "candidates": []}
+               "status": req.get("status"), "feasibility": req.get("feasibility"),
+               "scene": req.get("scene"), "success_spec": req.get("success_spec"),
+               "success_code": req.get("success_code"), "success_check_error": req.get("success_check_error"),
+               "scene_events": [e["message"] for e in req["events"] if e["kind"] in ("scene", "refusal", "approximate")],
+               "candidates": []}
         checked = {c["metric"] for c in req.get("success_spec") or []}
         for cand in _candidates(conn, rid):
             m = cand["metrics"] or {}
             check = cand.get("check_result") or {}
             row["candidates"].append({
                 "id": cand["label"], "score": cand["score"], "check": check.get("pass"), "status": cand["status"],
+                "critique": (cand.get("critique") or "")[:600],
                 "video": cand["video_path"],
                 **{k: m[k] for k in m if k in COLUMNS or k in checked or k.startswith("phase_")},
             })
@@ -98,6 +107,13 @@ def _candidates(conn, rid: str) -> list[dict]:
 
 
 def _print(row: dict) -> None:
+    verdict = row.get("feasibility") or {}
+    if verdict:
+        print(f"feasibility: {verdict.get('verdict')}: {verdict.get('reason')} {verdict.get('simplification')} "
+              f"{verdict.get('suggestion')}")
+    if row.get("status") == "refused":
+        print(f"refused in {row['wall_s']} s", flush=True)
+        return
     print("spec:", ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in row["success_spec"] or []))
     checked = [c["metric"] for c in row["success_spec"] or [] if c["metric"] not in COLUMNS]
     cols = [c for c in (*checked, *COLUMNS) if any(c in cand for cand in row["candidates"])]
