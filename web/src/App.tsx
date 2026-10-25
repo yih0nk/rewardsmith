@@ -1,55 +1,58 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  RequestDetail as Detail,
-  RequestSummary,
   Health,
-  ApiError,
+  RequestSummary,
   createRequest,
-  getRequest,
-  listRequests,
   getHealth,
+  listRequests,
 } from "./api";
+import Composer from "./components/Composer";
+import ConversationList from "./components/ConversationList";
+import ConversationView from "./components/ConversationView";
 import HallOfFame from "./components/HallOfFame";
-import QrPanel from "./components/QrPanel";
-import RequestDetail from "./components/RequestDetail";
-import RequestList from "./components/RequestList";
+import NewTask from "./components/NewTask";
+import { conversationsFromRequests } from "./thread";
 
-const suggestions = [
-  "Walk backwards",
-  "Stand on two legs",
-  "Do a little dance",
-];
+// Routes live in the hash: "#new", "#hall", or "#<task id>".
+const readRoute = () => location.hash.slice(1);
+
 export default function App() {
   const [runs, setRuns] = useState<RequestSummary[]>([]);
-  const [selected, setSelected] = useState(location.hash.slice(1));
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [route, setRoute] = useState(readRoute);
   const [health, setHealth] = useState<Health | null>(null);
+  // False until the first health check answers or fails: "connecting", not "unreachable".
+  const [healthChecked, setHealthChecked] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [listLoading, setListLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [listError, setListError] = useState("");
-  const [detailError, setDetailError] = useState("");
   const [submitError, setSubmitError] = useState("");
-  const hall = selected === "hall";
-  // Open the newest run on first load only; afterwards the logo goes home and stays there.
+  // Phones: the task list opens over the page from the header.
+  const [navOpen, setNavOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Open the newest task on first load only; afterwards the route is the user's.
   const firstLoad = useRef(true);
+
+  const go = (next: string) => {
+    setRoute(next);
+    setNavOpen(false);
+    window.scrollTo({ top: 0 });
+  };
 
   useEffect(() => {
     let active = true;
     async function refresh() {
       try {
         const data = await listRequests();
-        if (active) {
-          setRuns(data);
-          setListError("");
-          if (firstLoad.current) {
-            firstLoad.current = false;
-            if (!location.hash.slice(1) && data[0]) setSelected(data[0].id);
-          }
+        if (!active) return;
+        setRuns(data);
+        setListError("");
+        if (firstLoad.current) {
+          firstLoad.current = false;
+          if (!readRoute()) setRoute(data[0]?.id ?? "new");
         }
       } catch (error) {
-        if (active) setListError(`Cannot load experiments: ${String(error)}`);
+        if (active) setListError(`Cannot load tasks: ${String(error)}`);
       } finally {
         if (active) setListLoading(false);
       }
@@ -67,10 +70,16 @@ export default function App() {
     const refresh = () =>
       getHealth()
         .then((data) => {
-          if (active) setHealth(data);
+          if (active) {
+            setHealth(data);
+            setHealthChecked(true);
+          }
         })
         .catch(() => {
-          if (active) setHealth(null);
+          if (active) {
+            setHealth(null);
+            setHealthChecked(true);
+          }
         });
     refresh();
     const timer = setInterval(refresh, 10000);
@@ -81,243 +90,157 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    setDetail(null);
-    setDetailError("");
-    setDetailLoading(Boolean(selected && !hall));
-    if (!selected || hall) return;
-    let active = true;
-    async function refresh() {
-      try {
-        const data = await getRequest(selected);
-        if (active) {
-          setDetail(data);
-          setDetailError("");
-        }
-      } catch (error) {
-        if (active) {
-          if (error instanceof ApiError && error.status === 404)
-            setDetail(null);
-          setDetailError(`Cannot load this experiment: ${String(error)}`);
-        }
-      } finally {
-        if (active) setDetailLoading(false);
-      }
-    }
-    refresh();
-    const timer = setInterval(refresh, 1500);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [selected, hall]);
-
+    if (route && readRoute() !== route) location.hash = route;
+  }, [route]);
   useEffect(() => {
-    location.hash = selected;
-  }, [selected]);
-  useEffect(() => {
-    const change = () => setSelected(location.hash.slice(1));
+    const change = () => setRoute(readRoute());
     window.addEventListener("hashchange", change);
     return () => window.removeEventListener("hashchange", change);
   }, []);
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (text.trim().length < 3 || busy) return;
+
+  async function submit(prompt: string) {
     setBusy(true);
     setSubmitError("");
     try {
-      const result = await createRequest(text.trim());
-      setSelected(result.id);
+      const result = await createRequest(prompt);
       setText("");
+      // Show it in the sidebar at once rather than on the next poll.
+      setRuns((current) => [
+        {
+          id: result.id,
+          text: prompt,
+          status: "queued",
+          best_score: null,
+          created_at: Date.now() / 1000,
+        },
+        ...current.filter((r) => r.id !== result.id),
+      ]);
+      go(result.id);
     } catch (error) {
-      setSubmitError(`Could not start experiment: ${String(error)}`);
+      setSubmitError(`Could not start the task: ${String(error)}`);
     } finally {
       setBusy(false);
     }
   }
+  // A finished task's prompt, back in a new task's box to edit and run again.
+  const retry = (prompt: string) => {
+    setText(prompt);
+    go("new");
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const conversations = conversationsFromRequests(runs);
+  const hall = route === "hall";
+  const current = conversations.find((c) => c.id === route) ?? null;
+  const running = runs.find((r) => r.status === "running")?.text ?? null;
   const mode = !health
-    ? "API unavailable"
+    ? healthChecked
+      ? "Server unreachable · retrying"
+      : "Connecting…"
     : health.fake_sim
       ? `Fake simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`
       : `Real simulator · ${health.fake_llm ? "Fake LLM" : "Live LLM"}`;
-  const goHome = () => setSelected(runs[0]?.id ?? "");
+
   return (
-    <div className="terminal">
+    <div className="terminal app">
       <header className="session-bar">
-        <a className="wordmark" href="#" onClick={() => setSelected("")}>
+        <a className="wordmark" href="#new" onClick={() => go("new")}>
           rewardsmith
           <span className="cursor" aria-hidden="true" />
         </a>
-        <nav aria-label="Board">
+        <button
+          className="nav-link nav-toggle"
+          aria-expanded={navOpen}
+          aria-controls="sidebar"
+          onClick={() => setNavOpen((open) => !open)}
+        >
+          {navOpen ? "Close tasks" : "Tasks"}{" "}
+          <span className="num">({conversations.length})</span>
+        </button>
+        <span className={`mode ${health || !healthChecked ? "" : "down"}`}>
+          {mode}
+        </span>
+      </header>
+      <div className="workspace">
+        <aside
+          id="sidebar"
+          className={`sidebar ${navOpen ? "open" : ""}`}
+          aria-label="Tasks and pages"
+        >
           <button
-            className={`nav-link ${hall ? "" : "active"}`}
-            aria-current={hall ? undefined : "page"}
-            onClick={goHome}
+            className={`primary new-task ${route === "new" ? "current" : ""}`}
+            aria-current={route === "new" ? "page" : undefined}
+            onClick={() => {
+              go("new");
+              setTimeout(() => inputRef.current?.focus(), 0);
+            }}
           >
-            Experiments <span className="num">({runs.length})</span>
+            + New task
           </button>
+          <ConversationList
+            conversations={conversations}
+            selected={hall || route === "new" ? null : route}
+            loading={listLoading}
+            onSelect={go}
+          />
+          {listError && (
+            <p className="error" role="alert">
+              {listError} Retrying automatically.
+            </p>
+          )}
           <a
-            className={`nav-link ${hall ? "active" : ""}`}
+            className={`nav-link hall-link ${hall ? "active" : ""}`}
             aria-current={hall ? "page" : undefined}
             href="#hall"
+            onClick={() => setNavOpen(false)}
           >
             Hall of fame
           </a>
-        </nav>
-        <span className={`mode ${health ? "" : "down"}`}>{mode}</span>
-      </header>
-      <main className="session">
-        {hall ? (
-          <HallOfFame onOpen={setSelected} onBack={goHome} />
-        ) : (
-          <>
-            <section className="cmd hero" aria-labelledby="hero-title">
-              <div className="hero-main">
-                <p className="eyebrow">The reinforcement learning playground</p>
-                <h1 id="hero-title">
-                  A little prompt. A new <span className="em">behavior.</span>
-                </h1>
-                <p className="hero-sub">
-                  Describe a behavior. Watch your robot figure it out.
+        </aside>
+        <main className="session main-pane">
+          {hall ? (
+            <HallOfFame onOpen={go} onBack={() => go(runs[0]?.id ?? "new")} />
+          ) : current ? (
+            <ConversationView
+              key={current.id}
+              conversation={current}
+              requests={runs}
+              health={health}
+              onRetry={retry}
+            />
+          ) : listLoading && route !== "new" ? (
+            <p className="cmd-note" role="status">
+              Loading…
+            </p>
+          ) : (
+            <>
+              {route && route !== "new" && (
+                <p className="error" role="alert">
+                  There is no task #{route} on this server. Start a new one
+                  below, or pick one from the list.
                 </p>
-                <form className="composer" onSubmit={submit}>
-                  <label htmlFor="behavior">What should the robot learn?</label>
-                  <div className="composer-row">
-                    <span className="prompt" aria-hidden="true">
-                      &gt;
-                    </span>
-                    <input
-                      id="behavior"
-                      value={text}
-                      onChange={(event) => setText(event.target.value)}
-                      maxLength={300}
-                      placeholder="Make the robot dog walk backwards…"
-                      required
-                      minLength={3}
-                    />
-                    <button
-                      className="primary"
-                      disabled={busy || text.trim().length < 3}
-                    >
-                      {busy ? "Starting…" : "Start experiment"}
-                    </button>
-                  </div>
-                  <div className="suggestions">
-                    <span className="label">Try</span>
-                    {suggestions.map((suggestion) => (
-                      <button
-                        type="button"
-                        className="link"
-                        key={suggestion}
-                        onClick={() =>
-                          setText(
-                            `Make the robot dog ${suggestion.toLowerCase()}`,
-                          )
-                        }
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
-                </form>
-              </div>
-              <dl className="facts">
-                <div>
-                  <dt>Mode</dt>
-                  <dd>{mode}</dd>
-                </div>
-                <div>
-                  <dt>Experiments</dt>
-                  <dd className="num">{runs.length}</dd>
-                </div>
-                <div className="facts-qr">
-                  <dt>On your phone</dt>
-                  <dd>
-                    <QrPanel />
-                  </dd>
-                </div>
-              </dl>
-            </section>
-            <section className="cmd" aria-labelledby="runs-title">
-              <h2 className="cmd-title" id="runs-title">
-                Experiments
-              </h2>
-              <RequestList
-                requests={runs}
-                selected={selected}
-                onSelect={setSelected}
+              )}
+              <NewTask
+                busyWith={running}
+                composer={
+                  <Composer
+                    label="What should the robot learn?"
+                    inputRef={inputRef}
+                    busy={busy}
+                    error={submitError}
+                    text={text}
+                    onText={(value) => {
+                      setText(value);
+                      setSubmitError("");
+                    }}
+                    onSubmit={submit}
+                  />
+                }
               />
-            </section>
-            {submitError && (
-              <div className="error" role="alert">
-                {submitError}
-              </div>
-            )}
-            {listError && (
-              <div className="error" role="alert">
-                {listError} Retrying automatically.
-              </div>
-            )}
-            {detailError && (
-              <div className="error" role="alert">
-                {detailError}{" "}
-                <button className="link" onClick={goHome}>
-                  Back to experiments
-                </button>
-              </div>
-            )}
-            {detail ? (
-              <RequestDetail key={detail.id} detail={detail} health={health} />
-            ) : detailLoading || listLoading ? (
-              <p className="cmd-note" role="status">
-                Loading experiment…
-              </p>
-            ) : (
-              !detailError && (
-                <section className="cmd empty-state">
-                  {runs.length ? (
-                    <>
-                      <h2 className="cmd-title">Pick up where you left off.</h2>
-                      <p>
-                        Choose an experiment from the list above, or describe a
-                        new behavior.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <h2 className="cmd-title">
-                        Your first experiment starts here.
-                      </h2>
-                      <p>
-                        Describe a behavior above to queue a request. Run the
-                        worker to train and evaluate candidates.
-                      </p>
-                    </>
-                  )}
-                </section>
-              )
-            )}
-          </>
-        )}
-        <footer className="directory">
-          <div>
-            <h2>Rewardsmith</h2>
-            <p>Language → reward → motion.</p>
-          </div>
-          <div>
-            <h2>Board</h2>
-            <button className="link" onClick={goHome}>
-              Experiments
-            </button>
-            <a className="link" href="#hall">
-              Hall of fame
-            </a>
-          </div>
-          <div>
-            <h2>Made at</h2>
-            <p>Cal Hacks 13.0</p>
-          </div>
-        </footer>
-      </main>
+            </>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

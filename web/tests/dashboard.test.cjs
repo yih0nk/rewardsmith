@@ -53,7 +53,7 @@ const render = (detail) =>
   renderToStaticMarkup(React.createElement(Detail, { detail, health }));
 
 test("queued requests and running rounds with no candidates render safely", () => {
-  assert.match(render(base), /Queued · waiting for worker/);
+  assert.match(render(base), /Waiting in line for the GPU worker/);
   const html = render({
     ...base,
     status: "running",
@@ -67,8 +67,11 @@ test("queued requests and running rounds with no candidates render safely", () =
       },
     ],
   });
-  assert.match(html, /0 candidates/);
-  assert.match(html, /No metrics reported yet/);
+  assert.match(html, /Claude is writing reward functions/);
+  assert.match(html, /0 rewards in 1 round/);
+  // Nothing to show yet: the status takes the whole width, with no empty video box.
+  assert.match(html, /class="run-grid status-only"/);
+  assert.doesNotMatch(html, /aria-label="Robot rollout"/);
   assert.doesNotMatch(html, /NaN/);
 });
 
@@ -95,11 +98,12 @@ test("all candidates, backend metrics, reward terms and failures are inspectable
       },
     ],
   });
-  assert.match(html, /Candidate 1/);
-  assert.match(html, /Candidate 2/);
-  assert.match(html, /Validation failed/);
-  assert.match(html, /forward velocity/);
-  assert.match(html, /-0.43/);
+  assert.match(html, /Round 1 · Candidate 1/);
+  assert.match(html, /Round 1 · Candidate 2/);
+  assert.match(html, /Code never ran/);
+  assert.match(html, /failed the code check 3 times/);
+  assert.match(html, /Forward speed/);
+  assert.match(html, /-0.43 m\/s/);
   assert.match(html, /Reward breakdown/);
   assert.match(html, /energy/);
   assert.match(html, /Fake simulator · no video generated/);
@@ -158,10 +162,11 @@ test("failed requests retain worker events and expose gate errors", () => {
       },
     ],
   });
-  assert.match(html, /Experiment failed/);
+  assert.match(html, /The run stopped with an error/);
+  assert.match(html, /The run stopped before it produced a robot/);
   assert.match(html, /SyntaxError in reward.py/);
   assert.match(html, /Request queued/);
-  assert.doesNotMatch(html, /Experiment complete/);
+  assert.doesNotMatch(html, /Finished/);
 });
 
 test("video URLs normalize worker paths and escape reserved characters", () => {
@@ -363,7 +368,7 @@ test("stage labels follow the candidate status and its progress file", () => {
   assert.equal(label(training({ progress: live("training", 0.428) })), "Training 42%");
   // Floor: 99.6% done is not 100% done.
   assert.equal(label(training({ progress: live("training", 0.996) })), "Training 99%");
-  assert.equal(label(training({ progress: live("rendering", 1) })), "Rendering video");
+  assert.equal(label(training({ progress: live("rendering", 1) })), "Recording video");
   assert.equal(label(training({ progress: live("done", 1) })), "Finishing up");
   assert.equal(label(training({ status: "trained", progress: null })), "Judging");
   assert.equal(label(training({ status: "trained", progress: live("done", 1) })), "Judging");
@@ -424,7 +429,9 @@ test("a training candidate shows its stage, an accessible bar and the reward cur
   assert.match(html, /aria-valuetext="Training 42%"/);
   assert.match(html, /<polyline points="/);
   assert.match(html, /latest 12.35/);
-  assert.match(html, /420 \/ 1,000 steps/);
+  assert.match(html, /420 \/ 1,000 training steps/);
+  // The training process's own clock stands still while it compiles: not shown.
+  assert.doesNotMatch(html, /steps · \d+ s/);
   assert.doesNotMatch(html, /NaN|undefined/);
 
   const finishing = render(detail(training({ progress: live("done", 1, curve) })));
@@ -568,4 +575,319 @@ test("bars and strips are drawn in characters from the real numbers", () => {
     ],
   });
   assert.match(html, /role="progressbar"[^>]*><span aria-hidden="true">\[#{8}\.{8}\]/);
+});
+
+const stages = require("../src/stages.ts");
+const explain = require("../src/explain.tsx");
+const RunStatus = require("../src/components/RunStatus.tsx").default;
+
+// A running request at server time T0, with helpers to build each stage.
+const T0 = 1_800_000_000;
+const runningAt = (rounds, events = []) => ({
+  ...base,
+  status: "running",
+  created_at: T0,
+  events: [
+    { id: 1, kind: "queued", message: "Request queued", created_at: T0 },
+    ...events,
+  ],
+  rounds,
+});
+const roundAt = (n, created_at, candidates, status = "running") => ({
+  id: n,
+  n,
+  status,
+  best_candidate_id: null,
+  created_at,
+  candidates,
+});
+const cand = (idx, overrides) => ({
+  ...training({ id: 100 + idx, idx, created_at: T0 + 70 + idx }),
+  ...overrides,
+});
+const curveAt = (wall) => [{ steps: 0, wall_s: wall, episode_reward: 0.1, terms: {} }];
+const trainEvt = { id: 9, kind: "train", message: "Training 4 candidate(s)", created_at: T0 + 100 };
+const sceneEvt = { id: 2, kind: "scene", message: "flat floor", created_at: T0 + 5 };
+
+test("each pipeline stage gets a plain-language label and a start time", () => {
+  const stage = (detail, k) => stages.runStage(detail, k);
+  const queued = stage({ ...base, created_at: T0 });
+  assert.equal(queued.label, "Waiting in line for the GPU worker");
+  assert.equal(queued.startedAt, T0);
+
+  assert.equal(stage(runningAt([])).label, "Claude is reading your prompt and setting up the scene");
+  assert.equal(stage(runningAt([], [sceneEvt])).label, "Claude is writing the pass/fail check");
+
+  const writing = stage(runningAt([roundAt(1, T0 + 10, [])]), 4);
+  assert.equal(writing.label, "Claude is writing 4 reward functions");
+  assert.equal(writing.startedAt, T0 + 10);
+  // Without the per-round count from the API, it doesn't make one up.
+  assert.equal(stage(runningAt([roundAt(1, T0 + 10, [])])).label, "Claude is writing reward functions");
+  const done1 = roundAt(1, T0 + 10, [0, 1, 2, 3].map((i) => cand(i, { status: "scored", score: 5 })), "done");
+  assert.equal(
+    stage(runningAt([done1, roundAt(2, T0 + 300, [])])).label,
+    "Claude is revising the best rewards into 4 new ones",
+  );
+
+  const gate = stage(runningAt([roundAt(1, T0 + 10, [cand(0, { status: "written" }), cand(1, { status: "gate_failed" })])]));
+  assert.equal(gate.key, "gate");
+  assert.equal(gate.label, "Test-running the code of 2 rewards");
+  assert.equal(gate.startedAt, T0 + 70);
+
+  const four = (progress) => [0, 1, 2, 3].map((i) => cand(i, { progress }));
+  const compiling = stage(runningAt([roundAt(1, T0 + 10, four(null))], [trainEvt]));
+  assert.equal(compiling.label, "Compiling the simulator for 4 robots");
+  assert.match(compiling.hint, /1–2 min/);
+  assert.equal(compiling.startedAt, T0 + 100);
+
+  const trainingStage = stage(
+    runningAt([roundAt(1, T0 + 10, four({ ...live("training", 0.4), curve: curveAt(55) }))], [trainEvt]),
+  );
+  assert.equal(trainingStage.label, "Training 4 robots in parallel");
+  // The train event plus the training process's own clock at its first evaluation.
+  assert.equal(trainingStage.startedAt, T0 + 155);
+
+  const rendering = stage(runningAt([roundAt(1, T0 + 10, four(live("rendering", 1)))], [trainEvt]));
+  assert.equal(rendering.label, "Recording a video of each trained robot");
+
+  const judging = stage(
+    runningAt(
+      [roundAt(1, T0 + 10, [cand(0, { status: "trained", progress: { ...live("done", 1), wall_s: 120 } }), cand(1, { status: "trained" })])],
+      [trainEvt],
+    ),
+  );
+  assert.equal(judging.label, "Claude is watching 2 videos and scoring each one");
+  assert.equal(judging.startedAt, T0 + 220);
+});
+
+test("finished runs say whether anything worked; failures never look in progress", () => {
+  const scored = { ...base, status: "done", best_score: 6.8, rounds: [scoredRound(1, 1, candidate)] };
+  assert.equal(stages.runStage(scored).label, "Finished after 1 round · best score 6.8 / 10");
+
+  const crashed = (i) => ({ ...candidate, id: i, idx: i, status: "failed", score: null, error: "TypeError: mul got incompatible shapes" });
+  const nothing = {
+    ...base,
+    status: "done",
+    rounds: [{ id: 1, n: 1, status: "done", best_candidate_id: null, candidates: [crashed(1), crashed(2)] }],
+  };
+  assert.equal(stages.runStage(nothing).key, "no_results");
+  const html = render(nothing);
+  assert.match(html, /None of the 2 rewards produced a robot Claude could judge/);
+  assert.match(html, /2 × crashed while training/);
+  assert.match(html, /What to try/);
+  assert.match(html, /run-status-panel broken/);
+  assert.doesNotMatch(html, />NOW</);
+  assert.doesNotMatch(html, /class="steps"/);
+
+  const running = render(runningAt([roundAt(1, T0 + 10, [])]));
+  assert.match(running, />NOW</);
+  assert.doesNotMatch(running, /broken|None of the/);
+});
+
+test("candidates are named the same way everywhere, with failures in plain words", () => {
+  assert.equal(stages.candidateName(2, 2), "Round 2 · Candidate 3");
+  const state = (c) => stages.candidateState({ ...candidate, score: null, ...c }).text;
+  assert.equal(state({ status: "gate_failed" }), "Code never ran");
+  assert.equal(state({ status: "stopped" }), "Stopped early");
+  assert.equal(state({ status: "failed", error: "The critic could not score this run: x" }), "Couldn't be judged");
+  assert.equal(state({ status: "failed", error: "Stopped: the run failed before this candidate finished." }), "Cut short");
+  assert.equal(state({ status: "trained" }), "Being judged by Claude");
+  assert.equal(stages.candidateState(candidate).text, "Scored 8.2 / 10");
+});
+
+test("elapsed time is formatted with units and never negative", () => {
+  assert.equal(stages.formatElapsed(0), "0s");
+  assert.equal(stages.formatElapsed(7.9), "7s");
+  assert.equal(stages.formatElapsed(65), "1m 05s");
+  assert.equal(stages.formatElapsed(3725), "1h 02m");
+  assert.equal(stages.formatElapsed(-3), "0s");
+  assert.equal(stages.formatElapsed(Number.NaN), "0s");
+  assert.equal(stages.elapsedSince(T0, (T0 + 75) * 1000), 75);
+  // The server clock runs 30 s ahead of this one.
+  assert.equal(stages.elapsedSince(T0, (T0 + 75) * 1000, 30), 105);
+  assert.equal(stages.elapsedSince(T0 + 10, T0 * 1000), 0);
+});
+
+test("the stage and run timers tick from their start times on the client clock", () => {
+  const detail = runningAt(
+    [roundAt(1, T0 + 10, [0, 1, 2, 3].map((i) => cand(i, { progress: null })))],
+    [trainEvt],
+  );
+  const at = (seconds) =>
+    renderToStaticMarkup(React.createElement(RunStatus, { detail, now: (T0 + seconds) * 1000 }));
+  const timers = (html) => [
+    html.match(/data-testid="stage-timer">([^<]+)</)[1],
+    html.match(/data-testid="run-timer">([^<]+)</)[1],
+  ];
+  // Compiling started with the train event at T0 + 100.
+  assert.deepEqual(timers(at(175)), ["1m 15s", "2m 55s"]);
+  assert.deepEqual(timers(at(180)), ["1m 20s", "3m 00s"]);
+  const html = at(175);
+  assert.match(html, /role="status">Compiling the simulator for 4 robots</);
+  assert.match(html, /class="step current" aria-current="step">[\s\S]*?Compile/);
+  assert.equal((html.match(/class="step done"/g) ?? []).length, 3);
+  // One lane per candidate, named like everywhere else.
+  assert.match(html, /Round 1 · Candidate 4/);
+
+  // The server's Date header corrects a drifting client clock.
+  api.noteServerDate(new Date((T0 + 235) * 1000).toUTCString(), (T0 + 175) * 1000);
+  try {
+    assert.deepEqual(timers(at(175)), ["2m 15s", "3m 55s"]);
+  } finally {
+    api.noteServerDate(null);
+    api.noteServerDate(new Date().toUTCString());
+  }
+  assert.equal(api.serverClockOffset(), 0);
+
+  // A finished run shows how long it took, from its first to its last event.
+  const finished = renderToStaticMarkup(
+    React.createElement(RunStatus, {
+      detail: { ...detail, status: "done", events: [...detail.events, { id: 20, kind: "done", message: "Finished", created_at: T0 + 600 }] },
+      now: (T0 + 9999) * 1000,
+    }),
+  );
+  assert.match(finished, /Took<\/dt><dd class="num" data-testid="run-timer">10m 00s/);
+});
+
+test("the success check reads as a sentence and jargon comes with an explanation", () => {
+  assert.equal(
+    explain.successSentence([
+      { metric: "forward_velocity", op: "<", value: -0.3 },
+      { metric: "fell", op: "<", value: 0.5 },
+    ]),
+    "Pass = the robot walks backwards faster than 0.3 m/s and doesn't fall over.",
+  );
+  assert.equal(
+    explain.successSentence([
+      { metric: "abs_yaw_rate", op: ">", value: 1 },
+      { metric: "abs_forward_velocity", op: "<", value: 0.3 },
+      { metric: "base_height", op: ">", value: 0.18 },
+    ]),
+    "Pass = the robot turns either way faster than 1 rad/s (57°/s), moves forwards or backwards slower than 0.3 m/s and keeps its body above 0.18 m.",
+  );
+  assert.equal(explain.successSentence([]), null);
+  assert.equal(explain.metricInfo("fell").format(1), "yes");
+  assert.equal(explain.metricInfo("target_reached").format(0.41), "41%");
+
+  const html = render({
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    success_spec: [{ metric: "forward_velocity", op: "<", value: -0.3 }],
+    rounds: [scoredRound(1, 1, candidate)],
+  });
+  assert.match(html, /Pass = the robot walks backwards faster than 0.3 m\/s\./);
+  for (const term of ["critic", "successCheck", "candidate"])
+    assert.ok(html.includes(explain.GLOSSARY[term].replaceAll("'", "&#x27;")), term);
+  assert.match(html, /role="tooltip"/);
+});
+
+const thread = require("../src/thread.ts");
+
+test("each request is one conversation, newest first, with one turn", () => {
+  const reqs = [
+    { id: "a", text: "walk backwards", status: "done", best_score: 6.8, created_at: 10 },
+    { id: "b", text: "spin in place", status: "running", best_score: null, created_at: 20 },
+  ];
+  const convos = thread.conversationsFromRequests(reqs);
+  assert.deepEqual(convos.map((c) => c.id), ["b", "a"]);
+  assert.deepEqual(convos[1].turns, [{ requestId: "a", text: "walk backwards", createdAt: 10 }]);
+  assert.equal(convos[1].bestScore, 6.8);
+  assert.equal(convos[0].bestScore, null);
+});
+
+test("a queued task says which task it waits for", () => {
+  const reqs = [
+    { id: "r", text: "push the ball into the blue zone", status: "running", created_at: 1 },
+    { id: "q1", text: "spin in place", status: "queued", created_at: 2 },
+    { id: "q2", text: "walk backwards", status: "queued", created_at: 3 },
+    { id: "d", text: "old", status: "done", created_at: 0 },
+  ];
+  const first = thread.queuePlace(reqs, "q1");
+  assert.deepEqual(first, { running: "push the ball into the blue zone", ahead: [] });
+  assert.deepEqual(thread.queuePlace(reqs, "q2").ahead, ["spin in place"]);
+  assert.equal(thread.queuePlace(reqs, "r"), null);
+
+  const queued = { ...base, status: "queued", created_at: T0 };
+  assert.equal(
+    stages.runStage(queued, null, first).label,
+    "Queued, starts when “push the ball into the blue zone” finishes",
+  );
+  const second = stages.runStage(queued, null, thread.queuePlace(reqs, "q2"));
+  assert.equal(second.label, "Queued behind 2 tasks");
+  assert.match(second.hint, /“push the ball into the blue zone” is running, then “spin in place” go first/);
+  assert.equal(
+    stages.runStage(queued, null, { running: null, ahead: [] }).label,
+    "Queued, starting in a few seconds",
+  );
+  // The turn shows it, so a waiting task never looks stuck.
+  const html = renderToStaticMarkup(
+    React.createElement(Detail, { detail: queued, health, queue: first }),
+  );
+  assert.match(html, /role="status">Queued, starts when “push the ball into the blue zone” finishes</);
+});
+
+test("runs and candidates have stable anchors, and reply slots stay empty until wired", () => {
+  const detail = {
+    ...base,
+    status: "done",
+    best_score: 8.2,
+    rounds: [scoredRound(1, 1, { ...candidate, id: 7 })],
+  };
+  const plain = render(detail);
+  assert.match(plain, /<article class="cmd turn" id="run-abcd1234"/);
+  assert.match(plain, /id="candidate-7" data-round="1" data-candidate-id="7"/);
+  assert.match(plain, /aria-label="Robot rollout" data-candidate-id="7"/);
+  assert.doesNotMatch(plain, /reply-slot/);
+
+  const targets = [];
+  const wired = renderToStaticMarkup(
+    React.createElement(Detail, {
+      detail,
+      health,
+      renderReply: (target) => {
+        targets.push(target);
+        return React.createElement("span", null, "reply");
+      },
+    }),
+  );
+  assert.equal((wired.match(/class="reply-slot"/g) ?? []).length, 3);
+  assert.deepEqual(targets, [
+    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0 },
+    { kind: "candidate", requestId: "abcd1234", round: 1, candidateId: 7, idx: 0 },
+    { kind: "run", requestId: "abcd1234" },
+  ]);
+});
+
+test("the task list shows status and best score, and marks the open task", () => {
+  const List = require("../src/components/ConversationList.tsx").default;
+  const convos = thread.conversationsFromRequests([
+    { id: "a", text: "walk backwards", status: "done", best_score: 6.8, created_at: 1 },
+    { id: "b", text: "kick the ball", status: "done", best_score: null, created_at: 2 },
+    { id: "c", text: "spin", status: "queued", best_score: null, created_at: 3 },
+  ]);
+  const html = renderToStaticMarkup(
+    React.createElement(List, { conversations: convos, selected: "a", loading: false, onSelect: () => {} }),
+  );
+  assert.match(html, /aria-current="page"[^>]*>[\s\S]*?walk backwards[\s\S]*?best 6\.8/);
+  assert.match(html, /kick the ball[\s\S]*?no result/);
+  assert.match(html, /spin[\s\S]*?queued/);
+  const empty = (loading) =>
+    renderToStaticMarkup(React.createElement(List, { conversations: [], selected: null, loading, onSelect: () => {} }));
+  assert.match(empty(true), /Loading tasks…/);
+  assert.match(empty(false), /No tasks yet/);
+});
+
+test("the composer has no option controls until they are passed in", () => {
+  const Composer = require("../src/components/Composer.tsx").default;
+  const props = { label: "What should the robot learn?", inputRef: { current: null }, busy: false, error: "", text: "", onText: () => {}, onSubmit: () => {} };
+  const html = renderToStaticMarkup(React.createElement(Composer, props));
+  assert.match(html, /<label for="behavior"[^>]*>What should the robot learn\?/);
+  assert.match(html, /Start training/);
+  assert.match(html, /Walk to the red ball/);
+  assert.doesNotMatch(html, /composer-controls/);
+  const withControls = renderToStaticMarkup(
+    React.createElement(Composer, { ...props, controls: React.createElement("span", null, "Model") }),
+  );
+  assert.match(withControls, /class="composer-controls"><span>Model/);
 });

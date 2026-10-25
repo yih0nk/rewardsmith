@@ -2,6 +2,7 @@
 @import "./styles/base.css";
 @import "./styles/shell.css";
 @import "./styles/experiment.css";
+@import "./styles/status.css";
 @import "./styles/candidates.css";
 @import "./styles/hall.css";
 @import "./styles/responsive.css";

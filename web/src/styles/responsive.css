@@ -1,16 +1,18 @@
-/* 1100: narrower gutter and identity columns. 800: stack the opening and the stage.
-   540: shorter indentation and single-column rows. */
+/* 1100: narrower gutter and identity columns. 900: the task list becomes a drawer
+   opened from the header. 800: stack the stage. 540: shorter indentation and
+   single-column rows. */
 @media (max-width: 1100px) {
   :root {
     --gutter-width: 4ch;
   }
-  .cmd,
-  .cmd.hero {
+  .cmd {
     column-gap: var(--dp-spacing-gutter);
   }
   .cmd-note,
   .session > .error,
-  .directory {
+  .thread > .error,
+  .main-pane > .error,
+  .composer-dock {
     margin-left: calc(var(--gutter-width) + var(--dp-spacing-gutter));
   }
   .result-grid {
@@ -29,30 +31,29 @@
 }
 
 @media (max-width: 800px) {
-  .cmd.hero {
-    grid-template-columns: var(--gutter-width) minmax(0, 1fr);
+  .now {
+    grid-template-columns: auto minmax(0, 1fr);
   }
-  .cmd.hero > .facts {
-    grid-column: 2;
-    margin-top: var(--dp-spacing-section-compact);
+  .timers {
+    grid-column: 1 / -1;
+    margin-top: var(--dp-spacing-inset);
   }
-  .hero-main h1 {
-    font-size: var(--dp-typography-display-narrow);
-    line-height: var(--dp-typography-display-leading-narrow);
+  .timers div {
+    justify-items: start;
+  }
+  .lane {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .lane-bar {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .success-spec {
+    grid-template-columns: minmax(0, 1fr);
   }
   .mode {
     margin-left: 0;
     flex-basis: 100%;
-  }
-  .summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .summary > div:nth-child(3) {
-    padding-left: 0;
-    border-left: 0;
-  }
-  .summary > div:nth-child(n + 3) {
-    border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
   }
   /* Rounds become two lines: identity and score, then the strip and counts. */
   .round {
@@ -73,14 +74,24 @@
   .candidate-option.live > .training-progress {
     grid-column: 1 / -1;
   }
-  .directory {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 540px) {
   :root {
     --gutter-width: 2ch;
+  }
+  .run-status-panel {
+    padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
+  }
+  .now-label {
+    font-size: var(--dp-typography-body);
+    line-height: var(--dp-typography-body-leading);
+  }
+  .lane-bar {
+    font-size: 12px;
+  }
+  .training-progress.large .meter {
+    font-size: 12px;
   }
   .cmd {
     padding-top: var(--dp-spacing-section-compact);
@@ -88,8 +99,7 @@
   .terminal {
     padding: 0 var(--dp-spacing-cell);
   }
-  .cmd,
-  .cmd.hero {
+  .cmd {
     column-gap: var(--dp-spacing-cell);
   }
   .cmd::before {
@@ -100,7 +110,9 @@
   }
   .cmd-note,
   .session > .error,
-  .directory {
+  .thread > .error,
+  .main-pane > .error,
+  .composer-dock {
     margin-left: calc(var(--gutter-width) + var(--dp-spacing-cell));
   }
   .cmd-title {
@@ -111,26 +123,6 @@
   }
   .prompt {
     display: none;
-  }
-  .run-link {
-    grid-template-columns: 8ch minmax(0, 1fr);
-    column-gap: var(--dp-spacing-gutter);
-  }
-  .run-text {
-    grid-column: 1 / -1;
-    white-space: normal;
-  }
-  .runs {
-    max-height: calc(5 * 72px);
-  }
-  .summary > div {
-    padding-right: var(--dp-spacing-cell);
-  }
-  .summary > div + div {
-    padding-left: var(--dp-spacing-cell);
-  }
-  .summary > div:nth-child(3) {
-    padding-left: 0;
   }
   .stage-foot span:last-child {
     display: none;
@@ -154,7 +146,7 @@
     grid-column: 1 / -1;
   }
   .candidate-select {
-    grid-template-columns: 12ch minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .reward-terms > .term {
     grid-template-columns: minmax(0, 1fr) 9ch;
@@ -176,5 +168,61 @@
   }
   .gallery {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Phones: explanations dock to the bottom of the screen instead of running off its edge. */
+@media (max-width: 540px) {
+  .explain-tip {
+    position: fixed;
+    top: auto;
+    right: var(--dp-spacing-cell);
+    bottom: var(--dp-spacing-cell);
+    left: var(--dp-spacing-cell);
+    width: auto;
+    max-width: none;
+  }
+}
+@media (max-width: 540px) {
+  /* Disclosure rows: the title, then its description on the next line. */
+  .technical summary {
+    grid-template-columns: minmax(0, 1fr) 2ch;
+    row-gap: 0;
+  }
+  .technical summary span {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .technical summary::after {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .lane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lane-bar {
+    grid-row: auto;
+  }
+}
+
+/* Below 900 px the task list is a drawer: the header's Tasks button opens it
+   over the page, and picking a task closes it. */
+@media (max-width: 900px) {
+  .nav-toggle {
+    display: inline-block;
+  }
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sidebar {
+    display: none;
+    position: static;
+    max-height: none;
+    padding-right: 0;
+    border-right: 0;
+    border-bottom: var(--dp-border-hairline) solid var(--dp-color-ink);
+  }
+  .sidebar.open {
+    display: flex;
   }
 }

@@ -28,7 +28,7 @@ export function liveState(c: Candidate): LiveState | null {
     case "compiling":
       return { label: "Compiling", fraction };
     case "rendering":
-      return { label: "Rendering video", fraction: 1 };
+      return { label: "Recording video", fraction: 1 };
     case "done":
       // Its round trains candidates together: until the others finish, it isn't judged yet.
       return { label: c.status === "training" ? "Finishing up" : "Judging", fraction: 1 };
@@ -170,9 +170,10 @@ export default function TrainingProgress({
       )}
       {large && p && p.total_steps > 0 && (
         <span className="subtle">
+          {/* No seconds here: wall_s stands still while JAX compiles. The run
+              status above has the ticking timer. */}
           {Math.min(p.steps, p.total_steps).toLocaleString("en-US")} /{" "}
-          {p.total_steps.toLocaleString("en-US")} steps ·{" "}
-          {Math.round(p.wall_s)} s
+          {p.total_steps.toLocaleString("en-US")} training steps
         </span>
       )}
       {!large && <Sparkline curve={p?.curve} width={90} height={28} />}
