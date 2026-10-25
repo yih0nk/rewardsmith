@@ -35,6 +35,11 @@ Requests are persisted by the backend; the worker consumes queued requests.
 - `GET /api/requests`: recent experiments, statuses, and best scores.
 - `POST /api/requests` with `{ "text": "walk backwards" }`: returns `{ "id": "..." }`.
 - `GET /api/requests/{id}`: rounds, all candidates, metrics, critiques, and events.
+- `POST /api/requests/{id}/pause`, `/resume`, `/cancel`: returns `{ "state": "..." }`, or 409 when
+  the run's state doesn't allow it. Queued and paused runs change at once. A running run pauses
+  after its current round (`"pausing"`, with `control: "pause"` on the request) and cancels at the
+  next checkpoint (`"cancelling"`): before training, before the critic, or between rounds.
+  Statuses are `queued`, `running`, `paused`, `done`, `failed` and `cancelled`.
 - `/artifacts/{video_path}`: recorded videos when the simulator provides them.
 - `POST /api/candidates/{id}/flag` with `{ "note": "..." }` (1 to 200 characters) and
   `DELETE /api/candidates/{id}/flag`: add a candidate to, or remove it from, the hall of fame.

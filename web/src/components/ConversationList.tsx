@@ -4,8 +4,10 @@ import { Conversation } from "../thread";
 const STATUS: Record<Conversation["status"], string> = {
   queued: "queued",
   running: "running",
+  paused: "paused",
   done: "done",
   failed: "failed",
+  cancelled: "cancelled",
 };
 
 // The sidebar: one row per task, newest first. Status, best score, then the task.
