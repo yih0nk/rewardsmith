@@ -555,3 +555,48 @@ button.round:hover .label {
   overflow-wrap: anywhere;
   border-bottom: 1px solid currentColor;
 }
+
+/* ---- Pause, resume and cancel ---- */
+.badge.paused,
+.badge.cancelled {
+  color: var(--dp-color-ink-muted);
+}
+.run-controls {
+  display: grid;
+  gap: var(--dp-spacing-inset);
+  margin-top: var(--dp-spacing-row-compact);
+}
+.run-controls-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dp-spacing-inset);
+}
+/* Square outlined controls; they invert on hover like .primary. */
+.control {
+  min-height: 36px;
+  padding: 0 var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-ink);
+  background: transparent;
+  color: var(--dp-color-ink);
+  font-size: var(--dp-typography-label);
+}
+.control:not(:disabled):hover {
+  background: var(--dp-color-ink);
+  color: var(--dp-color-ground);
+}
+.control.cancel {
+  border-color: var(--dp-color-emphasis);
+  color: var(--dp-color-emphasis);
+}
+.control.cancel:not(:disabled):hover {
+  background: var(--dp-color-emphasis);
+  color: var(--dp-color-ground);
+}
+.control:disabled {
+  border-color: var(--dp-color-rule);
+  color: var(--dp-color-ink-muted);
+}
+.run-controls-note {
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}

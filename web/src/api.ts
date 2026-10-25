@@ -1,4 +1,4 @@
-export type Status = "queued" | "running" | "done" | "failed";
+export type Status = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
 
 // Live training progress, written by the training process as it goes.
 export type ProgressStage = "compiling" | "training" | "rendering" | "done";
@@ -90,6 +90,8 @@ export interface RequestSummary {
   best_candidate_id?: number | null;
   succeeded?: number | null;
   success_check_error?: string | null;
+  // A pause or cancel the worker will act on at its next checkpoint.
+  control?: "pause" | "cancel" | null;
   created_at: number;
 }
 
@@ -199,4 +201,13 @@ export const flagCandidate = (id: number, note: string) =>
 export const unflagCandidate = (id: number) =>
   fetch(`/api/candidates/${id}/flag`, { method: "DELETE" }).then((r) =>
     json<{ ok: boolean }>(r),
+  );
+
+export type RunAction = "pause" | "resume" | "cancel";
+
+// Pause, resume or cancel a run. Returns the new state: "pausing" / "cancelling" while
+// the worker finishes its current step. A 409 means the run's state doesn't allow it.
+export const controlRequest = (id: string, action: RunAction) =>
+  fetch(`/api/requests/${encodeURIComponent(id)}/${action}`, { method: "POST" }).then(
+    (r) => json<{ state: string }>(r),
   );

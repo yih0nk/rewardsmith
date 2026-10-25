@@ -902,3 +902,52 @@ test("open server-timed stages set the start time; training keeps candidate prog
   const setup = { ...runningAt([], [sceneEvt]), stages: [{ name: "check", round_n: null, started_at: T0 + 6, ended_at: null }] };
   assert.equal(stages.runStage(setup).startedAt, T0 + 6);
 });
+
+test("run controls offer the actions each state allows", () => {
+  const html = (fields) => render({ ...base, ...fields });
+  const queued = html({ status: "queued" });
+  assert.match(queued, />Pause</);
+  assert.match(queued, />Cancel</);
+
+  const running = html({ status: "running", control: null });
+  assert.match(running, /Pause after this round/);
+  assert.match(running, />Cancel</);
+
+  const pausing = html({ status: "running", control: "pause" });
+  assert.match(pausing, /Pausing after this round/);
+  assert.match(pausing, /Keep running/);
+
+  const cancelling = html({ status: "running", control: "cancel" });
+  assert.match(cancelling, /Cancelling at the next checkpoint/);
+  assert.doesNotMatch(cancelling, />Cancel</);
+
+  const paused = html({ status: "paused" });
+  assert.match(paused, />Resume</);
+  assert.match(paused, /Paused before it started/);
+
+  for (const status of ["done", "failed", "cancelled"]) {
+    assert.doesNotMatch(html({ status }), /run-controls/);
+  }
+  assert.match(html({ status: "cancelled" }), /Cancelled before it started/);
+});
+
+test("run control calls post to the request's action route", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push(`${options?.method} ${url}`);
+    return new Response(JSON.stringify({ state: "pausing" }), { status: 200 });
+  };
+  try {
+    assert.deepEqual(await api.controlRequest("abcd1234", "pause"), { state: "pausing" });
+    await api.controlRequest("abcd1234", "resume");
+    await api.controlRequest("abcd1234", "cancel");
+    assert.deepEqual(calls, [
+      "POST /api/requests/abcd1234/pause",
+      "POST /api/requests/abcd1234/resume",
+      "POST /api/requests/abcd1234/cancel",
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
