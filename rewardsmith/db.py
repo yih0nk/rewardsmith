@@ -109,7 +109,8 @@ ADDED_COLUMNS = {
                  "target_candidate_id": "INTEGER",  # a follow-up's candidate to refine; NULL = the best, when it starts
                  "scene_changed": "INTEGER",  # 1 when a follow-up's note changed the scene (it trains from scratch)
                  # JSON {verdict: doable | approximate | refuse, reason, simplification, suggestion} from the scene writer
-                 "feasibility": "TEXT"},
+                 "feasibility": "TEXT",
+                 "success_code": "TEXT"},  # the checker's check(traj) source, when the check measures with code
     "candidates": {
         "flagged_at": "REAL",
         "flag_note": "TEXT",

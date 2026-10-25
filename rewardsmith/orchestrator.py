@@ -333,6 +333,7 @@ class _Judge:
         self.conn, self.lock, self.rid, self.round_n = conn, lock, rid, round_n
         self.critic, self.request, self.spec, self.check_error = critic, request, spec, check_error
         self.artifacts_dir, self.cids, self.sources = artifacts_dir, cids, sources
+        self.code = (db.get_request(conn, rid) or {}).get("success_code")  # the critic reads the check's code
         self._seen: set[int] = set()
         self._trained: dict[int, tuple[int, str, RunResult, dict[str, Any] | None]] = {}
         self._reviews: dict[int, Future] = {}
@@ -355,6 +356,8 @@ class _Judge:
             check = check_spec.evaluate(self.spec, result.metrics) if self.spec else None
             if check is not None and self.check_error:
                 check.update({"pass": False, "verified": False, "error": self.check_error})
+            if check is not None and self.code and not self.check_error:
+                check["code"] = self.code
             db.set_candidate(self.conn, cid, status="trained", metrics=result.metrics, video_path=video, check_result=check)
             if db.control_of(self.conn, self.rid) == "cancel":
                 return  # the run stops at the next checkpoint: no Claude calls for it
@@ -649,9 +652,14 @@ def _start_success_spec(req: dict[str, Any], checker: Checker | None, scene: Sce
         pool.shutdown(wait=False)
 
 
-def _write_spec(checker: Checker, text: str, scene: SceneSpec | None) -> list[dict[str, Any]]:
+def _write_spec(checker: Checker, text: str, scene: SceneSpec | None) -> check_spec.Check:
+    """The checker's check, revalidated here: clauses, plus check(traj) code when it wrote some."""
+    write_check = getattr(checker, "write_check", None)
+    if write_check is not None:
+        check = write_check(text, scene=scene) if scene and not scene.is_empty else write_check(text)
+        return check_spec.validate_check(check.clauses, check.code, text, scene)
     spec = checker.write_spec(text, scene=scene) if scene and not scene.is_empty else checker.write_spec(text)
-    return check_spec.validate_for_scene(spec, text, scene)
+    return check_spec.validate_check(spec, None, text, scene)
 
 
 def _settle_spec(
@@ -660,10 +668,14 @@ def _settle_spec(
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """The request's check and its error, stored, and handed to the simulator to measure."""
     spec = _success_spec(conn, req, checker, scene, pending)
-    check_error = db.get_request(conn, req["id"]).get("success_check_error")
+    stored = db.get_request(conn, req["id"])
+    check_error = stored.get("success_check_error")
     set_spec = getattr(sim, "set_evaluation_spec", None)
     if set_spec:
         set_spec(spec if not check_error else None)
+    set_code = getattr(sim, "set_check_code", None)
+    if set_code:
+        set_code(stored.get("success_code") if not check_error else None)
     return spec, check_error
 
 
@@ -683,14 +695,17 @@ def _success_spec(
         # Keep stored specs immutable, but do not certify an old locomotion-only
         # check as proof of a scene objective after an upgrade.
         try:
-            check_spec.validate_for_scene(req["success_spec"], _task(req), scene)
+            check_spec.validate_check(req["success_spec"], req.get("success_code"), _task(req), scene)
         except check_spec.SpecError as exc:
             db.set_request(conn, rid, success_check_error=_describe(exc))
         return req["success_spec"]
     if checker is None:
         return None
     try:
-        spec = pending.result() if pending is not None else _write_spec(checker, _task(req), scene)
+        check = pending.result() if pending is not None else _write_spec(checker, _task(req), scene)
+        spec = check.clauses
+        if check.code:
+            db.set_request(conn, rid, success_code=check.code)
     except Exception as exc:
         # A scene with a goal or a fixed target implies its check; use that when Claude's didn't
         # validate, rather than "don't fall". Not when Claude said the task can't be measured.
@@ -706,7 +721,8 @@ def _success_spec(
             spec = [check_spec.NO_FALL]
             db.set_request(conn, rid, success_check_error=_describe(exc))
     db.set_success_spec(conn, rid, spec)
-    db.log_event(conn, rid, "check", "Success check: " + ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in spec))
+    db.log_event(conn, rid, "check", "Success check: " + ", ".join(f"{c['metric']} {c['op']} {c['value']:g}" for c in spec)
+                 + (" (measured by the checker's code)" if any(c["metric"].startswith(check_spec.CHECK_PREFIX) for c in spec) else ""))
     return spec
 
 
@@ -916,6 +932,7 @@ def prepare_turn(
     if not changed:
         fields["scene"] = scene.to_dict()
         fields["success_check_error"] = parent_req.get("success_check_error")
+        fields["success_code"] = parent_req.get("success_code")  # the check's code goes with its clauses
     db.set_request(conn, rid, **fields)
     if not changed and parent_req.get("success_spec"):
         db.set_success_spec(conn, rid, parent_req["success_spec"])
