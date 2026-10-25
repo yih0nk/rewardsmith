@@ -144,6 +144,12 @@ class PlaygroundSimulator:
         with self._gate_lock:
             return gate.check_reward(source, impl=self.impl, scene=scene, env_options=self.env_options)
 
+    def scene_gate(self, scene: SceneSpec) -> str | None:
+        """Step the compiled scene on the CPU and report problems for the scene writer (scene_gate.py)."""
+        from . import scene_gate
+
+        return scene_gate.check_scene(scene)
+
     @property
     def env_options(self) -> dict:
         """go1.make_env's arguments for this mode: the walker to steer, or the stock terms to tune under."""

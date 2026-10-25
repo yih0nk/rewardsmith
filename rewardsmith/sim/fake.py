@@ -43,6 +43,13 @@ class FakeSimulator:
         # The real Go1 contract, so prompts written against the fake match the GPU run.
         return describe(scene or EMPTY)
 
+    def scene_gate(self, scene: SceneSpec) -> str | None:
+        """The checks that need no physics (scene_gate.static_errors)."""
+        from .scene_gate import _message, static_errors
+
+        errors = static_errors(scene)
+        return _message(errors) if errors else None
+
     def gate(self, source: str, scene: SceneSpec | None = None) -> str | None:
         try:
             tree = _parse(source)

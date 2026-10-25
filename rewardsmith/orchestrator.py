@@ -126,7 +126,7 @@ def run_request(
         db.log_event(conn, rid, "control", f"Resuming at round {start}")
         scene = scene_spec.parse(req["scene"]) if req.get("scene") is not None else scene_spec.EMPTY
     else:
-        scene = _make_scene(conn, req, scener)
+        scene = _make_scene(conn, req, scener, sim)
     plan = getattr(sim, "plan_request", None)
     if plan:  # per-request steps and stock terms (sim/budget.py); describe() names the stock terms
         message = plan(text, scene)
@@ -503,11 +503,14 @@ def _resume_state(
     return len(rounds) + 1, (ranked[0] if ranked else None), ranked, history
 
 
-def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | None) -> SceneSpec:
+def _make_scene(
+    conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | None, sim: Simulator | None = None,
+) -> SceneSpec:
     """The request's scene: the one it came with, else the scene writer's, else the plain floor.
 
     Rejected specs go back to the scene writer with the validator's errors, like
-    the reward gate. Every attempt is logged as a "scene" event.
+    the reward gate: first scene.parse's, then the simulator's scene gate (the
+    compiled scene stepped in physics). Every attempt is logged as a "scene" event.
     """
     rid, text = req["id"], _task(req)
     if req.get("scene") is not None:
@@ -522,6 +525,9 @@ def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | 
         for attempt in range(SCENE_RETRIES + 1):
             try:
                 scene = scene_spec.parse(spec)
+                error = _scene_gate(sim, scene)
+                if error:
+                    raise SceneError(error)
                 break
             except SceneError as exc:
                 db.log_event(conn, rid, "scene", f"Scene attempt {attempt + 1} rejected: {exc}")
@@ -537,6 +543,12 @@ def _make_scene(conn: sqlite3.Connection, req: dict[str, Any], scener: Scener | 
     db.set_request(conn, rid, scene=scene.to_dict())
     db.log_event(conn, rid, "scene", scene.summary())
     return scene
+
+
+def _scene_gate(sim: Simulator | None, scene: SceneSpec) -> str | None:
+    """The simulator's physics check of a parsed scene, if it has one."""
+    check = getattr(sim, "scene_gate", None)
+    return check(scene) if check is not None and not scene.is_empty else None
 
 
 class _Staged:
