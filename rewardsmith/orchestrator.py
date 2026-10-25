@@ -33,6 +33,7 @@ from .agents.editor import unified_diff
 from .coaching import ACTED, ADVISORY, LAST_RUNNER, QUOTA, TOO_EARLY, Call, LiveCoach
 from .search import Halving
 from .sim import scene as scene_spec
+from .sim import checkpoints
 from .sim.base import RunResult, Simulator, Stopped
 from .sim.scene import SceneError, SceneSpec
 
@@ -116,6 +117,9 @@ def run_request(
     # Next-round drafts the editor started while a round still trained (see _EarlyDrafts).
     early = _EarlyDrafts(editor, text, env_doc, max(0, k // 2))
 
+    # source -> out_dir of every candidate that trained, stopped ones too: their params_<steps>.pkl
+    # let a revision train on from its parent's weights (_start_from), including the coach's early drafts.
+    trained_dirs: dict[str, Path] = {}
     for n in range(start, settings.max_rounds + 1):
         try:
             _checkpoint(conn, rid, round_boundary=True)
@@ -179,7 +183,11 @@ def run_request(
                 db.log_event(conn, rid, "train", f"Training {len(ready)} candidate(s)")
             for cid, _, _ in ready:  # so the board can tell "waiting" from "training"
                 db.set_candidate(conn, cid, status="training")
-            jobs = [(src, out_dir) for _, src, out_dir in ready]
+            parents = {cid: d.parent for d, cid in zip(drafts, cids)}
+            jobs = [
+                (src, out_dir, *(_start_from(trained_dirs, parents[cid], best) if settings.continue_rounds else ()))
+                for cid, src, out_dir in ready
+            ]
             # Each candidate is judged the moment its run ends, while the others still train.
             judge = _Judge(conn, lock, rid, n, critic, critic_request, spec, check_error, settings.artifacts_dir,
                            [cid for cid, _, _ in ready], [src for _, src, _ in ready])
@@ -187,10 +195,10 @@ def run_request(
             if halving and len(ready) > halving[-1]:
                 assert ranker is not None
                 cull = Halving(
-                    [out_dir for _, out_dir in jobs], halving[1:],
+                    [job[1] for job in jobs], halving[1:],
                     rank=lambda snapshots: ranker.rank(text, snapshots),
                     on_event=lambda msg: _locked(lock, db.log_event, conn, rid, "halving", msg),
-                    labels=[out_dir.name for _, out_dir in jobs],
+                    labels=[job[1].name for job in jobs],
                 )
             live = None
             if coach is not None and jobs:
@@ -205,6 +213,9 @@ def run_request(
                 with db.stage(conn, rid, "training", n):
                     results = sim.run_many(jobs, scene, **more) if jobs else []
                 judge.finish(results)  # any job run_many didn't report as it ended
+                for (_, src, out_dir), result in zip(ready, results):
+                    if not isinstance(result, str):
+                        trained_dirs[src] = out_dir
                 if live is not None:
                     _log_coach_stats(conn, lock, rid, n, live)
                 _checkpoint(conn, rid, round_boundary=False)  # before waiting on the critic's Claude calls
@@ -242,6 +253,19 @@ def run_request(
     early.close()  # drafts for a round that won't run
     db.set_request(conn, rid, succeeded=int(best is not None and _succeeded(best, settings)))
     return best
+
+
+def _start_from(trained: dict[str, Path], parent: str | None, best: Best | None) -> tuple[dict, ...]:
+    """A revision's job options: train on from its parent's policy, else the best one so far.
+
+    The scene is fixed for the whole request, so these checkpoints fit the env as they are.
+    Returns () when neither has a checkpoint: the simulator's default start.
+    """
+    for source in (parent, best.source if best else None):
+        found = checkpoints.latest(trained[source]) if source in trained else None
+        if found is not None:
+            return ({"init_params": str(found)},)
+    return ()
 
 
 class _Judge:

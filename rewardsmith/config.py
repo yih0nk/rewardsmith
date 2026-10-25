@@ -18,6 +18,7 @@ class Settings:
     carry_top: int = 2  # each later round revises this many of the best candidates so far
     halving: tuple[int, ...] = ()  # e.g. (8, 4, 2): successive halving within a round; () = off
     editor: str = "claude"  # claude | droid: who revises rewards from round 2 on
+    continue_rounds: bool = True  # round 2+ candidates train on from their parent's policy, not from scratch
     coach: str = "off"  # the live coach's model (e.g. claude-haiku-5-5), or "off"; a request can override it
     # Let the coach stop candidates (and draft their fixes early). Off: it comments and advises only.
     # Off by default: on the ball-to-target task its stops cost quality in 2 of 2 paired runs.
@@ -65,6 +66,7 @@ def load() -> Settings:
         carry_top=max(1, int(os.environ.get("REWARDSMITH_CARRY", "2"))),
         halving=_halving(os.environ.get("REWARDSMITH_HALVING", "")),
         editor=os.environ.get("REWARDSMITH_EDITOR", "claude").strip().lower(),
+        continue_rounds=_flag("REWARDSMITH_CONTINUE", "1"),
         coach=os.environ.get("REWARDSMITH_COACH", "claude-haiku-5-5").strip() or "off",
         coach_stops=_flag("REWARDSMITH_COACH_STOPS", "0"),
     )
