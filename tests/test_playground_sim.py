@@ -74,7 +74,7 @@ def test_children_get_the_warm_start_settings_resolved(monkeypatch, tmp_path):
     sim.run_many([(WALK_BACKWARDS, tmp_path / "a"), (WALK_BACKWARDS, tmp_path / "b", {"steps": 5})])
     opts = seen["sim_options"]
     assert opts["walker"] == str(walker) and opts["mode"] == "tune" and opts["stock_profile"] == "pose"
-    assert opts["steps"] == 10_000_000
+    assert opts["steps"] == 5_000_000
     assert seen["jobs"][1][2] == {"steps": 5}
     assert PlaygroundSimulator(**opts).sim_options() == opts  # a child trains exactly as the parent would
 

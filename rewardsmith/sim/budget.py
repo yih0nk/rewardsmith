@@ -10,7 +10,10 @@ Keyword rules plus the scene, no Claude call, so it is instant and repeatable:
 and a family: "pose" (stand on hind legs, sit, jump, roll over, ...) fine-tunes the walker and
 drops the stock terms that hold the body level (go1_spec.STOCK_PROFILES); "gait" steers the
 walker with velocity commands (playground.PlaygroundSimulator.plan_request).
-The step counts were measured on the 4090 with warm starts (docs/warm-start.md).
+The step counts were measured on the 4090 (docs/warm-start.md). Steering the walker, the
+regression's walk forward / walk backwards / spin rewards matched their 10M-step cold
+baselines at 5M (walk backwards was at 28.9 of 29.5 after 1.3M); on the live ball-to-goal
+rewards the steered eval reward was still climbing at 10M, so complex tasks get 20M.
 """
 
 import re
@@ -19,7 +22,7 @@ from dataclasses import dataclass
 from .scene import SceneSpec
 
 BUDGETS: dict[str, int] = {
-    "simple": 10_000_000,
+    "simple": 5_000_000,
     "object": 10_000_000,
     "complex": 20_000_000,
 }
