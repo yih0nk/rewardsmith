@@ -5,7 +5,8 @@
 .candidate-option {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 46ch) 12ch minmax(0, 1fr);
+  /* Name and score, the score bar, then the learning curve, which needs ~200 px. */
+  grid-template-columns: minmax(0, 40ch) 12ch minmax(0, 1fr);
   align-items: center;
   column-gap: var(--dp-spacing-column-gap);
   padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
@@ -64,6 +65,7 @@
   color: var(--dp-color-ink-muted);
 }
 .candidate-state {
+  white-space: nowrap;
   font-weight: 400;
 }
 .candidate-state::first-letter {
@@ -156,6 +158,20 @@
   color: var(--dp-color-ink);
 }
 
+/* What the candidate tries, in two lines; the full text is in its in-depth panel. */
+.candidate-idea {
+  grid-column: 1 / -1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 90ch;
+  overflow: hidden;
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.candidate-option.active .candidate-idea {
+  color: var(--dp-color-ground);
+}
 /* Failed and stopped candidates read as finished, not as still working. */
 .candidate-option.failed .candidate-state,
 .candidate-option.stopped .candidate-state {

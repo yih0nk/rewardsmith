@@ -65,8 +65,8 @@
 }
 .result-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 38ch);
-  gap: var(--dp-spacing-column-gap-wide);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dp-spacing-row-compact);
 }
 .stage {
   min-width: 0;
@@ -204,17 +204,45 @@
   color: var(--dp-color-ink-muted);
 }
 
-/* ---- Evaluation ---- */
-.evaluation {
+/* ---- Evaluation ----
+   The score and verdict sit in one compact row over the video. The success check
+   and Claude's notes run full width under the result, each held to a reading
+   measure so long text stays readable on a wide screen. */
+.verdict-row {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-column-gap-wide);
+}
+.verdict-facts {
+  display: grid;
+  gap: 2px;
+  font-size: var(--dp-typography-label);
+}
+.verdict-facts .improvement {
+  margin-top: 0;
+}
+.verdict-check {
+  color: var(--dp-color-ink-muted);
+}
+.verdict-check.pass {
+  color: var(--dp-color-emphasis);
+}
+.evaluation {
+  display: grid;
+  /* minmax(0, …): a wide table scrolls in its own box instead of widening the page. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dp-spacing-row);
   min-width: 0;
+  margin-top: var(--dp-spacing-row);
+}
+.evaluation > * {
+  max-width: 90ch;
 }
 .score {
   display: flex;
   align-items: baseline;
   gap: var(--dp-spacing-cell);
-  margin-top: var(--dp-spacing-inset);
 }
 .score .num:first-child {
   font-size: var(--dp-typography-display);
@@ -246,10 +274,75 @@
 .metric dd {
   color: var(--dp-color-ink);
 }
-.evaluation > .subtle {
-  margin-top: var(--dp-spacing-row-compact);
+/* Claude's notes: who, a two-sentence lead, then the full text on request. */
+.critique {
+  padding-left: var(--dp-spacing-gutter);
+  border-left: var(--dp-border-hairline) solid var(--dp-color-ink);
 }
-/* A quoted statement with its attribution. */
+.critique-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--dp-spacing-inset) var(--dp-spacing-gutter);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.critique-flag {
+  padding: 0 var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-emphasis);
+  color: var(--dp-color-emphasis);
+}
+.critique-lead {
+  max-width: 80ch;
+  margin-top: var(--dp-spacing-inset);
+  color: var(--dp-color-emphasis);
+}
+.critique-full {
+  max-width: 80ch;
+  margin-top: var(--dp-spacing-inset);
+}
+.critique-full summary {
+  cursor: pointer;
+  color: var(--dp-color-ink);
+}
+.critique-full summary span {
+  margin-left: var(--dp-spacing-cell);
+  font-size: var(--dp-typography-label);
+  color: var(--dp-color-ink-muted);
+}
+.critique-full p,
+.critique-full ul,
+.critique-full ol {
+  margin: var(--dp-spacing-inset) 0 0;
+}
+.critique-full ul,
+.critique-full ol {
+  padding-left: 3ch;
+}
+.critique-full li + li {
+  margin-top: 4px;
+}
+.critique-heading {
+  margin-top: var(--dp-spacing-row-compact);
+  font-size: var(--dp-typography-body);
+  font-weight: 500;
+  color: var(--dp-color-emphasis);
+}
+.critique-full strong {
+  color: var(--dp-color-emphasis);
+}
+.idea p {
+  max-width: 80ch;
+}
+.idea .sub-title {
+  margin-top: 0;
+}
+.critique code,
+.idea code {
+  color: var(--dp-color-emphasis);
+  overflow-wrap: anywhere;
+}
+/* A quoted statement with its attribution (the hall of fame's notes). */
 .critic {
   margin-top: var(--dp-spacing-row);
   padding-left: var(--dp-spacing-gutter);
@@ -280,11 +373,13 @@
 .rounds {
   border-top: var(--dp-border-hairline) solid var(--dp-color-rule);
 }
+/* A flex row: the fixed-width readouts line up across rows, and the counts and
+   the "Best" tag drop to a second line when the pane is narrow. */
 .round {
-  display: grid;
-  grid-template-columns: 8ch 8ch 5ch 21ch minmax(0, 1fr) 6ch;
+  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  column-gap: var(--dp-spacing-column-gap);
+  gap: 0 var(--dp-spacing-gutter);
   width: 100%;
   padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
   border: 0;
@@ -323,12 +418,23 @@ button.round:hover .label {
   font-weight: 500;
   color: var(--dp-color-emphasis);
 }
+.round > .label {
+  flex: 0 0 8ch;
+}
+.round-score {
+  flex: 0 0 8ch;
+}
+.round > .delta {
+  flex: 0 0 5ch;
+}
 .round-meta {
+  flex: 1 0 auto;
   font-size: var(--dp-typography-label);
   color: var(--dp-color-ink-muted);
+  white-space: nowrap;
 }
 .round-best {
-  justify-self: end;
+  margin-left: auto;
   font-size: var(--dp-typography-label);
   color: var(--dp-color-emphasis);
 }
@@ -540,26 +646,46 @@ button.round:hover .label {
   color: var(--dp-color-emphasis);
 }
 
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
 .check-criteria {
-  width: 100%;
   margin-top: var(--dp-spacing-inset);
   border-collapse: collapse;
   font-size: var(--dp-typography-label);
-  table-layout: fixed;
 }
 .check-criteria th,
 .check-criteria td {
   padding: var(--dp-spacing-inset) var(--dp-spacing-cell) var(--dp-spacing-inset) 0;
   border-bottom: var(--dp-border-hairline) solid var(--dp-color-rule);
+  padding-right: var(--dp-spacing-column-gap);
   text-align: left;
   vertical-align: top;
-  overflow-wrap: anywhere;
+}
+/* Headers and values never break mid-word; only the metric name wraps, at spaces. */
+.check-criteria thead th,
+.check-criteria td {
+  white-space: nowrap;
+}
+.check-criteria tbody th {
+  min-width: 18ch;
+  max-width: 40ch;
+  font-weight: 400;
+  color: var(--dp-color-ink);
 }
 .check-criteria thead th {
   color: var(--dp-color-ink-muted);
   font-weight: normal;
 }
 .check-criteria td.pass {
+  color: var(--dp-color-emphasis);
+}
+/* A criterion kept out of the table (the single-run "fell" when a per-episode fall
+   rate is shown) still fails the check: say so under the table. */
+.check-note {
+  margin-top: var(--dp-spacing-inset);
+  font-size: var(--dp-typography-label);
   color: var(--dp-color-emphasis);
 }
 

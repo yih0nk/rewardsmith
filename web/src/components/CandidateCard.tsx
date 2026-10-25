@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { Candidate } from "../api";
 import { candidateAnchor } from "../thread";
 import { candidateName, candidateState } from "../stages";
+import { inline } from "./Critique";
 import TrainingProgress, {
   Sparkline,
   liveState,
@@ -81,6 +82,10 @@ export default function CandidateCard({
             caption="how it learned"
           />
         )
+      )}
+      {c.idea && (
+        // Two lines here; the full idea is in the candidate's in-depth panel.
+        <p className="candidate-idea idea">{inline(c.idea)}</p>
       )}
       {reply && <div className="reply-slot">{reply}</div>}
     </div>

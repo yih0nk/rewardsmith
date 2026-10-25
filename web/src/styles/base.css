@@ -244,9 +244,15 @@ code {
   text-align: left;
   text-indent: 0;
   white-space: normal;
-  visibility: hidden;
+  /* display, not visibility: a hidden tip must not widen the page. */
+  display: none;
 }
 .explain:hover .explain-tip,
 .explain-term:focus-visible + .explain-tip {
-  visibility: visible;
+  display: block;
+}
+/* Near the right edge, the tip opens leftward (Explain sets this on hover/focus). */
+.explain.flip .explain-tip {
+  left: auto;
+  right: 0;
 }

@@ -1,0 +1,129 @@
+{
+  "source": "GET /api/requests/247ebfab on the live board, 2026-10-24 (critiques and success check of two candidates)",
+  "request": "Make the robot dog stand on two legs",
+  "success_spec": [
+    {
+      "metric": "fell",
+      "op": "<",
+      "value": 0.5
+    },
+    {
+      "metric": "base_height",
+      "op": ">",
+      "value": 0.2
+    },
+    {
+      "metric": "abs_forward_velocity",
+      "op": "<",
+      "value": 0.3
+    }
+  ],
+  "best": {
+    "critique": "Key numbers: upright 0.662 (a mean body tilt of about 48°, not near-vertical), base_height 0.28 m (no higher than normal quadruped standing), and term_bipedal_hold only 0.854 against term_posture_broad 518.\n\nThe robot does rear up onto its hind legs. Frames 2, 4, 6 and 7 show a plausible two-legged stance with the front legs tucked. It does not hold that stance. Frames 3, 5, 8 and 9 show it slumping onto its haunches or rear knees with the torso at roughly 45°, and in frame 10 it is nearly back on four legs.\n\nThe penalty terms confirm this rear, slump, rear cycle:\n- term_front_contact -15.8: the front feet touched down.\n- term_fall_rate -39.6.\n- term_yaw_spin -58.2: notable turning while trying to balance.\n\nThe success check passes, but its clauses are far too loose. base_height > 0.2 is satisfied by ordinary quadruped standing, and nothing in it tests uprightness or how long both front feet stayed off the ground. This is a weak, inconsistent version of the behavior. It is not clean bipedal standing.\n\nFor the next reward writer:\n1. Make the bipedal-hold term the main reward. Pay per step only when both front feet are off the ground, the body is pitched beyond about 70° and base height is above about 0.40 m. Pay more the longer the hold lasts.\n2. Cut term_posture_broad by roughly 5×. It currently pays out for half-reared, sitting postures.\n3. Make height shaping target about 0.40–0.45 m rather than rewarding anything above standing height.\n4. Penalize rear-knee or thigh contact with the ground, so sitting on the haunches stops scoring.\n5. Strengthen the front-contact penalty after the robot has reared, to stop the drop back to four legs.\n6. Raise the yaw-spin penalty.\n\nAdd success-check clauses for upright pitch (e.g. body z-axis tilted more than 60°, or the forward axis pointing up), base_height > 0.38, and front-feet-airborne fraction > 0.8.",
+    "check_result": {
+      "pass": true,
+      "clauses": [
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "pass": true
+        },
+        {
+          "metric": "base_height",
+          "op": ">",
+          "value": 0.2,
+          "actual": 0.28,
+          "pass": true
+        },
+        {
+          "metric": "abs_forward_velocity",
+          "op": "<",
+          "value": 0.3,
+          "actual": 0.072,
+          "pass": true
+        }
+      ]
+    },
+    "score": 4.0
+  },
+  "hacked": {
+    "critique": "Reward hacking suspected. Key numbers: upright = 0.612, term_vertical_hold = 0.797 against term_pitch_progress = 949.8, and base_height = 0.352. A true bipedal stance needs the body pitched near vertical, which means low up-axis z and a base well above 0.45 m, held for most of the episode.\n\nThe frames show a repeating cycle instead of a stance. The robot starts on four legs, then:\n- squats onto its haunches (frame 2),\n- rears up (frame 3),\n- collapses into a sit (frame 4),\n- rears to vertical (frame 5),\n- collapses again (frame 6),\n- briefly balances upright on its hind legs (frames 7-8),\n- then pitches forward and down (frames 9-10).\n\nThat matches the reward breakdown. Nearly all the return comes from the \"progress\" terms (pitch 950, front_feet 665, height 373), which pay for motion toward upright. Only 0.8 comes from actually holding vertical. The policy is farming repeated rise-and-drop cycles rather than standing on two legs. It also drifts backward at -0.21 m/s and yaws. Robustness is mediocre: 2 of 3 seeds pass.\n\nThe success check passed, but its clauses never test bipedal posture. Height above 0.2 m is satisfied by standing on four legs. It needs clauses such as:\n- mean upright < 0.4 (or pitch near 90°),\n- base_height > 0.45,\n- a front-feet-off-ground fraction > 0.8.\n\nWhat the next reward writer should change:\n1. Remove the non-telescoping progress terms, or make them strictly potential-based (gamma*phi(s') - phi(s)) so oscillating earns nothing.\n2. Make the dominant term a dense per-step hold reward, for example exp(-((pitch - pi/2)^2)/0.1) multiplied by a front-feet-airborne indicator and by base_height > 0.45.\n3. Add an explicit penalty on front-foot ground contact once the robot is upright.\n4. Penalize the downward rate of pitch, so falling back is costly.\n5. Add a small penalty on linear velocity and yaw rate to stop the backward drift.\n6. Keep the torque and action-rate penalties, but scale them so they do not discourage holding the pose.",
+    "score": 3.0
+  },
+  "scene": {
+    "source": "GET /api/requests/6d9cfe59 on the live board, 2026-10-24",
+    "request": "make robot move ball to a target destination",
+    "success_spec": [
+      {
+        "metric": "all:reach:ball&push:ball:goal",
+        "op": ">=",
+        "value": 0.8
+      },
+      {
+        "metric": "scene_fell",
+        "op": "<=",
+        "value": 0.1
+      },
+      {
+        "metric": "fell",
+        "op": "<",
+        "value": 0.5
+      }
+    ],
+    "both_fail_rate": {
+      "pass": false,
+      "clauses": [
+        {
+          "metric": "all:reach:ball&push:ball:goal",
+          "op": ">=",
+          "value": 0.8,
+          "actual": 0.156,
+          "pass": false
+        },
+        {
+          "metric": "scene_fell",
+          "op": "<=",
+          "value": 0.1,
+          "actual": 0.375,
+          "pass": false
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 0.0,
+          "pass": true
+        }
+      ]
+    },
+    "video_fell_only": {
+      "pass": false,
+      "clauses": [
+        {
+          "metric": "all:reach:ball&push:ball:goal",
+          "op": ">=",
+          "value": 0.8,
+          "actual": 0.0,
+          "pass": false
+        },
+        {
+          "metric": "scene_fell",
+          "op": "<=",
+          "value": 0.1,
+          "actual": 0.031,
+          "pass": true
+        },
+        {
+          "metric": "fell",
+          "op": "<",
+          "value": 0.5,
+          "actual": 1.0,
+          "pass": false
+        }
+      ]
+    },
+    "markdown_critique": "Key numbers: reach-and-push-to-goal success is 0.156 (needs >= 0.8), scene_fell is 0.375 (needs <= 0.1), and target_final_dist 0.457 vs target_min_dist 0.367, so the robot leaves the ball after reaching it. Both success-check clauses on the task fail.\n\n**What the frames show**\n- The robot walks to the ball quickly: reached in 100% of episodes, in 1.8 s.\n- It then drops into a nose-down crouch with its head pressed on the ball and mostly stays parked there.\n- The ball barely moves toward the green zone, which is off to the side and then behind the robot.\n- In the last two frames the robot twists and rolls onto its side. That matches the 37.5% fall rate in fresh episodes, even though this rollout's fell flag is 0.\n\n**Reward terms**\n- term_ball_speed_track (326) and term_upright (230) dominate the return.\n- term_ball_settled_in_goal (124) is only earned in the few successful episodes.\n- This is reaching the ball, not moving it to the destination.\n\n**What the next reward writer should change**\n1. Replace ball_speed_track with a ball-progress term: the reward for the decrease in ball-to-goal distance per step, so speed in the wrong direction earns nothing.\n2. Add a robot-positioning term that rewards the robot standing on the far side of the ball from the goal, aligned along the ball-to-goal line. Gate the push reward on that alignment.\n3. Cut proximity and face_ball once the robot is within about 0.4 m, so parking with its nose on the ball stops paying.\n4. Add a base-height penalty below about 0.24 m and a strong termination penalty for falling or a large roll/pitch. This removes the head-down crouch and the rollovers.\n5. Raise ang_vel_xy, and keep upright as a penalty rather than a large positive bonus.\n6. Train longer: the reward curve is still rising steeply (7.95 to 16.72)."
+  }
+}
