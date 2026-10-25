@@ -72,7 +72,7 @@ export default function RoundTimeline({
             className={`round ${active ? "active" : ""} ${best ? "best" : ""}`}
             onClick={() => onSelect(r.n)}
           >
-            <span className="label">Round {String(r.n).padStart(2, "0")}</span>
+            <span className="label">Round {r.n}</span>
             <span className="round-score num">
               {score?.toFixed(1) ?? "—"}
               <small>/10</small>
@@ -93,9 +93,13 @@ export default function RoundTimeline({
               )}
             </span>
             <span className="round-meta">
-              {r.candidates.length} candidates · {r.status}
+              {r.candidates.length} {r.candidates.length === 1 ? "candidate" : "candidates"} ·{" "}
+              {r.status === "done" ? "done" : "in progress"}
             </span>
             <span className="round-best">{best && "Best"}</span>
+            <span className="sr-only">
+              {score != null ? `, winner scored ${score.toFixed(1)} out of 10` : ", no score yet"}
+            </span>
           </button>
         );
       })}

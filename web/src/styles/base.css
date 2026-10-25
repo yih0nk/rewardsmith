@@ -210,3 +210,43 @@ code {
     scroll-behavior: auto !important;
   }
 }
+
+/* A term with its explanation: dotted underline, the explanation on hover or focus. */
+.explain {
+  position: relative;
+  display: inline;
+}
+.explain-term {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+  text-align: inherit;
+  cursor: help;
+}
+.explain-tip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  width: max-content;
+  max-width: min(44ch, 80vw);
+  padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
+  border: var(--dp-border-hairline) solid var(--dp-color-ink);
+  background: var(--dp-color-ground);
+  color: var(--dp-color-emphasis);
+  font-size: var(--dp-typography-label);
+  font-weight: 400;
+  line-height: var(--dp-typography-body-leading);
+  text-align: left;
+  text-indent: 0;
+  white-space: normal;
+  visibility: hidden;
+}
+.explain:hover .explain-tip,
+.explain-term:focus-visible + .explain-tip {
+  visibility: visible;
+}

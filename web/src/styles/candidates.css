@@ -5,7 +5,7 @@
 .candidate-option {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 30ch) 12ch minmax(0, 1fr);
+  grid-template-columns: minmax(0, 46ch) 12ch minmax(0, 1fr);
   align-items: center;
   column-gap: var(--dp-spacing-column-gap);
   padding: var(--dp-spacing-inset) var(--dp-spacing-cell);
@@ -15,7 +15,7 @@
 /* The button covers the row, so the whole row selects it. */
 .candidate-select {
   display: grid;
-  grid-template-columns: 14ch minmax(0, 1fr);
+  grid-template-columns: 22ch minmax(0, 1fr);
   align-items: baseline;
   column-gap: var(--dp-spacing-cell);
   padding: 0;
@@ -154,4 +154,13 @@
 .sparkline-value strong {
   font-weight: 500;
   color: var(--dp-color-ink);
+}
+
+/* Failed and stopped candidates read as finished, not as still working. */
+.candidate-option.failed .candidate-state,
+.candidate-option.stopped .candidate-state {
+  color: var(--dp-color-ink-muted);
+}
+.candidate-option.failed .candidate-state {
+  color: var(--dp-color-emphasis);
 }
