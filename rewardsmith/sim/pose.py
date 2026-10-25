@@ -24,6 +24,8 @@ def counted(done: np.ndarray) -> int:
 
 def metrics(env: Go1Env, qpos: np.ndarray) -> dict[str, float]:
     """Pose metrics for one rollout, from qpos per step (already cut to the steps that count)."""
+    if hasattr(env, "pose_metrics"):  # bodies with other feet (the G1's two) measure their own
+        return env.pose_metrics(qpos)
     qpos = np.asarray(qpos)
     if len(qpos) == 0:
         return {}
