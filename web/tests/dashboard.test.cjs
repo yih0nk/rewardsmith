@@ -1216,3 +1216,20 @@ test("the follow-up composer may send an empty note (keep going)", () => {
   assert.match(html, /Refines the best/);
   assert.doesNotMatch(html, /Examples, click to use/);
 });
+
+test("a run's time counts from when the worker picked it up, with time in line apart", () => {
+  const detail = {
+    ...base,
+    status: "done",
+    created_at: T0,
+    events: [
+      { id: 1, kind: "queued", message: "Request queued", created_at: T0 },
+      { id: 2, kind: "mode", message: "Instant", created_at: T0 + 4500 },
+      { id: 3, kind: "done", message: "Finished", created_at: T0 + 4643 },
+    ],
+    rounds: [],
+  };
+  const html = renderToStaticMarkup(React.createElement(RunStatus, { detail, now: (T0 + 5000) * 1000 }));
+  assert.match(html, /<dt>Took<\/dt><dd class="num" data-testid="run-timer">2m 23s</);
+  assert.match(html, /<dt>In line first<\/dt><dd class="num" data-testid="wait-timer">1h 15m</);
+});

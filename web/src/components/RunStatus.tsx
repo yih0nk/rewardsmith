@@ -41,9 +41,18 @@ export default function RunStatus({
       ? elapsedSince(stage.startedAt, now, offset)
       : (now - seen.current.get(stageId)!) / 1000;
   const end = detail.events.at(-1)?.created_at ?? detail.created_at;
-  const totalSeconds = active
-    ? elapsedSince(detail.created_at, now, offset)
-    : end - detail.created_at;
+  // The run's time counts from when the worker picked it up; time in line is shown apart,
+  // so a task that waited behind others doesn't look slow.
+  const starts = [
+    detail.events.find((e) => e.kind !== "queued" && e.kind !== "control")?.created_at,
+    detail.stages?.[0]?.started_at,
+    detail.rounds[0]?.created_at,
+  ].filter((t): t is number => t != null);
+  const pickedUp = starts.length ? Math.min(...starts) : null;
+  // Under half a minute in line is just the worker's poll: count it as part of the run.
+  const waited = pickedUp != null && pickedUp - detail.created_at >= 30 ? pickedUp - detail.created_at : 0;
+  const from = detail.created_at + waited;
+  const totalSeconds = active ? elapsedSince(from, now, offset) : end - from;
   const step = stepIndex(stage.key);
   const finished = stage.key === "done";
   const broken = stage.key === "failed" || stage.key === "no_results";
@@ -89,6 +98,14 @@ export default function RunStatus({
               {formatElapsed(totalSeconds)}
             </dd>
           </div>
+          {waited > 0 && (
+            <div>
+              <dt>In line first</dt>
+              <dd className="num" data-testid="wait-timer">
+                {formatElapsed(waited)}
+              </dd>
+            </div>
+          )}
         </dl>
       </div>
       {stage.hint && <p className="now-hint">{stage.hint}</p>}
