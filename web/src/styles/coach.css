@@ -1,0 +1,27 @@
+/* The live coach's commentary under the run status: one muted tag per line, then the note. */
+.coach-feed {
+  margin-top: var(--dp-spacing-row-compact);
+}
+.coach-feed ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.coach-feed li {
+  display: grid;
+  grid-template-columns: 7ch minmax(0, 1fr);
+  column-gap: var(--dp-spacing-cell);
+  line-height: var(--dp-typography-list-leading);
+}
+.coach-who {
+  color: var(--dp-color-ink-muted);
+  font-size: var(--dp-typography-label);
+}
+.coach-summary {
+  color: var(--dp-color-ink-muted);
+}
+.coach-feed details summary {
+  color: var(--dp-color-ink-muted);
+  font-size: var(--dp-typography-label);
+  cursor: pointer;
+}

@@ -113,7 +113,15 @@ export interface ServerStage {
 export interface RequestDetail extends RequestSummary {
   success_spec?: SuccessClause[] | null;
   rounds: Round[];
-  events: { id: number; kind: string; message: string; created_at: number }[];
+  // round_n and candidate (0-based idx) are set on events about one candidate (coach notes).
+  events: {
+    id: number;
+    kind: string;
+    message: string;
+    created_at: number;
+    round_n?: number | null;
+    candidate?: number | null;
+  }[];
   // Every timed step so far; older servers leave it out.
   stages?: ServerStage[];
 }
