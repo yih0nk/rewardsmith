@@ -5,7 +5,7 @@ import pytest
 from rewardsmith import config, db
 from rewardsmith.agents import checker
 from rewardsmith.agents.base import Review
-from rewardsmith.agents.fake import FakeChecker, FakeEditor, FakeScener, FakeWriter
+from rewardsmith.agents.fake import FakeChecker, FakeCritic, FakeEditor, FakeScener, FakeWriter
 from rewardsmith.orchestrator import run_request
 from rewardsmith.sim.base import RunResult
 from rewardsmith.sim.fake import FakeSimulator
@@ -341,3 +341,50 @@ def test_a_scene_check_keeps_one_fall_criterion():
     assert [c["metric"] for c in spec] == ["all:reach:ball&push:ball:goal", "scene_fell"]
     # Without an episode fall bound, the video's fall clause stays.
     assert checker.validate_for_scene([checker.NO_FALL], "do a little dance", None) == [checker.NO_FALL]
+
+
+BALL_TO_GOAL = parse({"objects": [
+    {"name": "ball", "kind": "ball", "size": [0.15], "distance": [1, 1.5], "movable": True, "mass": 0.4},
+    {"name": "goal", "kind": "zone", "size": [0.5], "distance": [2.8, 3.3]},
+], "target": "ball"})
+
+
+def test_moving_the_target_to_its_goal_is_a_push_not_a_reach():
+    # Yihan's prompt: "move ... to" read as reaching, the hint said target_reached, and that is
+    # refused for a movable ball, so both of Claude's tries failed (request a233b822).
+    text = "make robot move ball to a target destination"
+    with pytest.raises(checker.SpecError, match="push:ball:goal") as err:
+        checker.validate_for_scene([{"metric": "reach:ball", "op": ">=", "value": 0.8},
+                                    {"metric": "scene_fell", "op": "<=", "value": 0.1}], text, BALL_TO_GOAL)
+    assert "target_reached" not in str(err.value)
+    spec = [{"metric": "push:ball:goal", "op": ">=", "value": 0.8}, {"metric": "scene_fell", "op": "<=", "value": 0.1}]
+    assert checker.validate_for_scene(spec, text, BALL_TO_GOAL) == spec
+
+
+def test_default_scene_checks():
+    assert checker.default_scene_check(BALL_TO_GOAL)[0] == {"metric": "push:ball:goal", "op": ">=", "value": 0.8}
+    box = parse({"objects": [{"name": "box", "kind": "box", "size": [0.4, 0.4, 0.3], "distance": [1.5, 3]}]})
+    assert checker.default_scene_check(box)[0]["metric"] == "target_reached"
+    assert checker.default_scene_check(None) is None
+    for spec in (checker.default_scene_check(BALL_TO_GOAL), checker.default_scene_check(box)):
+        assert checker.validate(spec, BALL_TO_GOAL if spec[0]["metric"].startswith("push") else box) == spec
+
+
+def test_a_rejected_scene_check_falls_back_to_the_scene_default(tmp_path):
+    class Rejected:
+        def write_spec(self, request, scene=None):
+            raise checker.SpecError("target metrics require a fixed scene target")
+
+    s = config.Settings(
+        db_path=tmp_path / "t.db", artifacts_dir=tmp_path / "artifacts", model="claude-opus-5-5",
+        env_name="Go1JoystickFlatTerrain", candidates_per_round=2, max_rounds=1, success_score=0,
+        fake_sim=True, fake_llm=True, min_rounds=1,
+    )
+    conn = db.connect(s.db_path)
+    rid = db.create_request(conn, "make robot move ball to a target destination", scene=BALL_TO_GOAL.to_dict())
+    run_request(conn, s, db.claim_next_request(conn), FakeWriter(), FakeEditor(), FakeCritic(), FakeSimulator(),
+                checker=Rejected())
+    detail = db.get_request(conn, rid)
+    assert detail["success_spec"] == checker.default_scene_check(BALL_TO_GOAL)
+    assert detail["success_check_error"] is None
+    assert any("using the scene's default" in e["message"] for e in detail["events"])
