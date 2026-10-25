@@ -107,7 +107,10 @@ ADDED_COLUMNS = {
                  "mode": "TEXT",  # instant | effort (modes.py); NULL = effort, what every run was before modes
                  "model": "TEXT",  # writer/editor/critic model; NULL = the mode's default
                  "target_candidate_id": "INTEGER",  # a follow-up's candidate to refine; NULL = the best, when it starts
-                 "scene_changed": "INTEGER"},  # 1 when a follow-up's note changed the scene (it trains from scratch)
+                 "scene_changed": "INTEGER",  # 1 when a follow-up's note changed the scene (it trains from scratch)
+                 # The robot (sim/bodies). Rows from before bodies read as the Go1; NULL on a new task = Auto,
+                 # until the worker's body router picks one. body_reason: the router's one line on why.
+                 "body": "TEXT DEFAULT 'go1'", "body_reason": "TEXT"},
     "candidates": {
         "flagged_at": "REAL",
         "flag_note": "TEXT",
@@ -176,20 +179,21 @@ def _decode(out: dict[str, Any]) -> dict[str, Any]:
 
 def create_request(
     conn: sqlite3.Connection, text: str, scene: dict[str, Any] | None = None, coach: str | None = None,
-    mode: str | None = None, model: str | None = None,
+    mode: str | None = None, model: str | None = None, body: str | None = None,
 ) -> str:
     """A new conversation whose first turn is this request; its id is the request's.
 
     scene: a validated scene spec to use as is; None lets the scene writer decide.
     coach: the live coach's model, or "off"; None leaves it to the worker's setting.
-    mode, model: see modes.py; None = the defaults."""
+    mode, model: see modes.py; None = the defaults.
+    body: a registered body's name (sim/bodies); None = Auto, the worker's router picks one."""
     rid = uuid.uuid4().hex[:8]
     now = time.time()
     conn.execute("INSERT INTO conversations (id, title, created_at) VALUES (?, ?, ?)", (rid, text, now))
     conn.execute(
-        """INSERT INTO requests (id, text, created_at, scene, coach, conversation_id, turn, mode, model)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
-        (rid, text, now, json.dumps(scene) if scene is not None else None, coach, rid, mode, model),
+        """INSERT INTO requests (id, text, created_at, scene, coach, conversation_id, turn, mode, model, body)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+        (rid, text, now, json.dumps(scene) if scene is not None else None, coach, rid, mode, model, body),
     )
     return rid
 
@@ -202,8 +206,9 @@ def add_turn(
     conn: sqlite3.Connection, conversation_id: str, text: str, target_candidate_id: int | None = None,
     coach: str | None = None, mode: str | None = None, model: str | None = None,
 ) -> str:
-    """A follow-up: a new request at the end of the conversation. target_candidate_id is the
-    candidate to refine; None = the conversation's best when the worker starts the turn."""
+    """A follow-up: a new request at the end of the conversation, on the conversation's body.
+    target_candidate_id is the candidate to refine; None = the conversation's best when the
+    worker starts the turn."""
     conn.execute("BEGIN IMMEDIATE")  # two follow-ups sent at once must not get the same turn number
     try:
         last = conn.execute(
@@ -215,15 +220,25 @@ def add_turn(
             raise NotInConversation(f"Candidate {target_candidate_id} is not in conversation {conversation_id}")
         rid = uuid.uuid4().hex[:8]
         conn.execute(
-            """INSERT INTO requests (id, text, created_at, coach, conversation_id, turn, mode, model, target_candidate_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (rid, text, time.time(), coach, conversation_id, last + 1, mode, model, target_candidate_id),
+            """INSERT INTO requests (id, text, created_at, coach, conversation_id, turn, mode, model, target_candidate_id, body)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (rid, text, time.time(), coach, conversation_id, last + 1, mode, model, target_candidate_id,
+             conversation_body(conn, conversation_id)),
         )
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
     return rid
+
+
+def conversation_body(conn: sqlite3.Connection, conversation_id: str) -> str | None:
+    """The body a conversation runs on: its first turn's (None while that turn is still on Auto)."""
+    row = conn.execute(
+        "SELECT body FROM requests WHERE conversation_id = ? AND body IS NOT NULL ORDER BY turn LIMIT 1",
+        (conversation_id,),
+    ).fetchone()
+    return row["body"] if row else None
 
 
 def conversation_of_candidate(conn: sqlite3.Connection, cid: int) -> str | None:
@@ -247,6 +262,7 @@ def list_conversations(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         scores = [t["best_score"] for t in conv["turns"] if t["best_score"] is not None]
         conv["best_score"] = max(scores) if scores else None
         conv["status"] = conv["turns"][-1]["status"] if conv["turns"] else None
+        conv["body"] = next((t["body"] for t in conv["turns"] if t.get("body")), None)
         out.append(conv)
     return out
 
